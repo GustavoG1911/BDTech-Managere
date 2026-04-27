@@ -1,6 +1,7 @@
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { OnboardingModal } from "@/components/OnboardingModal";
+import { NotificationBell } from "@/components/NotificationBell";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -14,6 +15,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <span className="text-[10px] text-muted-foreground/50 font-mono tracking-widest uppercase select-none hidden sm:block">
               Sales Intelligence
             </span>
+            <div className="ml-auto">
+              <NotificationBell />
+            </div>
           </header>
           <main className="flex-1 overflow-auto">
             {children}

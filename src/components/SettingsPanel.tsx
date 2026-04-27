@@ -13,9 +13,10 @@ interface SettingsPanelProps {
   onSave?: (s: AppSettings) => void;
   onUpdate?: (s: AppSettings) => void;
   onRefreshDeals?: () => void;
+  readOnly?: boolean;
 }
 
-export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals, readOnly = false }: SettingsPanelProps) {
   const [salary, setSalary] = useState(settings.fixedSalary.toString());
   const [commissionRate, setCommissionRate] = useState(((settings.commissionRate || 0.20) * 100).toString());
   const [superMetaThreshold, setSuperMetaThreshold] = useState((settings.superMetaThreshold || 30).toString());
@@ -47,13 +48,13 @@ export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals }: Se
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
             <Label>Salário Fixo Mensal (R$)</Label>
-            <Input type="number" min="0" step="0.01" value={salary} onChange={(e) => setSalary(e.target.value)} className="font-mono text-lg" />
+            <Input type="number" min="0" step="0.01" value={salary} onChange={(e) => setSalary(e.target.value)} className="font-mono text-lg" disabled={readOnly} />
             <p className="text-xs text-muted-foreground">Atual: {formatCurrency(settings.fixedSalary)}</p>
           </div>
 
           <div className="space-y-1.5">
             <Label>Taxa de Comissão (%)</Label>
-            <Input type="number" min="0" max="100" step="1" value={commissionRate} onChange={(e) => setCommissionRate(e.target.value)} className="font-mono text-lg" />
+            <Input type="number" min="0" max="100" step="1" value={commissionRate} onChange={(e) => setCommissionRate(e.target.value)} className="font-mono text-lg" disabled={readOnly} />
             <p className="text-xs text-muted-foreground">Atual: {((settings.commissionRate || 0.20) * 100).toFixed(0)}%</p>
           </div>
 
@@ -76,11 +77,11 @@ export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals }: Se
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Apresentações necessárias</Label>
-                  <Input type="number" min="1" value={superMetaThreshold} onChange={(e) => setSuperMetaThreshold(e.target.value)} className="font-mono" />
+                  <Input type="number" min="1" value={superMetaThreshold} onChange={(e) => setSuperMetaThreshold(e.target.value)} className="font-mono" disabled={readOnly} />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">Multiplicador da comissão mensal (%)</Label>
-                  <Input type="number" min="100" step="10" value={superMetaMultiplier} onChange={(e) => setSuperMetaMultiplier(e.target.value)} className="font-mono" />
+                  <Input type="number" min="100" step="10" value={superMetaMultiplier} onChange={(e) => setSuperMetaMultiplier(e.target.value)} className="font-mono" disabled={readOnly} />
                   <p className="text-xs text-muted-foreground">200% = comissão dobra sobre a mensalidade</p>
                 </div>
               </div>
@@ -90,10 +91,16 @@ export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals }: Se
             </div>
           </div>
 
-          <Button onClick={handleSave} className="w-full">
-            <Save className="h-4 w-4 mr-2" />
-            Salvar Parâmetros
-          </Button>
+          {readOnly ? (
+            <p className="text-xs text-muted-foreground text-center pt-1">
+              Estes parâmetros são definidos pelo gestor. Entre em contato para solicitar alterações.
+            </p>
+          ) : (
+            <Button onClick={handleSave} className="w-full">
+              <Save className="h-4 w-4 mr-2" />
+              Salvar Parâmetros
+            </Button>
+          )}
         </CardContent>
       </Card>
 

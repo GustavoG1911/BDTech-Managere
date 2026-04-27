@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, BadgeDollarSign, Calendar, ChevronDown, ChevronUp, Clock, FileText, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, Check, Loader2, Wallet, Plus, CalendarDays, FileDown, Printer, HelpCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
+import { createNotification } from "@/lib/supabase-deals";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -690,6 +691,16 @@ function FinanceiroContent() {
       .eq("id", dealId);
     if (error) { toast.error("Erro: " + error.message); return; }
     toast.success(newStatus ? "Comissão paga com sucesso!" : "Baixa de comissão desmarcada");
+    if (newStatus) {
+      const deal = activeDeals.find((d) => d.id === dealId);
+      if (deal?.userId) {
+        await createNotification(
+          deal.userId,
+          "Comissão disponível 💰",
+          `Sua comissão referente ao cliente ${deal.clientName} foi marcada como paga pelo gestor. Acesse o Financeiro para confirmar o recebimento.`
+        );
+      }
+    }
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };

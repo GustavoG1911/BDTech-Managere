@@ -76,6 +76,7 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
     if (!userId) return;
 
     const channelName = `sync-${userId.slice(0, 8)}`;
+    let isRealtimeActive = false;
 
     const channel = supabase
       .channel(channelName)
@@ -97,16 +98,20 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
+          isRealtimeActive = true;
           console.log("[Realtime] ✅ Sincronização ativa para", channelName);
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          isRealtimeActive = false;
           console.warn("[Realtime] ⚠️ Falha na sincronização:", status, "— usando polling");
         }
       });
 
-    // Polling de fallback a cada 30 s (cobre projetos sem Realtime habilitado)
+    // Polling de fallback a cada 30 s — só executa se Realtime não estiver ativo
     const pollInterval = setInterval(() => {
-      silentRefreshDeals();
-      silentRefreshPresentations();
+      if (!isRealtimeActive) {
+        silentRefreshDeals();
+        silentRefreshPresentations();
+      }
     }, 30_000);
 
     return () => {
@@ -159,7 +164,8 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
   const updateSettings = useCallback(async (newSettings: AppSettings) => {
     saveSettings(newSettings);
     setSettings(newSettings);
-    if (userId) {
+    // SDR não pode auto-editar comissão e salário — apenas o gestor define via Team tab
+    if (userId && position !== "SDR") {
       try {
         await Promise.all([
           saveUserCommissionRate(userId, newSettings.commissionRate),
@@ -169,7 +175,7 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
         console.error("Error saving settings to DB:", err instanceof Error ? err.message : err);
       }
     }
-  }, [userId]);
+  }, [userId, position]);
 
   const toggleSuperMeta = useCallback((monthKey: string, active: boolean) => {
     const updated = { ...superMeta, [monthKey]: active };

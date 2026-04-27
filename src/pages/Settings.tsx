@@ -83,7 +83,7 @@ export default function Settings() {
           <ProfileTab />
         </TabsContent>
         <TabsContent value="comissions">
-          <SettingsPanel settings={settings} onUpdate={updateSettings} />
+          <SettingsPanel settings={settings} onUpdate={updateSettings} readOnly={position === "SDR"} />
         </TabsContent>
         {role === "admin" && (
           <TabsContent value="team">

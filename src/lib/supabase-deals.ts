@@ -290,3 +290,70 @@ export async function saveUserFixedSalary(userId: string, amount: number): Promi
     throw error;
   }
 }
+
+// ─── Notificações ─────────────────────────────────────────────────────────────
+
+export interface AppNotification {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  isRead: boolean;
+  isTestData: boolean;
+  createdAt: string;
+}
+
+export async function createNotification(
+  userId: string,
+  title: string,
+  message: string
+): Promise<void> {
+  const { data: authData } = await supabase.auth.getUser();
+  const isTestData = authData.user?.email?.endsWith("@teste.com") || false;
+  const { error } = await (supabase as any)
+    .from("notifications")
+    .insert({ user_id: userId, title, message, is_test_data: isTestData, is_read: false });
+  if (error) {
+    console.error("[createNotification] Erro:", error.message);
+  }
+}
+
+export async function fetchNotifications(userId: string): Promise<AppNotification[]> {
+  const { data: authData } = await supabase.auth.getUser();
+  const isTestData = authData.user?.email?.endsWith("@teste.com") || false;
+  const { data, error } = await (supabase as any)
+    .from("notifications")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("is_test_data", isTestData)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) {
+    console.error("[fetchNotifications] Erro:", error.message);
+    return [];
+  }
+  return (data || []).map((n: any) => ({
+    id: n.id,
+    userId: n.user_id,
+    title: n.title,
+    message: n.message,
+    isRead: n.is_read ?? false,
+    isTestData: n.is_test_data,
+    createdAt: n.created_at,
+  }));
+}
+
+export async function markNotificationRead(notificationId: string): Promise<void> {
+  await (supabase as any)
+    .from("notifications")
+    .update({ is_read: true })
+    .eq("id", notificationId);
+}
+
+export async function markAllNotificationsRead(userId: string): Promise<void> {
+  await (supabase as any)
+    .from("notifications")
+    .update({ is_read: true })
+    .eq("user_id", userId)
+    .eq("is_read", false);
+}
