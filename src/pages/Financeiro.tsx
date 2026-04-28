@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/hooks/useAppData";
@@ -351,13 +351,15 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
   const monthOptions = useMemo(() => buildMonthOptions(), []);
   const [pendingScroll, setPendingScroll] = useState(false);
+  const pendingScrollAttempts = useRef(0);
 
   useEffect(() => {
     if ((location.state as any)?.scrollToPending) {
+      pendingScrollAttempts.current = 0;
       setPendingScroll(true);
-      refreshDeals();
+      void refreshDeals();
     }
-  }, [location.state]);
+  }, [location.state, refreshDeals]);
 
   const { data, isLoading: loading } = useQuery({
     queryKey: ["user-finance-data", userId],
@@ -411,13 +413,30 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   );
 
   useEffect(() => {
-    if (pendingScroll && pendingConfirmations.length > 0) {
-      setTimeout(() => {
-        document.getElementById("pending-confirmations")?.scrollIntoView({ behavior: "smooth" });
-      }, 100);
-      setPendingScroll(false);
+    if (!pendingScroll) return;
+
+    if (pendingConfirmations.length > 0) {
+      const timer = setTimeout(() => {
+        document.getElementById("pending-confirmations")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        setPendingScroll(false);
+      }, 400);
+      return () => clearTimeout(timer);
     }
-  }, [pendingScroll, pendingConfirmations.length]);
+
+    if (appLoading) return;
+
+    if (pendingScrollAttempts.current >= 15) {
+      setPendingScroll(false);
+      return;
+    }
+
+    const retryTimer = setTimeout(() => {
+      pendingScrollAttempts.current += 1;
+      void refreshDeals();
+    }, 300);
+
+    return () => clearTimeout(retryTimer);
+  }, [pendingScroll, pendingConfirmations.length, appLoading, refreshDeals]);
 
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number }> = {};
@@ -988,8 +1007,6 @@ function FinanceiroContent() {
   };
 
   const handleCreateAndToggleSalaryPayment = async (userId: string, amount: number, referenceMonth: string) => {
-    const { data: { user: currentUser } } = await supabase.auth.getUser();
-    const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
     const dateStr = referenceMonth.slice(0, 7) + "-20";
     const { data, error } = await (supabase as any)
       .from("salary_payments")

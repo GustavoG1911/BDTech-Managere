@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { Deal, PaymentStatus, MonthlyPresentations } from "./types";
 import { UserRole } from "@/hooks/useAuth";
+import { getPaymentDateInfo } from "./commission";
 
 const dbToDeal = (db: any): Deal => ({
   id: db.id,
@@ -137,6 +138,9 @@ export async function upsertDeal(deal: Deal): Promise<Deal> {
 
   if (error) {
     console.error("Error upserting deal:", error);
+    if (error.message?.includes("sdr_user_id")) {
+      throw new Error("O campo SDR ainda não existe no banco. Execute a migration add_sdr_user_id_to_deals no Supabase antes de salvar um SDR no fechamento.");
+    }
     throw error;
   }
   return dbToDeal(data);
@@ -152,7 +156,7 @@ export async function fetchAvailableYears(): Promise<number[]> {
   const isTestEnv = user?.email?.endsWith("@teste.com") || false;
   const { data, error } = await (supabase as any)
     .from("deals")
-    .select("closing_date")
+    .select("closing_date, first_payment_date, actual_payment_date")
     .eq("is_test_data", isTestEnv);
 
   if (error) {
@@ -162,8 +166,9 @@ export async function fetchAvailableYears(): Promise<number[]> {
 
   const years = new Set<number>();
   data?.forEach((d) => {
-    if (d.closing_date) {
-      years.add(new Date(d.closing_date).getFullYear());
+    const baseDate = d.actual_payment_date || d.first_payment_date || d.closing_date;
+    if (baseDate) {
+      years.add(Number(getPaymentDateInfo(baseDate).monthKey.slice(0, 4)));
     }
   });
 
