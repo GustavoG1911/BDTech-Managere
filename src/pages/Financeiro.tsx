@@ -155,8 +155,8 @@ export default function Financeiro() {
   return <FinanceiroContent />;
 }
 
-function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, settings, onConfirm, inPendingSection }: any) {
-  const [expanded, setExpanded] = useState(false);
+function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, settings, onConfirm, inPendingSection, highlightDealId }: any) {
+  const [expanded, setExpanded] = useState(() => highlightDealId === deal.id);
   const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
   const mensalidadeInMonth = mensalidadeMonthKey === selectedMonth;
   const implantacaoInMonth = implantacaoMonthKey === selectedMonth;
@@ -166,7 +166,7 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
   const totalComm = comm.monthlyCommission + comm.superMetaBonus + comm.implantationCommission;
   const dealMonth = mensalidadeMonthKey || implantacaoMonthKey;
   const isPendingAction = deal.isPaidToUser && !deal.isUserConfirmedPayment;
-  const colSpan = inPendingSection ? 6 : 6;
+  const isHighlighted = highlightDealId === deal.id;
 
   return (
     <>
@@ -177,6 +177,8 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
             ? "bg-success/5 hover:bg-success/10 border-l-2 border-l-success/40"
             : isPendingAction
             ? "bg-warning/10 hover:bg-warning/15 border-l-2 border-l-warning/60"
+            : isHighlighted
+            ? "bg-primary/5 hover:bg-primary/10 border-l-2 border-l-primary/50"
             : "hover:bg-[#242842]/40"
         }`}
       >
@@ -351,6 +353,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
   const monthOptions = useMemo(() => buildMonthOptions(), []);
   const [pendingScroll, setPendingScroll] = useState(false);
+  const [highlightDealId] = useState<string | undefined>(() => (location.state as any)?.dealId);
 
   useEffect(() => {
     if ((location.state as any)?.scrollToPending) {
@@ -465,7 +468,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       const mensalidadeComm = comm.monthlyCommission + comm.superMetaBonus;
       const commInMonth = (mensalidadeInMonth ? mensalidadeComm : 0) + (implantacaoInMonth ? comm.implantationCommission : 0);
 
-      if (deal.isPaidToUser) paid += commInMonth;
+      if (deal.isUserConfirmedPayment) paid += commInMonth;
       else projected += commInMonth;
     });
 
@@ -584,6 +587,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                     settings={settings}
                     onConfirm={handleSDRConfirm}
                     inPendingSection
+                    highlightDealId={highlightDealId}
                   />
                 );
               })}
@@ -627,6 +631,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                     presentations={presentations}
                     settings={settings}
                     onConfirm={handleSDRConfirm}
+                    highlightDealId={highlightDealId}
                   />
                 ))
               )}
@@ -823,7 +828,7 @@ function FinanceiroContent() {
         if (implantacaoInYear && implantacaoMonthKey === mensalidadeMonthKey && !mensalidadeInYear) { volumeTotal += deal.implantationValue || 0; commInPeriod += comm.implantationCommission; }
       }
 
-      if (deal.isPaidToUser) totalPago += commInPeriod;
+      if (deal.isUserConfirmedPayment) totalPago += commInPeriod;
       else totalProjetado += commInPeriod;
     });
 
@@ -950,13 +955,12 @@ function FinanceiroContent() {
     if (!newStatus) {
       if (!confirm("Confirma o cancelamento do pagamento desta comissão revertendo-a para Pendente?")) return;
     }
+    // actual_payment_date é reservado para recebimento do cliente — não gravar aqui.
+    // A data de baixa de comissão ficará em commission_payments.paid_by_director_at (tabela futura).
     const { error } = await supabase
       .from("deals")
       .update({
         is_paid_to_user: newStatus,
-        actual_payment_date: newStatus
-          ? (specificDate || new Date().toISOString().split("T")[0])
-          : null,
       } as any)
       .eq("id", dealId);
     if (error) { toast.error("Erro: " + error.message); return; }
@@ -1254,8 +1258,8 @@ function FinanceiroContent() {
                 <TableBody>
                   {filteredDeals
                     .filter((d) => {
-                      if (kpiModalType === "pago") return d.isPaidToUser === true;
-                      if (kpiModalType === "projetado") return d.isPaidToUser === false;
+                      if (kpiModalType === "pago") return d.isUserConfirmedPayment === true;
+                      if (kpiModalType === "projetado") return !d.isUserConfirmedPayment;
                       return false;
                     })
                     .map((d) => {
@@ -1307,9 +1311,11 @@ function ExpandableReceivablesRow({ deal, selectedMonth, getUserName, onToggleMe
   if (!dateForInfo) return null;
   const info = getPaymentDateInfo(dateForInfo);
   const expectedPaymentDateStr = formatSafeDate(info.expectedPaymentDate);
-  
-  const expectMensalidade = deal.monthlyValue > 0 && deal.firstPaymentDate && getMonthKey(deal.firstPaymentDate) === selectedMonth;
-  const expectImplantacao = deal.implantationValue > 0 && !deal.isInstallment && deal.implantationPaymentDate && getMonthKey(deal.implantationPaymentDate) === selectedMonth;
+
+  // Regra do Dia 07: usar getDealMonthKeys para determinar competência financeira correta
+  const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
+  const expectMensalidade = deal.monthlyValue > 0 && mensalidadeMonthKey === selectedMonth;
+  const expectImplantacao = deal.implantationValue > 0 && !deal.isInstallment && implantacaoMonthKey === selectedMonth;
 
   // isPaid só é true quando o usuário clicou explicitamente no botão de confirmação
   let isPaid = false;
@@ -1366,7 +1372,7 @@ function ExpandableReceivablesRow({ deal, selectedMonth, getUserName, onToggleMe
           <TableCell colSpan={10} className="p-0">
             <div className="px-5 py-4 bg-[#242842]/60 border-t border-border/30 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 
-              {deal.monthlyValue > 0 && deal.firstPaymentDate && getMonthKey(deal.firstPaymentDate) === selectedMonth && (
+              {deal.monthlyValue > 0 && expectMensalidade && (
                 <div className="p-3 rounded-lg border border-border/30 bg-muted/30 space-y-2">
                   <div className="flex justify-between items-start">
                     <div>
@@ -1388,7 +1394,7 @@ function ExpandableReceivablesRow({ deal, selectedMonth, getUserName, onToggleMe
                 </div>
               )}
 
-              {deal.implantationValue > 0 && !deal.isInstallment && deal.implantationPaymentDate && getMonthKey(deal.implantationPaymentDate) === selectedMonth && (
+              {deal.implantationValue > 0 && !deal.isInstallment && expectImplantacao && (
                 <div className="p-3 rounded-lg border border-border/30 bg-muted/30 space-y-2">
                   <div className="flex justify-between items-start">
                     <div>
@@ -1515,7 +1521,6 @@ interface PayablesTabProps {
 function ExpandableCommissionRow({ deal, settings, getUserName, presentations, onToggleCommissionPayment }: any) {
   const [expanded, setExpanded] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const [payDate, setPayDate] = useState(deal.actualPaymentDate ? deal.actualPaymentDate.slice(0, 10) : new Date().toISOString().slice(0, 10));
 
   const baseDate = deal.firstPaymentDate || deal.implantationPaymentDate;
   let expectedPaymentDateStr = "Data Pendente";
@@ -1555,13 +1560,6 @@ function ExpandableCommissionRow({ deal, settings, getUserName, presentations, o
         <TableCell className="px-3 py-3 text-sm text-muted-foreground text-center tabular-nums font-mono">
           {expectedPaymentDateStr}
         </TableCell>
-        <TableCell className="px-3 py-3 text-sm text-center">
-          {deal.actualPaymentDate ? (
-            <span className="text-success text-xs font-semibold tabular-nums font-mono">{formatSafeDate(deal.actualPaymentDate)}</span>
-          ) : (
-            <span className="text-[11px] text-muted-foreground/50 italic">A aguardar</span>
-          )}
-        </TableCell>
         <TableCell className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
           <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
             <PopoverTrigger asChild>
@@ -1579,17 +1577,15 @@ function ExpandableCommissionRow({ deal, settings, getUserName, presentations, o
                 {deal.isUserConfirmedPayment ? "Pago (Confirmado)" : deal.isPaidToUser ? "Aguardando Confirmação" : "Dar Baixa"}
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-64 p-3 shadow-lg bg-card border-border/60" align="end">
+            <PopoverContent className="w-56 p-3 shadow-lg bg-card border-border/60" align="end">
               <div className="space-y-3">
-                <p className="text-sm font-medium">Confirmar Pagamento</p>
-                <div className="space-y-1">
-                  <label className="text-[11px] text-muted-foreground">Data da Baixa Realizada</label>
-                  <Input type="date" className="h-8 text-xs" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
-                </div>
+                <p className="text-sm font-medium">
+                  {deal.isPaidToUser ? "Remover baixa de comissão?" : "Confirmar pagamento de comissão?"}
+                </p>
                 <Button
                   size="sm"
                   className={`w-full h-8 text-xs ${deal.isPaidToUser ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground" : "bg-success hover:bg-success/90 text-success-foreground"}`}
-                  onClick={() => { onToggleCommissionPayment(deal.id, deal.isPaidToUser || false, payDate); setPopoverOpen(false); }}
+                  onClick={() => { onToggleCommissionPayment(deal.id, deal.isPaidToUser || false); setPopoverOpen(false); }}
                 >
                   {deal.isPaidToUser ? "Remover Baixa" : "Confirmar Recebido"}
                 </Button>
@@ -1601,7 +1597,7 @@ function ExpandableCommissionRow({ deal, settings, getUserName, presentations, o
 
       {expanded && (
         <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={8} className="p-0">
+          <TableCell colSpan={7} className="p-0">
             <div className="px-5 py-4 bg-[#242842]/60 border-t border-border/30 grid grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
               <div className="p-3 rounded-lg bg-muted/30 border border-border/30 space-y-1">
                 <p className="text-muted-foreground">Valor Mensalidade</p>
@@ -1645,7 +1641,6 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Operação</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Comissão Total</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Data Prevista</TableHead>
-              <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Data Realizada</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center w-[120px]">Status</TableHead>
             </TableRow>
           </TableHeader>

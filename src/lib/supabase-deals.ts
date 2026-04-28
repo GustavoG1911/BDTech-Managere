@@ -104,8 +104,8 @@ export async function fetchDeals(role: UserRole, userId?: string, position?: str
 
   if (res.error) {
     console.error("[fetchDeals] Erro na busca principal:", res.error);
-    // Fallback: busca sem filtro se der erro de coluna
-    let fallbackQuery = (supabase as any).from("deals").select("*");
+    // Fallback: busca sem filtro de colunas extras mas mantém is_test_data
+    let fallbackQuery = (supabase as any).from("deals").select("*").eq("is_test_data", isTestEnv);
     if (position === "Diretor") {
       // Diretor vê tudo
     } else if (position === "SDR") {
