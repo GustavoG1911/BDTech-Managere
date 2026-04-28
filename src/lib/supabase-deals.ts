@@ -381,6 +381,7 @@ export interface CommissionPayment {
   component: "mensalidade" | "implantacao";
   competenceMonth: string;
   amount: number;
+  recipientUserId: string | null;
   paidByDirectorAt: string | null;
   confirmedByUserAt: string | null;
   isTestData: boolean;
@@ -388,12 +389,31 @@ export interface CommissionPayment {
   updatedAt: string;
 }
 
+function dbToCommissionPayment(cp: any): CommissionPayment {
+  return {
+    id: cp.id,
+    dealId: cp.deal_id,
+    component: cp.component,
+    competenceMonth: cp.competence_month,
+    amount: cp.amount,
+    recipientUserId: cp.recipient_user_id ?? null,
+    paidByDirectorAt: cp.paid_by_director_at ?? null,
+    confirmedByUserAt: cp.confirmed_by_user_at ?? null,
+    isTestData: cp.is_test_data,
+    createdAt: cp.created_at,
+    updatedAt: cp.updated_at,
+  };
+}
+
+// Upsert por (deal_id, component, competence_month, recipient_user_id).
+// Reseta confirmed_by_user_at ao reutilizar o registro num novo ciclo.
 export async function upsertCommissionPaymentRow(
   dealId: string,
   component: "mensalidade" | "implantacao",
   competenceMonth: string,
   amount: number,
-  isTestData: boolean
+  isTestData: boolean,
+  recipientUserId: string
 ): Promise<void> {
   const now = new Date().toISOString();
   const { error } = await (supabase as any)
@@ -404,30 +424,65 @@ export async function upsertCommissionPaymentRow(
         component,
         competence_month: competenceMonth,
         amount,
+        recipient_user_id: recipientUserId,
         paid_by_director_at: now,
         confirmed_by_user_at: null,
         is_test_data: isTestData,
         updated_at: now,
       },
-      { onConflict: "deal_id,component,competence_month" }
+      { onConflict: "deal_id,component,competence_month,recipient_user_id" }
     );
   if (error) throw error;
 }
 
-export async function clearCommissionPaymentsForDeal(dealId: string): Promise<void> {
+// Remove apenas o registro de um componente/mês específico (não apaga outros meses).
+export async function clearCommissionPaymentForComponent(
+  dealId: string,
+  component: "mensalidade" | "implantacao",
+  competenceMonth: string
+): Promise<void> {
   const { error } = await (supabase as any)
     .from("commission_payments")
     .delete()
-    .eq("deal_id", dealId);
+    .eq("deal_id", dealId)
+    .eq("component", component)
+    .eq("competence_month", competenceMonth);
   if (error) throw error;
 }
 
-export async function confirmCommissionPaymentsForDeal(dealId: string): Promise<void> {
+// Confirma apenas os registros do recipient atual — retorna quantos foram confirmados.
+export async function confirmCommissionPaymentsByRecipient(
+  dealId: string,
+  recipientUserId: string
+): Promise<number> {
   const now = new Date().toISOString();
-  const { error } = await (supabase as any)
+  const { data, error } = await (supabase as any)
     .from("commission_payments")
     .update({ confirmed_by_user_at: now, updated_at: now })
     .eq("deal_id", dealId)
-    .not("paid_by_director_at", "is", null);
+    .eq("recipient_user_id", recipientUserId)
+    .not("paid_by_director_at", "is", null)
+    .is("confirmed_by_user_at", null)
+    .select("id");
   if (error) throw error;
+  return (data || []).length;
+}
+
+// Busca todos os commission_payments do usuário (para KPIs e seção pendente).
+export async function fetchCommissionPaymentsForUser(
+  recipientUserId: string
+): Promise<CommissionPayment[]> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+  const { data, error } = await (supabase as any)
+    .from("commission_payments")
+    .select("*")
+    .eq("recipient_user_id", recipientUserId)
+    .eq("is_test_data", isTestEnv)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("[fetchCommissionPaymentsForUser]", error.message);
+    return [];
+  }
+  return (data || []).map(dbToCommissionPayment);
 }

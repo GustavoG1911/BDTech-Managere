@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, BadgeDollarSign, Calendar, ChevronDown, ChevronUp, Clock, FileText, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, Check, Loader2, Wallet, Plus, CalendarDays, FileDown, Printer, HelpCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
-import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentsForDeal, confirmCommissionPaymentsForDeal } from "@/lib/supabase-deals";
+import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, fetchCommissionPaymentsForUser, CommissionPayment } from "@/lib/supabase-deals";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
@@ -442,9 +442,10 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const { data, isLoading: loading } = useQuery({
     queryKey: ["user-finance-data", userId],
     queryFn: async () => {
-      const [salariesRes, profilesRes] = await Promise.all([
+      const [salariesRes, profilesRes, commissionPaymentsData] = await Promise.all([
         (supabase.from("salary_payments") as any).select("*").eq("user_id", userId),
         (supabase.from("profiles") as any).select("user_id, full_name, display_name, commission_percent, fixed_salary").eq("user_id", userId),
+        fetchCommissionPaymentsForUser(userId),
       ]);
 
       if (salariesRes.error) throw salariesRes.error;
@@ -463,12 +464,14 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       return {
         salaries: salariesRes.data as any[],
         profiles: map,
+        commissionPayments: commissionPaymentsData,
       };
     }
   });
 
   const querySalaries = data?.salaries || [];
   const profiles = data?.profiles || {};
+  const commissionPayments: CommissionPayment[] = data?.commissionPayments || [];
 
   const activeDeals = deals; // fetchDeals já filtra por position (SDR vê Executivos, Executivo vê próprios)
   const activeSalaries = querySalaries.length > 0 ? querySalaries : [];
@@ -485,10 +488,19 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     return activeSalaries.filter((s) => getMonthKey(s.reference_month) === selectedMonth);
   }, [activeSalaries, selectedMonth]);
 
-  const pendingConfirmations = useMemo(
-    () => activeDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment),
-    [activeDeals]
-  );
+  const pendingConfirmations = useMemo(() => {
+    // Usa commission_payments como fonte primária (granular por componente/mês)
+    const pendingCpIds = new Set(
+      commissionPayments
+        .filter((cp) => cp.paidByDirectorAt && !cp.confirmedByUserAt)
+        .map((cp) => cp.dealId)
+    );
+    if (pendingCpIds.size > 0) {
+      return activeDeals.filter((d) => pendingCpIds.has(d.id));
+    }
+    // Fallback legado para deals anteriores à migração
+    return activeDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment);
+  }, [activeDeals, commissionPayments]);
 
   useEffect(() => {
     if (!pendingScroll) return;
@@ -547,6 +559,12 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   }, [activeDeals, selectedMonth, presentations, settings]);
 
   const kpis = useMemo(() => {
+    // Mapa de commission_payments por (dealId:component:competenceMonth) para lookup O(1)
+    const cpMap = new Map<string, CommissionPayment>();
+    commissionPayments.forEach((cp) => {
+      cpMap.set(`${cp.dealId}:${cp.component}:${cp.competenceMonth}`, cp);
+    });
+
     let projected = 0;
     let paid = 0;
     let volume = 0;
@@ -561,16 +579,36 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       const presCount = getPresentationsForDeal(deal, presentations);
       const comm = calculateCommission(deal, presCount, settings, false);
       const mensalidadeComm = comm.monthlyCommission + comm.superMetaBonus;
-      const commInMonth = (mensalidadeInMonth ? mensalidadeComm : 0) + (implantacaoInMonth ? comm.implantationCommission : 0);
 
-      if (deal.isUserConfirmedPayment) paid += commInMonth;
-      else projected += commInMonth;
+      // Mensalidade: usa commission_payments quando disponível (status por mês, não por deal)
+      if (mensalidadeInMonth) {
+        const cp = mensalidadeMonthKey ? cpMap.get(`${deal.id}:mensalidade:${mensalidadeMonthKey}`) : undefined;
+        if (cp) {
+          if (cp.confirmedByUserAt) paid += cp.amount;
+          else projected += cp.amount;
+        } else {
+          if (deal.isUserConfirmedPayment) paid += mensalidadeComm;
+          else projected += mensalidadeComm;
+        }
+      }
+
+      // Implantação: usa commission_payments quando disponível
+      if (implantacaoInMonth) {
+        const cp = implantacaoMonthKey ? cpMap.get(`${deal.id}:implantacao:${implantacaoMonthKey}`) : undefined;
+        if (cp) {
+          if (cp.confirmedByUserAt) paid += cp.amount;
+          else projected += cp.amount;
+        } else {
+          if (deal.isUserConfirmedPayment) paid += comm.implantationCommission;
+          else projected += comm.implantationCommission;
+        }
+      }
     });
 
     const totalFixo = filteredSalaries.length > 0 ? filteredSalaries.reduce((acc, s) => acc + s.amount, 0) : (profiles[userId]?.fixed_salary || 0);
 
     return { projected, paid, volume, fixed: totalFixo };
-  }, [filteredDeals, filteredSalaries, userId, selectedMonth, presentations, settings]);
+  }, [filteredDeals, filteredSalaries, userId, selectedMonth, presentations, settings, commissionPayments]);
 
   if (loading) {
     return (
@@ -581,22 +619,36 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   }
 
   const handleSDRConfirm = async (dealId: string) => {
-    const { data: updatedDeal, error } = await (supabase.from("deals") as any)
-      .update({ is_user_confirmed_payment: true })
-      .eq("id", dealId)
-      .eq("user_id", userId)
-      .eq("is_paid_to_user", true)
-      .select("id")
-      .maybeSingle();
-    if (error) {
-      toast.error("Erro: " + error.message);
+    // 1. Confirma commission_payments scoped ao usuário atual (Executivo ou SDR)
+    let cpCount = 0;
+    try {
+      cpCount = await confirmCommissionPaymentsByRecipient(dealId, userId);
+    } catch (cpErr: any) {
+      toast.error("Erro ao confirmar recebimento: " + cpErr.message);
       return;
     }
-    if (!updatedDeal) {
+
+    // 2. Atualiza flag legado no deal somente se o usuário for o dono do deal (Executivo)
+    const deal = activeDeals.find((d) => d.id === dealId);
+    if (deal?.userId === userId) {
+      const { data: updatedDeal, error } = await (supabase.from("deals") as any)
+        .update({ is_user_confirmed_payment: true })
+        .eq("id", dealId)
+        .eq("user_id", userId)
+        .eq("is_paid_to_user", true)
+        .select("id")
+        .maybeSingle();
+      if (error) { toast.error("Erro: " + error.message); return; }
+      if (!updatedDeal && cpCount === 0) {
+        toast.error("Pagamento não encontrado ou ainda não liberado para confirmação.");
+        return;
+      }
+    } else if (cpCount === 0) {
+      // SDR sem commission_payments ainda liberados
       toast.error("Pagamento não encontrado ou ainda não liberado para confirmação.");
       return;
     }
-    await confirmCommissionPaymentsForDeal(dealId).catch(console.error);
+
     toast.success("Recebimento confirmado e ciclo encerrado!");
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["user-finance-data", userId] });
@@ -1065,37 +1117,83 @@ function FinanceiroContent() {
     if (!newStatus) {
       if (!confirm("Confirma o cancelamento do pagamento desta comissão revertendo-a para Pendente?")) return;
     }
-    const { error } = await supabase
-      .from("deals")
-      .update({
-        is_paid_to_user: newStatus,
-        is_user_confirmed_payment: newStatus ? false : null,
-      } as any)
-      .eq("id", dealId);
-    if (error) { toast.error("Erro: " + error.message); return; }
-    toast.success(newStatus ? "Comissão paga com sucesso!" : "Baixa de comissão desmarcada");
     const deal = activeDeals.find((d) => d.id === dealId);
+
     if (newStatus && deal) {
       const parts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
-      // Upsert commission_payments para cada componente com valor no período
-      if (parts.mensalidadeInPeriod && parts.mensalidadeCommission > 0 && parts.mensalidadeMonthKey) {
-        await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, deal.isTestData || false).catch(console.error);
+      const isTestData = deal.isTestData || false;
+
+      // 1. Grava commission_payments PRIMEIRO (se falhar, aborta sem alterar o deal)
+      try {
+        if (parts.mensalidadeInPeriod && parts.mensalidadeCommission > 0 && parts.mensalidadeMonthKey && deal.userId) {
+          await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, isTestData, deal.userId);
+        }
+        if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey && deal.userId) {
+          await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, isTestData, deal.userId);
+        }
+        // SDR vinculado recebe registro separado
+        if (deal.sdrUserId && deal.sdrUserId !== deal.userId) {
+          if (parts.mensalidadeInPeriod && parts.mensalidadeCommission > 0 && parts.mensalidadeMonthKey) {
+            await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, isTestData, deal.sdrUserId);
+          }
+          if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey) {
+            await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, isTestData, deal.sdrUserId);
+          }
+        }
+      } catch (cpErr: any) {
+        toast.error("Erro ao registrar comissão: " + cpErr.message);
+        return;
       }
-      if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey) {
-        await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, deal.isTestData || false).catch(console.error);
+
+      // 2. Atualiza flag legado no deal
+      const { error } = await (supabase as any)
+        .from("deals")
+        .update({ is_paid_to_user: true, is_user_confirmed_payment: false })
+        .eq("id", dealId);
+      if (error) {
+        // Rollback: apaga os registros de commission_payments que acabamos de criar
+        if (parts.mensalidadeInPeriod && parts.mensalidadeMonthKey) {
+          await clearCommissionPaymentForComponent(dealId, "mensalidade", parts.mensalidadeMonthKey).catch(console.error);
+        }
+        if (parts.implantacaoInPeriod && parts.implantacaoMonthKey) {
+          await clearCommissionPaymentForComponent(dealId, "implantacao", parts.implantacaoMonthKey).catch(console.error);
+        }
+        toast.error("Erro: " + error.message);
+        return;
       }
-      if (deal.userId) {
-        const details = parts.labels.length > 0 ? ` (${parts.labels.join(" + ")})` : "";
-        await createNotification(
-          deal.userId,
-          "Comissão disponível 💰",
-          `Sua comissão${details} referente ao cliente ${deal.clientName} foi marcada como paga pelo gestor. Acesse o Financeiro para confirmar o recebimento.`,
-          deal.id
-        );
+
+      // 3. Notifica Executivo e SDR (se houver)
+      const details = parts.labels.length > 0 ? ` (${parts.labels.join(" + ")})` : "";
+      const notifTitle = "Comissão disponível 💰";
+      const notifMsg = `Sua comissão${details} referente ao cliente ${deal.clientName} foi marcada como paga pelo gestor. Acesse o Financeiro para confirmar o recebimento.`;
+      if (deal.userId) await createNotification(deal.userId, notifTitle, notifMsg, deal.id);
+      if (deal.sdrUserId && deal.sdrUserId !== deal.userId) {
+        await createNotification(deal.sdrUserId, notifTitle, notifMsg, deal.id);
       }
-    } else if (!newStatus) {
-      await clearCommissionPaymentsForDeal(dealId).catch(console.error);
+      toast.success("Comissão paga com sucesso!");
+
+    } else if (!newStatus && deal) {
+      // Reversão: apaga apenas o componente/mês do período atual (não afeta outros meses)
+      const parts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
+      try {
+        if (parts.mensalidadeInPeriod && parts.mensalidadeMonthKey) {
+          await clearCommissionPaymentForComponent(dealId, "mensalidade", parts.mensalidadeMonthKey);
+        }
+        if (parts.implantacaoInPeriod && parts.implantacaoMonthKey) {
+          await clearCommissionPaymentForComponent(dealId, "implantacao", parts.implantacaoMonthKey);
+        }
+      } catch (cpErr: any) {
+        toast.error("Erro ao reverter comissão: " + cpErr.message);
+        return;
+      }
+      const { error } = await (supabase as any)
+        .from("deals")
+        .update({ is_paid_to_user: false, is_user_confirmed_payment: null })
+        .eq("id", dealId);
+      if (error) { toast.error("Erro: " + error.message); return; }
+      toast.success("Baixa de comissão desmarcada");
     }
+
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
