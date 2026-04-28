@@ -10,9 +10,11 @@ const dbToDeal = (db: any): Deal => ({
   closingDate: db.closing_date,
   implantationValue: db.implantation_value,
   monthlyValue: db.monthly_value,
-  isImplantacaoPaid: db.is_implantacao_paid,
+  isImplantacaoPaid: db.is_implantacao_paid_by_client ?? db.is_implantacao_paid,
   isMensalidadePaid: db.is_mensalidade_paid,
   actualPaymentDate: db.actual_payment_date,
+  mensalidadePaymentDate: db.mensalidade_payment_date ?? db.actual_payment_date,
+  implantacaoPaymentDate: db.implantacao_payment_date,
   isMensalidadePaidByClient: db.is_mensalidade_paid_by_client,
   isPaidToUser: db.is_paid_to_user,
   isUserConfirmedPayment: db.is_user_confirmed_payment,
@@ -38,6 +40,7 @@ const dealToDb = (deal: Partial<Deal>) => {
     implantation_value: deal.implantationValue,
     monthly_value: deal.monthlyValue,
     is_implantacao_paid: deal.isImplantacaoPaid,
+    is_implantacao_paid_by_client: deal.isImplantacaoPaid,
     is_mensalidade_paid: deal.isMensalidadePaid,
     is_paid_to_user: deal.isPaidToUser,
     is_user_confirmed_payment: deal.isUserConfirmedPayment,
@@ -49,6 +52,8 @@ const dealToDb = (deal: Partial<Deal>) => {
     implantation_payment_date: deal.implantationPaymentDate,
     first_payment_date: deal.firstPaymentDate,
     actual_payment_date: deal.actualPaymentDate,
+    mensalidade_payment_date: deal.mensalidadePaymentDate,
+    implantacao_payment_date: deal.implantacaoPaymentDate,
     commission_amount_snapshot: deal.commissionAmountSnapshot,
     commission_rate_snapshot: deal.commissionRateSnapshot,
     payment_status: deal.paymentStatus,
@@ -106,7 +111,7 @@ export async function fetchDeals(role: UserRole, userId?: string, position?: str
   if (res.error) {
     console.error("[fetchDeals] Erro na busca principal:", res.error);
     // Fallback: busca sem filtro se der erro de coluna
-    let fallbackQuery = (supabase as any).from("deals").select("*");
+    let fallbackQuery = (supabase as any).from("deals").select("*").eq("is_test_data", isTestEnv);
     if (position === "Diretor") {
       // Diretor vê tudo
     } else if (position === "SDR") {
@@ -156,7 +161,7 @@ export async function fetchAvailableYears(): Promise<number[]> {
   const isTestEnv = user?.email?.endsWith("@teste.com") || false;
   const { data, error } = await (supabase as any)
     .from("deals")
-    .select("closing_date, first_payment_date, actual_payment_date")
+    .select("closing_date, first_payment_date, implantation_payment_date")
     .eq("is_test_data", isTestEnv);
 
   if (error) {
@@ -166,10 +171,12 @@ export async function fetchAvailableYears(): Promise<number[]> {
 
   const years = new Set<number>();
   data?.forEach((d) => {
-    const baseDate = d.actual_payment_date || d.first_payment_date || d.closing_date;
-    if (baseDate) {
-      years.add(Number(getPaymentDateInfo(baseDate).monthKey.slice(0, 4)));
-    }
+    const dates = [d.first_payment_date || d.closing_date, d.implantation_payment_date || d.first_payment_date || d.closing_date];
+    dates.forEach((baseDate) => {
+      if (baseDate) {
+        years.add(Number(getPaymentDateInfo(baseDate).monthKey.slice(0, 4)));
+      }
+    });
   });
 
   // Fallback to current year if empty

@@ -31,6 +31,8 @@ export interface Deal {
   isImplantacaoPaid?: boolean;
   isMensalidadePaid?: boolean;
   actualPaymentDate?: string;
+  mensalidadePaymentDate?: string;
+  implantacaoPaymentDate?: string;
 }
 
 export interface OperationPresentations {

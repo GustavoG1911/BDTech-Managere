@@ -1,14 +1,12 @@
-import { Bell, CheckCheck, BellDot, ExternalLink, CheckCircle2 } from "lucide-react";
+import { Bell, CheckCheck, BellDot, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useNotifications } from "@/hooks/useNotifications";
-import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { toast } from "sonner";
 
 export function NotificationBell() {
   const { user } = useAuth();
@@ -26,22 +24,7 @@ export function NotificationBell() {
   const handleViewDetails = (notifId: string, dealId?: string) => {
     markRead(notifId);
     setOpen(false);
-    navigate("/financeiro", { state: { scrollToPending: true } });
-  };
-
-  const handleConfirm = async (notifId: string, dealId: string) => {
-    const { error } = await (supabase as any)
-      .from("deals")
-      .update({ is_user_confirmed_payment: true })
-      .eq("id", dealId);
-    if (error) {
-      toast.error("Erro ao confirmar recebimento");
-      return;
-    }
-    markRead(notifId);
-    setOpen(false);
-    toast.success("Recebimento confirmado!");
-    navigate("/financeiro");
+    navigate("/financeiro", { state: { scrollToPending: true, dealId } });
   };
 
   const formatTime = (createdAt: string) => {
@@ -127,18 +110,8 @@ export function NotificationBell() {
                         onClick={() => handleViewDetails(n.id, n.dealId)}
                       >
                         <ExternalLink className="h-3 w-3 mr-1" />
-                        Ver Detalhes
+                        Ver e confirmar
                       </Button>
-                      {n.dealId && !n.isRead && (
-                        <Button
-                          size="sm"
-                          className="h-6 text-[10px] px-2 bg-success hover:bg-success/90 text-success-foreground"
-                          onClick={() => handleConfirm(n.id, n.dealId!)}
-                        >
-                          <CheckCircle2 className="h-3 w-3 mr-1" />
-                          Confirmar
-                        </Button>
-                      )}
                     </div>
                   </div>
                 </div>
