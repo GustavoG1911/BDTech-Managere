@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, BadgeDollarSign, Calendar, ChevronDown, ChevronUp, Clock, FileText, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, Check, Loader2, Wallet, Plus, CalendarDays, FileDown, Printer, HelpCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
-import { createNotification } from "@/lib/supabase-deals";
+import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentsForDeal, confirmCommissionPaymentsForDeal } from "@/lib/supabase-deals";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
@@ -596,6 +596,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       toast.error("Pagamento não encontrado ou ainda não liberado para confirmação.");
       return;
     }
+    await confirmCommissionPaymentsForDeal(dealId).catch(console.error);
     toast.success("Recebimento confirmado e ciclo encerrado!");
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["user-finance-data", userId] });
@@ -1073,10 +1074,17 @@ function FinanceiroContent() {
       .eq("id", dealId);
     if (error) { toast.error("Erro: " + error.message); return; }
     toast.success(newStatus ? "Comissão paga com sucesso!" : "Baixa de comissão desmarcada");
-    if (newStatus) {
-      const deal = activeDeals.find((d) => d.id === dealId);
-      if (deal?.userId) {
-        const parts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
+    const deal = activeDeals.find((d) => d.id === dealId);
+    if (newStatus && deal) {
+      const parts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
+      // Upsert commission_payments para cada componente com valor no período
+      if (parts.mensalidadeInPeriod && parts.mensalidadeCommission > 0 && parts.mensalidadeMonthKey) {
+        await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, deal.isTestData || false).catch(console.error);
+      }
+      if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey) {
+        await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, deal.isTestData || false).catch(console.error);
+      }
+      if (deal.userId) {
         const details = parts.labels.length > 0 ? ` (${parts.labels.join(" + ")})` : "";
         await createNotification(
           deal.userId,
@@ -1085,6 +1093,8 @@ function FinanceiroContent() {
           deal.id
         );
       }
+    } else if (!newStatus) {
+      await clearCommissionPaymentsForDeal(dealId).catch(console.error);
     }
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });

@@ -372,3 +372,62 @@ export async function markAllNotificationsRead(userId: string): Promise<void> {
     .eq("user_id", userId)
     .eq("is_read", false);
 }
+
+// ─── commission_payments ───────────────────────────────────────────────────────
+
+export interface CommissionPayment {
+  id: string;
+  dealId: string;
+  component: "mensalidade" | "implantacao";
+  competenceMonth: string;
+  amount: number;
+  paidByDirectorAt: string | null;
+  confirmedByUserAt: string | null;
+  isTestData: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function upsertCommissionPaymentRow(
+  dealId: string,
+  component: "mensalidade" | "implantacao",
+  competenceMonth: string,
+  amount: number,
+  isTestData: boolean
+): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await (supabase as any)
+    .from("commission_payments")
+    .upsert(
+      {
+        deal_id: dealId,
+        component,
+        competence_month: competenceMonth,
+        amount,
+        paid_by_director_at: now,
+        confirmed_by_user_at: null,
+        is_test_data: isTestData,
+        updated_at: now,
+      },
+      { onConflict: "deal_id,component,competence_month" }
+    );
+  if (error) throw error;
+}
+
+export async function clearCommissionPaymentsForDeal(dealId: string): Promise<void> {
+  const { error } = await (supabase as any)
+    .from("commission_payments")
+    .delete()
+    .eq("deal_id", dealId);
+  if (error) throw error;
+}
+
+export async function confirmCommissionPaymentsForDeal(dealId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await (supabase as any)
+    .from("commission_payments")
+    .update({ confirmed_by_user_at: now, updated_at: now })
+    .eq("deal_id", dealId)
+    .not("paid_by_director_at", "is", null);
+  if (error) throw error;
+}
