@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { Deal, PaymentStatus, MonthlyPresentations } from "./types";
 import { UserRole } from "@/hooks/useAuth";
+import { getPaymentDateInfo } from "./commission";
 
 const dbToDeal = (db: any): Deal => ({
   id: db.id,
@@ -9,9 +10,11 @@ const dbToDeal = (db: any): Deal => ({
   closingDate: db.closing_date,
   implantationValue: db.implantation_value,
   monthlyValue: db.monthly_value,
-  isImplantacaoPaid: db.is_implantacao_paid,
+  isImplantacaoPaid: db.is_implantacao_paid_by_client ?? db.is_implantacao_paid,
   isMensalidadePaid: db.is_mensalidade_paid,
   actualPaymentDate: db.actual_payment_date,
+  mensalidadePaymentDate: db.mensalidade_payment_date ?? db.actual_payment_date,
+  implantacaoPaymentDate: db.implantacao_payment_date,
   isMensalidadePaidByClient: db.is_mensalidade_paid_by_client,
   isPaidToUser: db.is_paid_to_user,
   isUserConfirmedPayment: db.is_user_confirmed_payment,
@@ -37,6 +40,7 @@ const dealToDb = (deal: Partial<Deal>) => {
     implantation_value: deal.implantationValue,
     monthly_value: deal.monthlyValue,
     is_implantacao_paid: deal.isImplantacaoPaid,
+    is_implantacao_paid_by_client: deal.isImplantacaoPaid,
     is_mensalidade_paid: deal.isMensalidadePaid,
     is_paid_to_user: deal.isPaidToUser,
     is_user_confirmed_payment: deal.isUserConfirmedPayment,
@@ -48,6 +52,8 @@ const dealToDb = (deal: Partial<Deal>) => {
     implantation_payment_date: deal.implantationPaymentDate,
     first_payment_date: deal.firstPaymentDate,
     actual_payment_date: deal.actualPaymentDate,
+    mensalidade_payment_date: deal.mensalidadePaymentDate,
+    implantacao_payment_date: deal.implantacaoPaymentDate,
     commission_amount_snapshot: deal.commissionAmountSnapshot,
     commission_rate_snapshot: deal.commissionRateSnapshot,
     payment_status: deal.paymentStatus,
@@ -137,6 +143,9 @@ export async function upsertDeal(deal: Deal): Promise<Deal> {
 
   if (error) {
     console.error("Error upserting deal:", error);
+    if (error.message?.includes("sdr_user_id")) {
+      throw new Error("O campo SDR ainda não existe no banco. Execute a migration add_sdr_user_id_to_deals no Supabase antes de salvar um SDR no fechamento.");
+    }
     throw error;
   }
   return dbToDeal(data);
@@ -152,7 +161,7 @@ export async function fetchAvailableYears(): Promise<number[]> {
   const isTestEnv = user?.email?.endsWith("@teste.com") || false;
   const { data, error } = await (supabase as any)
     .from("deals")
-    .select("closing_date")
+    .select("closing_date, first_payment_date, implantation_payment_date")
     .eq("is_test_data", isTestEnv);
 
   if (error) {
@@ -162,9 +171,12 @@ export async function fetchAvailableYears(): Promise<number[]> {
 
   const years = new Set<number>();
   data?.forEach((d) => {
-    if (d.closing_date) {
-      years.add(new Date(d.closing_date).getFullYear());
-    }
+    const dates = [d.first_payment_date || d.closing_date, d.implantation_payment_date || d.first_payment_date || d.closing_date];
+    dates.forEach((baseDate) => {
+      if (baseDate) {
+        years.add(Number(getPaymentDateInfo(baseDate).monthKey.slice(0, 4)));
+      }
+    });
   });
 
   // Fallback to current year if empty

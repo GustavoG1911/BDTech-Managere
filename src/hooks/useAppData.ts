@@ -129,7 +129,8 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
       await loadDeals();
     } catch (err: unknown) {
       console.error("Error saving deal:", err instanceof Error ? err.message : err);
-      toast.error("Erro ao salvar fechamento");
+      const message = err instanceof Error ? err.message : "Erro ao salvar fechamento";
+      toast.error(message.includes("campo SDR") ? message : "Erro ao salvar fechamento");
     }
   }, [loadDeals]);
 
