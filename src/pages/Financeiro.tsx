@@ -350,12 +350,12 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const currentMonthKey = getMonthKey(new Date());
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
   const monthOptions = useMemo(() => buildMonthOptions(), []);
+  const [pendingScroll, setPendingScroll] = useState(false);
 
   useEffect(() => {
     if ((location.state as any)?.scrollToPending) {
-      setTimeout(() => {
-        document.getElementById("pending-confirmations")?.scrollIntoView({ behavior: "smooth" });
-      }, 150);
+      setPendingScroll(true);
+      refreshDeals();
     }
   }, [location.state]);
 
@@ -409,6 +409,15 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     () => activeDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment),
     [activeDeals]
   );
+
+  useEffect(() => {
+    if (pendingScroll && pendingConfirmations.length > 0) {
+      setTimeout(() => {
+        document.getElementById("pending-confirmations")?.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+      setPendingScroll(false);
+    }
+  }, [pendingScroll, pendingConfirmations.length]);
 
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number }> = {};
@@ -991,7 +1000,6 @@ function FinanceiroContent() {
         expected_payment_date: dateStr,
         is_paid_by_gestor: true,
         payment_date: new Date().toISOString(),
-        is_test_data: isTestEnv,
       })
       .select()
       .single();

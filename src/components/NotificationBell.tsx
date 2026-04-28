@@ -26,7 +26,7 @@ export function NotificationBell() {
   const handleViewDetails = (notifId: string, dealId?: string) => {
     markRead(notifId);
     setOpen(false);
-    navigate("/financeiro", { state: { scrollToPending: !!dealId } });
+    navigate("/financeiro", { state: { scrollToPending: true } });
   };
 
   const handleConfirm = async (notifId: string, dealId: string) => {

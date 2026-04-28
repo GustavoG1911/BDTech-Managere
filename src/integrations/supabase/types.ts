@@ -80,6 +80,7 @@ export type Database = {
           monthly_value: number
           operation: string
           payment_status: string
+          sdr_user_id: string | null
           updated_at: string
           user_confirmed_receipt: boolean | null
           user_id: string | null
@@ -116,6 +117,7 @@ export type Database = {
           monthly_value?: number
           operation?: string
           payment_status?: string
+          sdr_user_id?: string | null
           updated_at?: string
           user_confirmed_receipt?: boolean | null
           user_id?: string | null
@@ -152,6 +154,7 @@ export type Database = {
           monthly_value?: number
           operation?: string
           payment_status?: string
+          sdr_user_id?: string | null
           updated_at?: string
           user_confirmed_receipt?: boolean | null
           user_id?: string | null
