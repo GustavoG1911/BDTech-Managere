@@ -168,6 +168,30 @@ function getCommissionPeriodParts(deal: Deal, presentations: any, settings: any,
   };
 }
 
+function getSettingsForRecipient(settings: any, profiles: ProfileMap, recipientUserId?: string) {
+  const commissionPercent = recipientUserId ? profiles[recipientUserId]?.commission_percent : undefined;
+  if (typeof commissionPercent === "number" && commissionPercent > 0) {
+    return { ...settings, commissionRate: commissionPercent / 100 };
+  }
+  return settings;
+}
+
+function getCommissionPeriodPartsForRecipient(
+  deal: Deal,
+  presentations: any,
+  settings: any,
+  period: FinancePeriod,
+  profiles: ProfileMap,
+  recipientUserId?: string
+) {
+  return getCommissionPeriodParts(
+    deal,
+    presentations,
+    getSettingsForRecipient(settings, profiles, recipientUserId),
+    period
+  );
+}
+
 function getCommissionStatusForParts(deal: Deal, parts: ReturnType<typeof getCommissionPeriodParts>): "locked" | "ready" | "waiting" | "done" {
   if (parts.total <= 0 || !parts.unlocked) return "locked";
   if (deal.isUserConfirmedPayment) return "done";
@@ -1120,26 +1144,41 @@ function FinanceiroContent() {
     const deal = activeDeals.find((d) => d.id === dealId);
 
     if (newStatus && deal) {
-      const parts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
+      const period = { filterType, selectedMonth, selectedYear };
+      const executivoParts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles, deal.userId);
+      const sdrParts = deal.sdrUserId && deal.sdrUserId !== deal.userId
+        ? getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles, deal.sdrUserId)
+        : null;
       const isTestData = deal.isTestData || false;
+      const upsertPartsForRecipient = async (
+        recipientUserId: string | undefined,
+        parts: ReturnType<typeof getCommissionPeriodParts>
+      ) => {
+        if (!recipientUserId) return;
+        if (parts.mensalidadeInPeriod && parts.mensalidadeCommission > 0 && parts.mensalidadeMonthKey) {
+          await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, isTestData, recipientUserId);
+        }
+        if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey) {
+          await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, isTestData, recipientUserId);
+        }
+      };
+      const clearPartsForRecipient = async (
+        recipientUserId: string | undefined,
+        parts: ReturnType<typeof getCommissionPeriodParts>
+      ) => {
+        if (!recipientUserId) return;
+        if (parts.mensalidadeInPeriod && parts.mensalidadeMonthKey) {
+          await clearCommissionPaymentForComponent(dealId, "mensalidade", parts.mensalidadeMonthKey, recipientUserId).catch(console.error);
+        }
+        if (parts.implantacaoInPeriod && parts.implantacaoMonthKey) {
+          await clearCommissionPaymentForComponent(dealId, "implantacao", parts.implantacaoMonthKey, recipientUserId).catch(console.error);
+        }
+      };
 
       // 1. Grava commission_payments PRIMEIRO (se falhar, aborta sem alterar o deal)
       try {
-        if (parts.mensalidadeInPeriod && parts.mensalidadeCommission > 0 && parts.mensalidadeMonthKey && deal.userId) {
-          await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, isTestData, deal.userId);
-        }
-        if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey && deal.userId) {
-          await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, isTestData, deal.userId);
-        }
-        // SDR vinculado recebe registro separado
-        if (deal.sdrUserId && deal.sdrUserId !== deal.userId) {
-          if (parts.mensalidadeInPeriod && parts.mensalidadeCommission > 0 && parts.mensalidadeMonthKey) {
-            await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, isTestData, deal.sdrUserId);
-          }
-          if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey) {
-            await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, isTestData, deal.sdrUserId);
-          }
-        }
+        await upsertPartsForRecipient(deal.userId, executivoParts);
+        if (sdrParts) await upsertPartsForRecipient(deal.sdrUserId, sdrParts);
       } catch (cpErr: any) {
         toast.error("Erro ao registrar comissão: " + cpErr.message);
         return;
@@ -1152,23 +1191,21 @@ function FinanceiroContent() {
         .eq("id", dealId);
       if (error) {
         // Rollback: apaga os registros de commission_payments que acabamos de criar
-        if (parts.mensalidadeInPeriod && parts.mensalidadeMonthKey) {
-          await clearCommissionPaymentForComponent(dealId, "mensalidade", parts.mensalidadeMonthKey).catch(console.error);
-        }
-        if (parts.implantacaoInPeriod && parts.implantacaoMonthKey) {
-          await clearCommissionPaymentForComponent(dealId, "implantacao", parts.implantacaoMonthKey).catch(console.error);
-        }
+        await clearPartsForRecipient(deal.userId, executivoParts);
+        if (sdrParts) await clearPartsForRecipient(deal.sdrUserId, sdrParts);
         toast.error("Erro: " + error.message);
         return;
       }
 
       // 3. Notifica Executivo e SDR (se houver)
-      const details = parts.labels.length > 0 ? ` (${parts.labels.join(" + ")})` : "";
+      const details = executivoParts.labels.length > 0 ? ` (${executivoParts.labels.join(" + ")})` : "";
       const notifTitle = "Comissão disponível 💰";
       const notifMsg = `Sua comissão${details} referente ao cliente ${deal.clientName} foi marcada como paga pelo gestor. Acesse o Financeiro para confirmar o recebimento.`;
       if (deal.userId) await createNotification(deal.userId, notifTitle, notifMsg, deal.id);
-      if (deal.sdrUserId && deal.sdrUserId !== deal.userId) {
-        await createNotification(deal.sdrUserId, notifTitle, notifMsg, deal.id);
+      if (sdrParts && deal.sdrUserId && deal.sdrUserId !== deal.userId) {
+        const sdrDetails = sdrParts.labels.length > 0 ? ` (${sdrParts.labels.join(" + ")})` : "";
+        const sdrNotifMsg = `Sua comissão${sdrDetails} referente ao cliente ${deal.clientName} foi marcada como paga pelo gestor. Acesse o Financeiro para confirmar o recebimento.`;
+        await createNotification(deal.sdrUserId, notifTitle, sdrNotifMsg, deal.id);
       }
       toast.success("Comissão paga com sucesso!");
 
@@ -1738,10 +1775,13 @@ interface PayablesTabProps {
   onCreateAndToggleSalaryPayment: (userId: string, amount: number, referenceMonth: string) => void;
 }
 
-function ExpandableCommissionRow({ deal, settings, getUserName, presentations, period, onToggleCommissionPayment }: any) {
+function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presentations, period, onToggleCommissionPayment }: any) {
   const [expanded, setExpanded] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const parts = getCommissionPeriodParts(deal, presentations, settings, period);
+  const parts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, deal.userId);
+  const sdrParts = deal.sdrUserId && deal.sdrUserId !== deal.userId
+    ? getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, deal.sdrUserId)
+    : null;
   const commissionStatus = getCommissionStatusForParts(deal, parts);
 
   const baseDate = parts.mensalidadeInPeriod ? deal.firstPaymentDate : parts.implantacaoInPeriod ? deal.implantationPaymentDate : deal.firstPaymentDate || deal.implantationPaymentDate;
@@ -1753,7 +1793,7 @@ function ExpandableCommissionRow({ deal, settings, getUserName, presentations, p
   }
 
   const comm = parts.comm;
-  const dealComiss = parts.total;
+  const dealComiss = parts.total + (sdrParts?.total || 0);
   const periodBaseCommission = (parts.mensalidadeInPeriod ? comm.monthlyCommission : 0) + (parts.implantacaoInPeriod ? comm.implantationCommission : 0);
   const periodSuperMetaBonus = parts.mensalidadeInPeriod ? comm.superMetaBonus : 0;
 
@@ -1896,6 +1936,7 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
                   key={deal.id}
                   deal={deal}
                   settings={settings}
+                  profiles={profiles}
                   getUserName={getUserName}
                   presentations={presentations}
                   period={period}

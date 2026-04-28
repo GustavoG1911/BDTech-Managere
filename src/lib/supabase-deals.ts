@@ -439,14 +439,21 @@ export async function upsertCommissionPaymentRow(
 export async function clearCommissionPaymentForComponent(
   dealId: string,
   component: "mensalidade" | "implantacao",
-  competenceMonth: string
+  competenceMonth: string,
+  recipientUserId?: string
 ): Promise<void> {
-  const { error } = await (supabase as any)
+  let query = (supabase as any)
     .from("commission_payments")
     .delete()
     .eq("deal_id", dealId)
     .eq("component", component)
     .eq("competence_month", competenceMonth);
+
+  if (recipientUserId) {
+    query = query.eq("recipient_user_id", recipientUserId);
+  }
+
+  const { error } = await query;
   if (error) throw error;
 }
 
