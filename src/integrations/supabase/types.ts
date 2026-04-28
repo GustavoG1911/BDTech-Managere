@@ -262,6 +262,7 @@ export type Database = {
       notifications: {
         Row: {
           created_at: string | null
+          deal_id: string | null
           id: string
           is_read: boolean | null
           is_test_data: boolean
@@ -271,6 +272,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          deal_id?: string | null
           id?: string
           is_read?: boolean | null
           is_test_data?: boolean
@@ -280,6 +282,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          deal_id?: string | null
           id?: string
           is_read?: boolean | null
           is_test_data?: boolean

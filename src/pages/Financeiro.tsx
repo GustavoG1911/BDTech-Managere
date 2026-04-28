@@ -312,6 +312,32 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         <KpiCard title="Salário Fixo" value={formatCurrency(kpis.fixed)} icon={DollarSign} variant="default" subtitle="Remuneração fixa mensal" />
       </div>
 
+      {(() => {
+        const awaitingConfirm = filteredDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment).length;
+        const pendingPayment = filteredDeals.filter((d) => !d.isPaidToUser).length;
+        if (awaitingConfirm === 0 && pendingPayment === 0) return null;
+        return (
+          <div className="flex flex-wrap gap-3 mb-5">
+            {awaitingConfirm > 0 && (
+              <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-warning/10 border border-warning/30">
+                <span className="h-2 w-2 rounded-full bg-warning animate-pulse" />
+                <span className="text-xs font-semibold text-warning">
+                  {awaitingConfirm} comissão{awaitingConfirm > 1 ? "ões" : ""} aguardando sua confirmação
+                </span>
+              </div>
+            )}
+            {pendingPayment > 0 && (
+              <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted/40 border border-border/40">
+                <span className="h-2 w-2 rounded-full bg-muted-foreground/40" />
+                <span className="text-xs text-muted-foreground">
+                  {pendingPayment} comissão{pendingPayment > 1 ? "ões" : ""} pendente{pendingPayment > 1 ? "s" : ""} de pagamento
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <FutureProjectionsAccumulatedCard projections={futureProjections} position={position} onSelectMonth={setSelectedMonth} />
 
       <div className="space-y-5">
@@ -346,7 +372,16 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                   const comm = calculateCommission(deal, presCount, settings, false);
                   const mensalidadeComm = comm.monthlyCommission + comm.superMetaBonus;
                   return (
-                    <TableRow key={deal.id} className="border-border/25 hover:bg-[#242842]/40">
+                    <TableRow
+                      key={deal.id}
+                      className={`border-border/25 transition-colors ${
+                        deal.isUserConfirmedPayment
+                          ? "bg-success/5 hover:bg-success/10 border-l-2 border-l-success/40"
+                          : deal.isPaidToUser
+                          ? "bg-warning/5 hover:bg-warning/10 border-l-2 border-l-warning/40"
+                          : "hover:bg-[#242842]/40"
+                      }`}
+                    >
                       <TableCell className="px-4 py-3 text-sm font-medium">{deal.clientName}</TableCell>
                       <TableCell className="px-4 py-3">
                         <Badge variant="outline" className="text-[10px] border-border/40">{deal.operation}</Badge>
@@ -584,6 +619,30 @@ function FinanceiroContent() {
     return { totalFixo, totalProjetado, totalPago, volumeTotal };
   }, [filteredDeals, filteredSalaries, filterType, selectedMonth, selectedYear, presentations, settings]);
 
+  // Rows para modal e Contas a Pagar: salary_payments explícitos + fallback de profiles
+  const salaryModalRows = useMemo(() => {
+    const rows: Array<SalaryRow & { isFallback?: boolean }> = [...filteredSalaries];
+    const usersWithPayments = new Set(filteredSalaries.map((s: any) => s.user_id));
+    Object.entries(profiles).forEach(([uid, profile]) => {
+      if (usersWithPayments.has(uid)) return;
+      const fixedSal = (profile as any).fixed_salary || 0;
+      if (fixedSal <= 0) return;
+      if (filtroFuncionario !== "Todos" && filtroFuncionario !== uid) return;
+      rows.push({
+        id: `fallback-${uid}`,
+        user_id: uid,
+        reference_month: filterType === "month" ? selectedMonth + "-01" : selectedYear + "-01-01",
+        amount: fixedSal,
+        expected_payment_date: (filterType === "month" ? selectedMonth : selectedYear + "-01") + "-20",
+        is_paid_by_gestor: false,
+        user_confirmed_receipt: false,
+        payment_date: null,
+        isFallback: true,
+      });
+    });
+    return rows;
+  }, [filteredSalaries, profiles, filtroFuncionario, filterType, selectedMonth, selectedYear]);
+
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number, projectedOut: number }> = {};
     const addToMap = (monthKey: string, volume: number, commission: number) => {
@@ -697,7 +756,8 @@ function FinanceiroContent() {
         await createNotification(
           deal.userId,
           "Comissão disponível 💰",
-          `Sua comissão referente ao cliente ${deal.clientName} foi marcada como paga pelo gestor. Acesse o Financeiro para confirmar o recebimento.`
+          `Sua comissão referente ao cliente ${deal.clientName} foi marcada como paga pelo gestor. Acesse o Financeiro para confirmar o recebimento.`,
+          deal.id
         );
       }
     }
@@ -713,6 +773,28 @@ function FinanceiroContent() {
       .eq("id", salaryId);
     if (error) { toast.error("Erro: " + error.message); return; }
     toast.success(newStatus ? "Salário marcado como pago com sucesso!" : "Baixa de salário desmarcada");
+    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+  };
+
+  const handleCreateAndToggleSalaryPayment = async (userId: string, amount: number, referenceMonth: string) => {
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
+    const dateStr = referenceMonth.slice(0, 7) + "-20";
+    const { data, error } = await (supabase as any)
+      .from("salary_payments")
+      .insert({
+        user_id: userId,
+        amount,
+        reference_month: referenceMonth.slice(0, 7) + "-01",
+        expected_payment_date: dateStr,
+        is_paid_by_gestor: true,
+        payment_date: new Date().toISOString(),
+        is_test_data: isTestEnv,
+      })
+      .select()
+      .single();
+    if (error) { toast.error("Erro ao registrar salário: " + error.message); return; }
+    toast.success("Salário registrado e marcado como pago!");
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
@@ -869,13 +951,14 @@ function FinanceiroContent() {
         <TabsContent value="payables" className="mt-0">
           <PayablesTab
             deals={filteredDeals}
-            salaries={filteredSalaries}
+            salaries={salaryModalRows}
             profiles={profiles}
             getUserName={getUserName}
             presentations={presentations}
             settings={settings}
             onToggleCommissionPayment={handleToggleCommissionPayment}
             onToggleSalaryPayment={handleToggleSalaryPayment}
+            onCreateAndToggleSalaryPayment={handleCreateAndToggleSalaryPayment}
           />
         </TabsContent>
       </Tabs>
@@ -895,23 +978,54 @@ function FinanceiroContent() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-border/30 hover:bg-transparent">
-                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">SDR</TableHead>
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Funcionário</TableHead>
                     <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Salário</TableHead>
                     <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredSalaries.map((s) => (
-                    <TableRow key={s.id} className="border-border/25 hover:bg-[#242842]/40">
-                      <TableCell className="text-sm font-medium">{getUserName(s.user_id)}</TableCell>
-                      <TableCell className="text-right font-mono font-semibold">{formatCurrency(s.amount)}</TableCell>
-                      <TableCell className="text-center">
-                        {s.is_paid_by_gestor ? (
-                          <span className="pill-green">Pago</span>
-                        ) : (
-                          <span className="pill-yellow">Pendente</span>
-                        )}
-                      </TableCell>
+                  {salaryModalRows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-center text-sm text-muted-foreground py-8">Nenhum salário fixo cadastrado.</TableCell>
+                    </TableRow>
+                  ) : (
+                    salaryModalRows.map((s) => (
+                      <TableRow key={s.id} className="border-border/25 hover:bg-[#242842]/40">
+                        <TableCell className="text-sm font-medium">{getUserName(s.user_id)}</TableCell>
+                        <TableCell className="text-right font-mono font-semibold">{formatCurrency(s.amount)}</TableCell>
+                        <TableCell className="text-center">
+                          {s.is_paid_by_gestor ? (
+                            <span className="pill-green">Pago</span>
+                          ) : (
+                            <span className="pill-yellow">Pendente</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            ) : kpiModalType === "volume" ? (
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border/30 hover:bg-transparent">
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Cliente</TableHead>
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Operação</TableHead>
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Executivo</TableHead>
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Mensalidade</TableHead>
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Implantação</TableHead>
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Total Contrato</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredDeals.map((d) => (
+                    <TableRow key={d.id} className="border-border/25 hover:bg-[#242842]/40">
+                      <TableCell className="text-sm font-medium">{d.clientName}</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px] border-border/40">{d.operation}</Badge></TableCell>
+                      <TableCell className="text-sm">{getUserName(d.userId)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{d.monthlyValue > 0 ? formatCurrency(d.monthlyValue) : "—"}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{d.implantationValue > 0 ? formatCurrency(d.implantationValue) : "—"}</TableCell>
+                      <TableCell className="text-right font-mono font-bold text-primary">{formatCurrency((d.monthlyValue || 0) + (d.implantationValue || 0))}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -922,7 +1036,7 @@ function FinanceiroContent() {
                   <TableRow className="border-border/30 hover:bg-transparent">
                     <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Cliente</TableHead>
                     <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Operação</TableHead>
-                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">SDR</TableHead>
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Executivo</TableHead>
                     <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Comissão</TableHead>
                     <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Status</TableHead>
                   </TableRow>
@@ -930,7 +1044,6 @@ function FinanceiroContent() {
                 <TableBody>
                   {filteredDeals
                     .filter((d) => {
-                      if (kpiModalType === "volume") return true;
                       if (kpiModalType === "pago") return d.isPaidToUser === true;
                       if (kpiModalType === "projetado") return d.isPaidToUser === false;
                       return false;
@@ -938,19 +1051,17 @@ function FinanceiroContent() {
                     .map((d) => {
                       const presCount = getPresentationsForDeal(d, presentations);
                       const comm = calculateCommission(d, presCount, settings, false);
-                      const val = comm.totalCommission;
-
                       return (
                         <TableRow key={d.id} className="border-border/25 hover:bg-[#242842]/40">
                           <TableCell className="text-sm font-medium">{d.clientName}</TableCell>
                           <TableCell><Badge variant="outline" className="text-[10px] border-border/40">{d.operation}</Badge></TableCell>
                           <TableCell className="text-sm">{getUserName(d.userId)}</TableCell>
-                          <TableCell className="text-right font-mono font-bold text-primary">{formatCurrency(val)}</TableCell>
+                          <TableCell className="text-right font-mono font-bold text-primary">{formatCurrency(comm.totalCommission)}</TableCell>
                           <TableCell className="text-center">
                             {d.isUserConfirmedPayment ? (
                               <span className="pill-green">Recebido</span>
                             ) : d.isPaidToUser ? (
-                              <span className="pill-blue">Aguardando SDR</span>
+                              <span className="pill-blue">Aguardando Confirmação</span>
                             ) : (
                               <span className="pill-yellow">Pendente</span>
                             )}
@@ -1017,7 +1128,10 @@ function ExpandableReceivablesRow({ deal, selectedMonth, getUserName, onToggleMe
         <TableCell className="px-3 py-3 text-sm text-muted-foreground">{getUserName(deal.userId)}</TableCell>
         <TableCell className="px-3 py-3 text-sm text-muted-foreground">{deal.sdrUserId ? getUserName(deal.sdrUserId) : "—"}</TableCell>
         <TableCell className="px-3 py-3 text-right text-sm font-mono font-semibold text-foreground/90">
-          {formatCurrency(totalValue > 0 ? totalValue : (deal.monthlyValue + deal.implantationValue))}
+          {expectMensalidade && deal.monthlyValue > 0 ? formatCurrency(deal.monthlyValue) : "—"}
+        </TableCell>
+        <TableCell className="px-3 py-3 text-right text-sm font-mono font-semibold text-foreground/90">
+          {expectImplantacao && deal.implantationValue > 0 ? formatCurrency(deal.implantationValue) : "—"}
         </TableCell>
         <TableCell className="px-3 py-3 text-sm text-muted-foreground text-center tabular-nums font-mono">
           {expectedPaymentDateStr}
@@ -1039,7 +1153,7 @@ function ExpandableReceivablesRow({ deal, selectedMonth, getUserName, onToggleMe
       </TableRow>
       {expanded && (
         <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={9} className="p-0">
+          <TableCell colSpan={10} className="p-0">
             <div className="px-5 py-4 bg-[#242842]/60 border-t border-border/30 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 
               {deal.monthlyValue > 0 && deal.firstPaymentDate && getMonthKey(deal.firstPaymentDate) === selectedMonth && (
@@ -1148,7 +1262,8 @@ function ReceivablesTab({ deals, selectedMonth, getUserName, onToggleMensalidade
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Operação</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Executivo</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">SDR</TableHead>
-              <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Valor</TableHead>
+              <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Mensalidade</TableHead>
+              <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Implantação</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Data Prevista</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Data Realizada</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center w-[120px]">Status</TableHead>
@@ -1177,18 +1292,20 @@ function ReceivablesTab({ deals, selectedMonth, getUserName, onToggleMensalidade
 
 interface PayablesTabProps {
   deals: Deal[];
-  salaries: SalaryRow[];
+  salaries: Array<SalaryRow & { isFallback?: boolean }>;
   profiles: ProfileMap;
   getUserName: (id: string) => string;
   presentations: any;
   settings: any;
   onToggleCommissionPayment: (dealId: string, currentStatus: boolean, specificDate?: string) => void;
   onToggleSalaryPayment: (salaryId: string, currentStatus: boolean) => void;
+  onCreateAndToggleSalaryPayment: (userId: string, amount: number, referenceMonth: string) => void;
 }
 
 function ExpandableCommissionRow({ deal, settings, getUserName, presentations, onToggleCommissionPayment }: any) {
   const [expanded, setExpanded] = useState(false);
-  const [payDate, setPayDate] = useState(deal.userPaymentDate ? deal.userPaymentDate.slice(0, 10) : new Date().toISOString().slice(0, 10));
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [payDate, setPayDate] = useState(deal.actualPaymentDate ? deal.actualPaymentDate.slice(0, 10) : new Date().toISOString().slice(0, 10));
 
   const baseDate = deal.firstPaymentDate || deal.implantationPaymentDate;
   let expectedPaymentDateStr = "Data Pendente";
@@ -1204,7 +1321,16 @@ function ExpandableCommissionRow({ deal, settings, getUserName, presentations, o
 
   return (
     <>
-      <TableRow onClick={() => setExpanded(!expanded)} className="border-border/25 cursor-pointer hover:bg-[#242842]/40 transition-colors">
+      <TableRow
+        onClick={() => setExpanded(!expanded)}
+        className={`border-border/25 cursor-pointer transition-colors ${
+          deal.isUserConfirmedPayment
+            ? "bg-success/5 hover:bg-success/10 border-l-2 border-l-success/40"
+            : deal.isPaidToUser
+            ? "bg-warning/5 hover:bg-warning/10 border-l-2 border-l-warning/40"
+            : "hover:bg-[#242842]/40"
+        }`}
+      >
         <TableCell className="w-[30px] px-2 py-3">
           {expanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/50" />}
         </TableCell>
@@ -1220,14 +1346,14 @@ function ExpandableCommissionRow({ deal, settings, getUserName, presentations, o
           {expectedPaymentDateStr}
         </TableCell>
         <TableCell className="px-3 py-3 text-sm text-center">
-          {deal.userPaymentDate ? (
-            <span className="text-success text-xs font-semibold tabular-nums font-mono">{formatSafeDate(deal.userPaymentDate)}</span>
+          {deal.actualPaymentDate ? (
+            <span className="text-success text-xs font-semibold tabular-nums font-mono">{formatSafeDate(deal.actualPaymentDate)}</span>
           ) : (
             <span className="text-[11px] text-muted-foreground/50 italic">A aguardar</span>
           )}
         </TableCell>
         <TableCell className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-          <Popover>
+          <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
             <PopoverTrigger asChild>
               <Button
                 size="sm"
@@ -1240,7 +1366,7 @@ function ExpandableCommissionRow({ deal, settings, getUserName, presentations, o
                     : "bg-success hover:bg-success/90 text-success-foreground"
                 }`}
               >
-                {deal.isUserConfirmedPayment ? "Pago (Confirmado)" : deal.isPaidToUser ? "Aguardando SDR" : "Dar Baixa"}
+                {deal.isUserConfirmedPayment ? "Pago (Confirmado)" : deal.isPaidToUser ? "Aguardando Confirmação" : "Dar Baixa"}
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-64 p-3 shadow-lg bg-card border-border/60" align="end">
@@ -1253,7 +1379,7 @@ function ExpandableCommissionRow({ deal, settings, getUserName, presentations, o
                 <Button
                   size="sm"
                   className={`w-full h-8 text-xs ${deal.isPaidToUser ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground" : "bg-success hover:bg-success/90 text-success-foreground"}`}
-                  onClick={() => onToggleCommissionPayment(deal.id, deal.isPaidToUser || false, payDate)}
+                  onClick={() => { onToggleCommissionPayment(deal.id, deal.isPaidToUser || false, payDate); setPopoverOpen(false); }}
                 >
                   {deal.isPaidToUser ? "Remover Baixa" : "Confirmar Recebido"}
                 </Button>
@@ -1291,7 +1417,7 @@ function ExpandableCommissionRow({ deal, settings, getUserName, presentations, o
   );
 }
 
-function PayablesTab({ deals, salaries, profiles, getUserName, presentations, settings, onToggleCommissionPayment, onToggleSalaryPayment }: PayablesTabProps) {
+function PayablesTab({ deals, salaries, profiles, getUserName, presentations, settings, onToggleCommissionPayment, onToggleSalaryPayment, onCreateAndToggleSalaryPayment }: PayablesTabProps) {
   return (
     <div className="space-y-5">
       {/* Commissions */}
@@ -1360,15 +1486,28 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
               </TableRow>
             ) : (
               salaries.map((s) => (
-                <TableRow key={s.id} className="border-border/25 hover:bg-[#242842]/40">
-                  <TableCell className="px-4 py-3 text-sm font-medium">{getUserName(s.user_id)}</TableCell>
+                <TableRow key={s.id} className={`border-border/25 hover:bg-[#242842]/40 ${s.is_paid_by_gestor ? "bg-success/5" : ""}`}>
+                  <TableCell className="px-4 py-3 text-sm font-medium">
+                    {getUserName(s.user_id)}
+                    {(s as any).isFallback && (
+                      <span className="ml-2 text-[9px] text-muted-foreground/50 italic">sem registro</span>
+                    )}
+                  </TableCell>
                   <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold">{formatCurrency(s.amount)}</TableCell>
-                  <TableCell className="px-4 py-3 text-sm text-muted-foreground">{new Date(s.expected_payment_date + "T12:00:00").toLocaleDateString("pt-BR")}</TableCell>
+                  <TableCell className="px-4 py-3 text-sm text-muted-foreground">{formatSafeDate(s.expected_payment_date)}</TableCell>
                   <TableCell className="px-4 py-3 text-center">
-                    <Checkbox
-                      checked={s.is_paid_by_gestor || false}
-                      onCheckedChange={() => onToggleSalaryPayment(s.id, s.is_paid_by_gestor || false)}
-                    />
+                    {(s as any).isFallback ? (
+                      <Checkbox
+                        checked={false}
+                        onCheckedChange={() => onCreateAndToggleSalaryPayment(s.user_id, s.amount, s.reference_month)}
+                        title="Clique para registrar e marcar como pago"
+                      />
+                    ) : (
+                      <Checkbox
+                        checked={s.is_paid_by_gestor || false}
+                        onCheckedChange={() => onToggleSalaryPayment(s.id, s.is_paid_by_gestor || false)}
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               ))

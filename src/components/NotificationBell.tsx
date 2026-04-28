@@ -1,22 +1,47 @@
-import { Bell, CheckCheck, BellDot } from "lucide-react";
+import { Bell, CheckCheck, BellDot, ExternalLink, CheckCircle2 } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useNotifications } from "@/hooks/useNotifications";
+import { supabase } from "@/integrations/supabase/client";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { toast } from "sonner";
 
 export function NotificationBell() {
   const { user } = useAuth();
-  const { notifications, unreadCount, markAllRead } = useNotifications(user?.id);
+  const { notifications, unreadCount, markAllRead, markRead } = useNotifications(user?.id);
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
 
   const handleOpenChange = (isOpen: boolean) => {
     setOpen(isOpen);
     if (isOpen && unreadCount > 0) {
       markAllRead();
     }
+  };
+
+  const handleViewDetails = (notifId: string) => {
+    markRead(notifId);
+    setOpen(false);
+    navigate("/financeiro");
+  };
+
+  const handleConfirm = async (notifId: string, dealId: string) => {
+    const { error } = await (supabase as any)
+      .from("deals")
+      .update({ is_user_confirmed_payment: true })
+      .eq("id", dealId);
+    if (error) {
+      toast.error("Erro ao confirmar recebimento");
+      return;
+    }
+    markRead(notifId);
+    setOpen(false);
+    toast.success("Recebimento confirmado!");
+    navigate("/financeiro");
   };
 
   const formatTime = (createdAt: string) => {
@@ -66,7 +91,7 @@ export function NotificationBell() {
           )}
         </div>
 
-        <div className="max-h-80 overflow-y-auto">
+        <div className="max-h-96 overflow-y-auto">
           {notifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <Bell className="h-8 w-8 text-muted-foreground/30 mb-2" />
@@ -84,7 +109,7 @@ export function NotificationBell() {
                   {!n.isRead && (
                     <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
                   )}
-                  <div className={!n.isRead ? "" : "ml-3.5"}>
+                  <div className={`flex-1 ${!n.isRead ? "" : "ml-3.5"}`}>
                     <p className="text-xs font-semibold text-foreground leading-tight">
                       {n.title}
                     </p>
@@ -94,6 +119,27 @@ export function NotificationBell() {
                     <p className="text-[10px] text-muted-foreground/50 mt-1">
                       {formatTime(n.createdAt)}
                     </p>
+                    <div className="flex gap-2 mt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] px-2 border-border/50 hover:border-primary/50 hover:text-primary"
+                        onClick={() => handleViewDetails(n.id)}
+                      >
+                        <ExternalLink className="h-3 w-3 mr-1" />
+                        Ver Detalhes
+                      </Button>
+                      {n.dealId && !n.isRead && (
+                        <Button
+                          size="sm"
+                          className="h-6 text-[10px] px-2 bg-success hover:bg-success/90 text-success-foreground"
+                          onClick={() => handleConfirm(n.id, n.dealId!)}
+                        >
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Confirmar
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

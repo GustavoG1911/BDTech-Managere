@@ -301,18 +301,20 @@ export interface AppNotification {
   isRead: boolean;
   isTestData: boolean;
   createdAt: string;
+  dealId?: string;
 }
 
 export async function createNotification(
   userId: string,
   title: string,
-  message: string
+  message: string,
+  dealId?: string
 ): Promise<void> {
   const { data: authData } = await supabase.auth.getUser();
   const isTestData = authData.user?.email?.endsWith("@teste.com") || false;
-  const { error } = await (supabase as any)
-    .from("notifications")
-    .insert({ user_id: userId, title, message, is_test_data: isTestData, is_read: false });
+  const payload: Record<string, unknown> = { user_id: userId, title, message, is_test_data: isTestData, is_read: false };
+  if (dealId) payload.deal_id = dealId;
+  const { error } = await (supabase as any).from("notifications").insert(payload);
   if (error) {
     console.error("[createNotification] Erro:", error.message);
   }
@@ -340,6 +342,7 @@ export async function fetchNotifications(userId: string): Promise<AppNotificatio
     isRead: n.is_read ?? false,
     isTestData: n.is_test_data,
     createdAt: n.created_at,
+    dealId: n.deal_id ?? undefined,
   }));
 }
 
