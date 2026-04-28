@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/hooks/useAppData";
 import { supabase } from "@/integrations/supabase/client";
 import { KpiCard } from "@/components/KpiCard";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -155,7 +155,7 @@ export default function Financeiro() {
   return <FinanceiroContent />;
 }
 
-function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, settings, onConfirm }: any) {
+function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, settings, onConfirm, inPendingSection }: any) {
   const [expanded, setExpanded] = useState(false);
   const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
   const mensalidadeInMonth = mensalidadeMonthKey === selectedMonth;
@@ -163,6 +163,10 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
   const presCount = getPresentationsForDeal(deal, presentations);
   const comm = calculateCommission(deal, presCount, settings, false);
   const mensalidadeComm = comm.monthlyCommission + comm.superMetaBonus;
+  const totalComm = comm.monthlyCommission + comm.superMetaBonus + comm.implantationCommission;
+  const dealMonth = mensalidadeMonthKey || implantacaoMonthKey;
+  const isPendingAction = deal.isPaidToUser && !deal.isUserConfirmedPayment;
+  const colSpan = inPendingSection ? 6 : 6;
 
   return (
     <>
@@ -171,29 +175,45 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
         className={`border-border/25 cursor-pointer transition-colors ${
           deal.isUserConfirmedPayment
             ? "bg-success/5 hover:bg-success/10 border-l-2 border-l-success/40"
-            : deal.isPaidToUser
-            ? "bg-warning/5 hover:bg-warning/10 border-l-2 border-l-warning/40"
+            : isPendingAction
+            ? "bg-warning/10 hover:bg-warning/15 border-l-2 border-l-warning/60"
             : "hover:bg-[#242842]/40"
         }`}
       >
         <TableCell className="w-[30px] px-2 py-3">
-          {expanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/50" />}
+          <div className="flex flex-col items-center gap-1">
+            {expanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/50" />}
+            {isPendingAction && <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />}
+          </div>
         </TableCell>
         <TableCell className="px-4 py-3 text-sm font-medium">{deal.clientName}</TableCell>
         <TableCell className="px-4 py-3">
           <Badge variant="outline" className="text-[10px] border-border/40">{deal.operation}</Badge>
         </TableCell>
-        <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold text-foreground/90">
-          {mensalidadeInMonth && mensalidadeComm > 0 ? formatCurrency(mensalidadeComm) : "—"}
-        </TableCell>
-        <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold text-foreground/90">
-          {implantacaoInMonth && comm.implantationCommission > 0 ? formatCurrency(comm.implantationCommission) : "—"}
-        </TableCell>
+        {inPendingSection ? (
+          <TableCell className="px-4 py-3 text-sm text-muted-foreground">
+            {dealMonth ? formatMonthLabel(dealMonth) : "—"}
+          </TableCell>
+        ) : (
+          <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold text-foreground/90">
+            {mensalidadeInMonth && mensalidadeComm > 0 ? formatCurrency(mensalidadeComm) : "—"}
+          </TableCell>
+        )}
+        {inPendingSection ? (
+          <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold text-warning">
+            {formatCurrency(totalComm)}
+          </TableCell>
+        ) : (
+          <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold text-foreground/90">
+            {implantacaoInMonth && comm.implantationCommission > 0 ? formatCurrency(comm.implantationCommission) : "—"}
+          </TableCell>
+        )}
         <TableCell className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
           {deal.isUserConfirmedPayment ? (
             <span className="pill-green">Recebido</span>
           ) : deal.isPaidToUser ? (
             <Button size="sm" onClick={() => onConfirm(deal.id)} className="h-7 text-[10px] bg-success hover:bg-success/90 text-success-foreground">
+              <CheckCircle2 className="h-3 w-3 mr-1" />
               Confirmar Recebimento
             </Button>
           ) : deal.isMensalidadePaidByClient || deal.isImplantacaoPaid ? (
@@ -326,9 +346,18 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const { role, user, position } = useAuth();
   const { deals = [], settings, presentations, loading: appLoading, updateAdjustment, removeDeal, addOrUpdateDeal, refreshDeals } = useAppData(role, user?.id, position);
   const queryClient = useQueryClient();
+  const location = useLocation();
   const currentMonthKey = getMonthKey(new Date());
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
   const monthOptions = useMemo(() => buildMonthOptions(), []);
+
+  useEffect(() => {
+    if ((location.state as any)?.scrollToPending) {
+      setTimeout(() => {
+        document.getElementById("pending-confirmations")?.scrollIntoView({ behavior: "smooth" });
+      }, 150);
+    }
+  }, [location.state]);
 
   const { data, isLoading: loading } = useQuery({
     queryKey: ["user-finance-data", userId],
@@ -375,6 +404,11 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const filteredSalaries = useMemo(() => {
     return activeSalaries.filter((s) => getMonthKey(s.reference_month) === selectedMonth);
   }, [activeSalaries, selectedMonth]);
+
+  const pendingConfirmations = useMemo(
+    () => activeDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment),
+    [activeDeals]
+  );
 
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number }> = {};
@@ -480,18 +514,21 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       </div>
 
       {(() => {
-        const awaitingConfirm = filteredDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment).length;
         const pendingPayment = filteredDeals.filter((d) => !d.isPaidToUser).length;
-        if (awaitingConfirm === 0 && pendingPayment === 0) return null;
+        if (pendingConfirmations.length === 0 && pendingPayment === 0) return null;
         return (
           <div className="flex flex-wrap gap-3 mb-5">
-            {awaitingConfirm > 0 && (
-              <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-warning/10 border border-warning/30">
+            {pendingConfirmations.length > 0 && (
+              <button
+                onClick={() => document.getElementById("pending-confirmations")?.scrollIntoView({ behavior: "smooth" })}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-warning/10 border border-warning/30 hover:bg-warning/20 hover:border-warning/50 transition-colors cursor-pointer"
+              >
                 <span className="h-2 w-2 rounded-full bg-warning animate-pulse" />
                 <span className="text-xs font-semibold text-warning">
-                  {awaitingConfirm} comissão{awaitingConfirm > 1 ? "ões" : ""} aguardando sua confirmação
+                  {pendingConfirmations.length} comissão{pendingConfirmations.length > 1 ? "ões" : ""} aguardando sua confirmação
                 </span>
-              </div>
+                <ChevronDown className="h-3 w-3 text-warning/70" />
+              </button>
             )}
             {pendingPayment > 0 && (
               <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted/40 border border-border/40">
@@ -504,6 +541,47 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
           </div>
         );
       })()}
+
+      {pendingConfirmations.length > 0 && (
+        <div id="pending-confirmations" className="mb-5 bg-card rounded-xl border-2 border-warning/50 overflow-hidden">
+          <div className="px-5 py-3 border-b border-warning/30 flex items-center gap-2 bg-warning/5">
+            <span className="h-2 w-2 rounded-full bg-warning animate-pulse shrink-0" />
+            <span className="text-[11px] font-semibold tracking-widest uppercase text-warning flex-1">
+              {pendingConfirmations.length} Pagamento{pendingConfirmations.length > 1 ? "s" : ""} Aguardando Confirmação
+            </span>
+            <span className="text-[10px] text-warning/60">Clique em confirmar para encerrar o ciclo</span>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow className="border-warning/20 hover:bg-transparent">
+                <TableHead className="w-[30px] px-2"></TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Cliente</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Operação</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Mês</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Comissão Total</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Ação</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pendingConfirmations.map((deal) => {
+                const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
+                const dealMonth = mensalidadeMonthKey || implantacaoMonthKey;
+                return (
+                  <ExpandableUserCommissionRow
+                    key={deal.id}
+                    deal={deal}
+                    selectedMonth={dealMonth || selectedMonth}
+                    presentations={presentations}
+                    settings={settings}
+                    onConfirm={handleSDRConfirm}
+                    inPendingSection
+                  />
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       <FutureProjectionsAccumulatedCard projections={futureProjections} position={position} onSelectMonth={setSelectedMonth} />
 

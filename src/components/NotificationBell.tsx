@@ -23,10 +23,10 @@ export function NotificationBell() {
     }
   };
 
-  const handleViewDetails = (notifId: string) => {
+  const handleViewDetails = (notifId: string, dealId?: string) => {
     markRead(notifId);
     setOpen(false);
-    navigate("/financeiro");
+    navigate("/financeiro", { state: { scrollToPending: !!dealId } });
   };
 
   const handleConfirm = async (notifId: string, dealId: string) => {
@@ -124,7 +124,7 @@ export function NotificationBell() {
                         size="sm"
                         variant="outline"
                         className="h-6 text-[10px] px-2 border-border/50 hover:border-primary/50 hover:text-primary"
-                        onClick={() => handleViewDetails(n.id)}
+                        onClick={() => handleViewDetails(n.id, n.dealId)}
                       >
                         <ExternalLink className="h-3 w-3 mr-1" />
                         Ver Detalhes
