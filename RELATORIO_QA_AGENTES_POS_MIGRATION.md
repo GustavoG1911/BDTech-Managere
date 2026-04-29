@@ -15,8 +15,10 @@ O erro acontece antes, no salvamento do fechamento em `deals`, muito provavelmen
 Arquivos alterados:
 
 - `sales-navigator/supabase/migrations/20260429000000_fix_deals_rls_by_position.sql`
+- `sales-navigator/supabase/migrations/20260429000001_repair_deals_rls_insert_policies.sql`
 - `sales-navigator/src/lib/supabase-deals.ts`
 - `sales-navigator/src/pages/Financeiro.tsx`
+- `sales-navigator/src/lib/seed-test-data.ts`
 
 O que foi corrigido:
 
@@ -30,6 +32,29 @@ O que foi corrigido:
 - Visao do Diretor busca `commission_payments` do ambiente e usa esses registros para status/KPIs quando existem.
 - Filtro de funcionario do Diretor agora considera tanto `deal.userId` quanto `deal.sdrUserId`.
 - `PayablesTab`/linha de comissao do Diretor recebe `commission_payments` para calcular status granular.
+- Seed de teste agora preenche `sdr_user_id` nos deals.
+- Seed de teste agora grava apresentacoes no usuario SDR, nao no Executivo.
+- `salary_payments` agora filtra e grava `is_test_data`, com fallback para banco ainda sem a coluna.
+
+## Checagem direta no Supabase real
+
+Foi executado teste real com `diretor@teste.com` e anon key do projeto.
+
+Resultado:
+
+- Login do Diretor: OK.
+- `profiles.position`, `profiles.is_test_data`, `commission_percent`, `fixed_salary`: OK.
+- Colunas `deals.sdr_user_id`, `deals.is_test_data`: OK.
+- Coluna `commission_payments.recipient_user_id`: OK.
+- Coluna `salary_payments.is_test_data`: OK.
+- Funcoes `current_profile_position`, `current_profile_matches_env`, `current_user_is_director_for_env`: OK.
+- Funcao `deal_user_is_executivo_for_env`: OK.
+- Insert real de deal pelo Diretor para Executivo: FALHOU por RLS.
+- Insert real de deal pelo Executivo para ele mesmo: FALHOU por RLS.
+
+Conclusao: a migration `20260429000000` foi aplicada pelo menos parcialmente, mas as policies de INSERT de `deals` nao ficaram ativas/corretas no banco.
+
+Por isso foi criada a migration corretiva `20260429000001_repair_deals_rls_insert_policies.sql`, recriando as policies de `deals` de forma separada e explicita por cargo/acao.
 
 Validacao local:
 
@@ -39,7 +64,8 @@ Validacao local:
 
 Acao obrigatoria:
 
-- Aplicar a migration `20260429000000_fix_deals_rls_by_position.sql` no Supabase antes de testar novamente o salvamento de fechamento pelo Diretor.
+- Aplicar a migration `20260429000001_repair_deals_rls_insert_policies.sql` no Supabase.
+- Depois, repetir o teste: Diretor cria fechamento para Executivo com SDR vinculado.
 
 ## P0 - Erro ao salvar fechamento como Diretor
 
