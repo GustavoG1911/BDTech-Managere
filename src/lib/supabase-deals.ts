@@ -493,3 +493,19 @@ export async function fetchCommissionPaymentsForUser(
   }
   return (data || []).map(dbToCommissionPayment);
 }
+
+export async function fetchCommissionPaymentsForEnvironment(): Promise<CommissionPayment[]> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+
+  const { data, error } = await (supabase as any)
+    .from("commission_payments")
+    .select("*")
+    .eq("is_test_data", isTestEnv)
+    .order("competence_month", { ascending: false });
+  if (error) {
+    console.error("[fetchCommissionPaymentsForEnvironment]", error.message);
+    return [];
+  }
+  return (data || []).map(dbToCommissionPayment);
+}

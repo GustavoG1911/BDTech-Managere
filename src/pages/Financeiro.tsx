@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, BadgeDollarSign, Calendar, ChevronDown, ChevronUp, Clock, FileText, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, Check, Loader2, Wallet, Plus, CalendarDays, FileDown, Printer, HelpCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
-import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, fetchCommissionPaymentsForUser, CommissionPayment } from "@/lib/supabase-deals";
+import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, CommissionPayment } from "@/lib/supabase-deals";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
@@ -197,6 +197,33 @@ function getCommissionStatusForParts(deal: Deal, parts: ReturnType<typeof getCom
   if (deal.isUserConfirmedPayment) return "done";
   if (deal.isPaidToUser) return "waiting";
   return "ready";
+}
+
+function getCommissionPaymentsForParts(
+  dealId: string,
+  parts: ReturnType<typeof getCommissionPeriodParts>,
+  commissionPayments: CommissionPayment[] = []
+) {
+  return commissionPayments.filter((cp) =>
+    cp.dealId === dealId
+    && (
+      (parts.mensalidadeInPeriod && parts.mensalidadeMonthKey === cp.competenceMonth && cp.component === "mensalidade")
+      || (parts.implantacaoInPeriod && parts.implantacaoMonthKey === cp.competenceMonth && cp.component === "implantacao")
+    )
+  );
+}
+
+function getCommissionStatusForPayments(
+  deal: Deal,
+  parts: ReturnType<typeof getCommissionPeriodParts>,
+  commissionPayments: CommissionPayment[] = []
+): "locked" | "ready" | "waiting" | "done" {
+  if (parts.total <= 0 || !parts.unlocked) return "locked";
+  const relevantPayments = getCommissionPaymentsForParts(deal.id, parts, commissionPayments);
+  if (relevantPayments.length > 0) {
+    return relevantPayments.every((cp) => !!cp.confirmedByUserAt) ? "done" : "waiting";
+  }
+  return getCommissionStatusForParts(deal, parts);
 }
 
 function buildMonthOptions(): { value: string; label: string }[] {
@@ -468,7 +495,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     queryFn: async () => {
       const [salariesRes, profilesRes, commissionPaymentsData] = await Promise.all([
         (supabase.from("salary_payments") as any).select("*").eq("user_id", userId),
-        (supabase.from("profiles") as any).select("user_id, full_name, display_name, commission_percent, fixed_salary").eq("user_id", userId),
+        (supabase.from("profiles") as any).select("user_id, full_name, display_name, commission_percent, fixed_salary, position").eq("user_id", userId),
         fetchCommissionPaymentsForUser(userId),
       ]);
 
@@ -482,6 +509,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
           display_name: p.display_name || "",
           commission_percent: p.commission_percent || 0,
           fixed_salary: p.fixed_salary || 0,
+          position: p.position || "",
         };
       });
 
@@ -496,17 +524,27 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const querySalaries = data?.salaries || [];
   const profiles = data?.profiles || {};
   const commissionPayments: CommissionPayment[] = data?.commissionPayments || [];
+  const userCommissionDealIds = useMemo(
+    () => new Set(commissionPayments.map((cp) => cp.dealId)),
+    [commissionPayments]
+  );
+  const scopedDeals = useMemo(() => {
+    if (position === "SDR") {
+      return deals.filter((d) => d.sdrUserId === userId || userCommissionDealIds.has(d.id));
+    }
+    return deals.filter((d) => d.userId === userId || userCommissionDealIds.has(d.id));
+  }, [deals, position, userId, userCommissionDealIds]);
 
   const activeDeals = deals; // fetchDeals já filtra por position (SDR vê Executivos, Executivo vê próprios)
   const activeSalaries = querySalaries.length > 0 ? querySalaries : [];
 
   // Deals onde mensalidade OU implantação têm competência financeira no mês selecionado
   const filteredDeals = useMemo(() => {
-    return activeDeals.filter((d) => {
+    return scopedDeals.filter((d) => {
       const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(d);
       return mensalidadeMonthKey === selectedMonth || implantacaoMonthKey === selectedMonth;
     });
-  }, [activeDeals, selectedMonth]);
+  }, [scopedDeals, selectedMonth]);
 
   const filteredSalaries = useMemo(() => {
     return activeSalaries.filter((s) => getMonthKey(s.reference_month) === selectedMonth);
@@ -519,12 +557,11 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         .filter((cp) => cp.paidByDirectorAt && !cp.confirmedByUserAt)
         .map((cp) => cp.dealId)
     );
-    if (pendingCpIds.size > 0) {
-      return activeDeals.filter((d) => pendingCpIds.has(d.id));
-    }
+    const cpPendingDeals = scopedDeals.filter((d) => pendingCpIds.has(d.id));
     // Fallback legado para deals anteriores à migração
-    return activeDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment);
-  }, [activeDeals, commissionPayments]);
+    const legacyPendingDeals = scopedDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment && !pendingCpIds.has(d.id));
+    return [...cpPendingDeals, ...legacyPendingDeals];
+  }, [scopedDeals, commissionPayments]);
 
   useEffect(() => {
     if (!pendingScroll) return;
@@ -555,7 +592,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number }> = {};
-    activeDeals.forEach((deal) => {
+    scopedDeals.forEach((deal) => {
       const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
       const presCount = getPresentationsForDeal(deal, presentations);
       const comm = calculateCommission(deal, presCount, settings, false);
@@ -580,7 +617,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     return Object.entries(projMap)
       .map(([key, vals]) => ({ monthKey: key, ...vals }))
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
-  }, [activeDeals, selectedMonth, presentations, settings]);
+  }, [scopedDeals, selectedMonth, presentations, settings]);
 
   const kpis = useMemo(() => {
     // Mapa de commission_payments por (dealId:component:competenceMonth) para lookup O(1)
@@ -653,7 +690,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     }
 
     // 2. Atualiza flag legado no deal somente se o usuário for o dono do deal (Executivo)
-    const deal = activeDeals.find((d) => d.id === dealId);
+    const deal = scopedDeals.find((d) => d.id === dealId);
     if (deal?.userId === userId) {
       const { data: updatedDeal, error } = await (supabase.from("deals") as any)
         .update({ is_user_confirmed_payment: true })
@@ -894,7 +931,10 @@ function FinanceiroContent() {
         profilesRes = await (supabase.from("profiles") as any)
           .select("user_id, full_name, display_name, commission_percent, fixed_salary, position");
       }
-      const salariesRes = await (supabase.from("salary_payments") as any).select("*");
+      const [salariesRes, commissionPaymentsData] = await Promise.all([
+        (supabase.from("salary_payments") as any).select("*"),
+        fetchCommissionPaymentsForEnvironment(),
+      ]);
 
       if (profilesRes.error) throw profilesRes.error;
       if (salariesRes.error) throw salariesRes.error;
@@ -906,18 +946,21 @@ function FinanceiroContent() {
           display_name: p.display_name || "",
           commission_percent: p.commission_percent || 0,
           fixed_salary: p.fixed_salary || 0,
+          position: p.position || "",
         };
       });
 
       return {
         salaries: salariesRes.data as any[],
         profiles: map,
+        commissionPayments: commissionPaymentsData,
       };
     }
   });
 
   const querySalaries = data?.salaries || [];
   const profiles = data?.profiles || {};
+  const commissionPayments: CommissionPayment[] = data?.commissionPayments || [];
 
 
   const activeDeals = deals;
@@ -938,21 +981,21 @@ function FinanceiroContent() {
       const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
 
       // User
-      const passUser = filtroFuncionario === "Todos" || d.userId === filtroFuncionario;
+      const passUser = filtroFuncionario === "Todos" || d.userId === filtroFuncionario || d.sdrUserId === filtroFuncionario;
 
       // Status
       let passStatus = true;
       if (filtroStatus === "Finalizados") {
         const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
-        passStatus = parts.total > 0 && getCommissionStatusForParts(d, parts) === "done";
+        passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments) === "done";
       } else if (filtroStatus === "Pendentes") {
         const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
-        passStatus = parts.total > 0 && getCommissionStatusForParts(d, parts) !== "done";
+        passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments) !== "done";
       }
 
       return passTime && passOp && passUser && passStatus;
     });
-  }, [activeDeals, selectedMonth, filterType, selectedYear, filtroOperacao, filtroFuncionario, filtroStatus, presentations, settings]);
+  }, [activeDeals, selectedMonth, filterType, selectedYear, filtroOperacao, filtroFuncionario, filtroStatus, presentations, settings, commissionPayments]);
 
   const filteredSalaries = useMemo(() => {
     return activeSalaries.filter((s) => {
@@ -993,31 +1036,46 @@ function FinanceiroContent() {
 
     filteredDeals.forEach((deal) => {
       const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
-      const presCount = getPresentationsForDeal(deal, presentations);
-      const comm = calculateCommission(deal, presCount, settings, false);
-      const mensalidadeComm = comm.monthlyCommission + comm.superMetaBonus;
+      const baseParts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
+      const cpInPeriod = getCommissionPaymentsForParts(deal.id, baseParts, commissionPayments)
+        .filter((cp) => filtroFuncionario === "Todos" || cp.recipientUserId === filtroFuncionario);
 
       // Conta apenas a parte que pertence ao período filtrado
-      let commInPeriod = 0;
       if (filterType === "month") {
         const mensalidadeInMonth = mensalidadeMonthKey === selectedMonth;
         const implantacaoInMonth = implantacaoMonthKey === selectedMonth;
-        if (mensalidadeInMonth) { volumeTotal += deal.monthlyValue || 0; commInPeriod += mensalidadeComm; }
-        if (implantacaoInMonth) { volumeTotal += deal.implantationValue || 0; commInPeriod += comm.implantationCommission; }
+        if (mensalidadeInMonth) volumeTotal += deal.monthlyValue || 0;
+        if (implantacaoInMonth) volumeTotal += deal.implantationValue || 0;
       } else {
         const mensalidadeInYear = mensalidadeMonthKey?.startsWith(selectedYear) ?? false;
         const implantacaoInYear = implantacaoMonthKey?.startsWith(selectedYear) ?? false;
-        if (mensalidadeInYear) { volumeTotal += deal.monthlyValue || 0; commInPeriod += mensalidadeComm; }
-        if (implantacaoInYear && implantacaoMonthKey !== mensalidadeMonthKey) { volumeTotal += deal.implantationValue || 0; commInPeriod += comm.implantationCommission; }
-        if (implantacaoInYear && implantacaoMonthKey === mensalidadeMonthKey && !mensalidadeInYear) { volumeTotal += deal.implantationValue || 0; commInPeriod += comm.implantationCommission; }
+        if (mensalidadeInYear) volumeTotal += deal.monthlyValue || 0;
+        if (implantacaoInYear && implantacaoMonthKey !== mensalidadeMonthKey) volumeTotal += deal.implantationValue || 0;
+        if (implantacaoInYear && implantacaoMonthKey === mensalidadeMonthKey && !mensalidadeInYear) volumeTotal += deal.implantationValue || 0;
       }
 
-      if (deal.isUserConfirmedPayment) totalPago += commInPeriod;
-      else totalProjetado += commInPeriod;
+      if (cpInPeriod.length > 0) {
+        cpInPeriod.forEach((cp) => {
+          if (cp.confirmedByUserAt) totalPago += cp.amount;
+          else totalProjetado += cp.amount;
+        });
+        return;
+      }
+
+      const recipients = [
+        deal.userId && (filtroFuncionario === "Todos" || filtroFuncionario === deal.userId) ? deal.userId : null,
+        deal.sdrUserId && deal.sdrUserId !== deal.userId && (filtroFuncionario === "Todos" || filtroFuncionario === deal.sdrUserId) ? deal.sdrUserId : null,
+      ].filter(Boolean) as string[];
+
+      recipients.forEach((recipientUserId) => {
+        const recipientParts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, { filterType, selectedMonth, selectedYear }, profiles, recipientUserId);
+        if (deal.isUserConfirmedPayment) totalPago += recipientParts.total;
+        else totalProjetado += recipientParts.total;
+      });
     });
 
     return { totalFixo, totalProjetado, totalPago, volumeTotal };
-  }, [filteredDeals, filteredSalaries, filterType, selectedMonth, selectedYear, presentations, settings]);
+  }, [filteredDeals, filteredSalaries, filterType, selectedMonth, selectedYear, presentations, settings, commissionPayments, filtroFuncionario, profiles]);
 
   // Rows para modal e Contas a Pagar: salary_payments explícitos + fallback de profiles
   const salaryModalRows = useMemo(() => {
@@ -1053,7 +1111,7 @@ function FinanceiroContent() {
 
     activeDeals.forEach((deal) => {
       if (filtroOperacao !== "Todas" && deal.operation !== filtroOperacao) return;
-      if (filtroFuncionario !== "Todos" && deal.userId !== filtroFuncionario) return;
+      if (filtroFuncionario !== "Todos" && deal.userId !== filtroFuncionario && deal.sdrUserId !== filtroFuncionario) return;
 
       const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
       const presCount = getPresentationsForDeal(deal, presentations);
@@ -1423,6 +1481,7 @@ function FinanceiroContent() {
             getUserName={getUserName}
             presentations={presentations}
             settings={settings}
+            commissionPayments={commissionPayments}
             period={{ filterType, selectedMonth, selectedYear }}
             onToggleCommissionPayment={handleToggleCommissionPayment}
             onToggleSalaryPayment={handleToggleSalaryPayment}
@@ -1512,8 +1571,10 @@ function FinanceiroContent() {
                 <TableBody>
                   {filteredDeals
                     .filter((d) => {
-                      if (kpiModalType === "pago") return d.isUserConfirmedPayment === true;
-                      if (kpiModalType === "projetado") return d.isUserConfirmedPayment !== true;
+                      const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
+                      const status = getCommissionStatusForPayments(d, parts, commissionPayments);
+                      if (kpiModalType === "pago") return status === "done";
+                      if (kpiModalType === "projetado") return status !== "done";
                       return false;
                     })
                     .map((d) => {
@@ -1769,20 +1830,21 @@ interface PayablesTabProps {
   getUserName: (id: string) => string;
   presentations: any;
   settings: any;
+  commissionPayments: CommissionPayment[];
   period: FinancePeriod;
   onToggleCommissionPayment: (dealId: string, currentStatus: boolean) => void;
   onToggleSalaryPayment: (salaryId: string, currentStatus: boolean) => void;
   onCreateAndToggleSalaryPayment: (userId: string, amount: number, referenceMonth: string) => void;
 }
 
-function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presentations, period, onToggleCommissionPayment }: any) {
+function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presentations, commissionPayments, period, onToggleCommissionPayment }: any) {
   const [expanded, setExpanded] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
   const parts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, deal.userId);
   const sdrParts = deal.sdrUserId && deal.sdrUserId !== deal.userId
     ? getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, deal.sdrUserId)
     : null;
-  const commissionStatus = getCommissionStatusForParts(deal, parts);
+  const commissionStatus = getCommissionStatusForPayments(deal, parts, commissionPayments || []);
 
   const baseDate = parts.mensalidadeInPeriod ? deal.firstPaymentDate : parts.implantacaoInPeriod ? deal.implantationPaymentDate : deal.firstPaymentDate || deal.implantationPaymentDate;
   let expectedPaymentDateStr = "Data Pendente";
@@ -1901,7 +1963,7 @@ function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presen
   );
 }
 
-function PayablesTab({ deals, salaries, profiles, getUserName, presentations, settings, period, onToggleCommissionPayment, onToggleSalaryPayment, onCreateAndToggleSalaryPayment }: PayablesTabProps) {
+function PayablesTab({ deals, salaries, profiles, getUserName, presentations, settings, commissionPayments, period, onToggleCommissionPayment, onToggleSalaryPayment, onCreateAndToggleSalaryPayment }: PayablesTabProps) {
   return (
     <div className="space-y-5">
       {/* Commissions */}
@@ -1939,6 +2001,7 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
                   profiles={profiles}
                   getUserName={getUserName}
                   presentations={presentations}
+                  commissionPayments={commissionPayments}
                   period={period}
                   onToggleCommissionPayment={onToggleCommissionPayment}
                 />
