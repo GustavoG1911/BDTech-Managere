@@ -85,6 +85,9 @@ export default function Auth() {
         <Card className="glass-card">
           <CardHeader className="pb-4">
             <CardTitle className="text-center text-base">Acesse sua conta</CardTitle>
+            <p className="text-center text-xs text-muted-foreground">
+              O acesso é liberado somente por convite. Use o mesmo e-mail convidado pelo administrador.
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Google */}
@@ -106,7 +109,7 @@ export default function Auth() {
             <Tabs defaultValue="login">
               <TabsList className="w-full h-8">
                 <TabsTrigger value="login" className="text-xs flex-1">Entrar</TabsTrigger>
-                <TabsTrigger value="signup" className="text-xs flex-1">Cadastrar</TabsTrigger>
+                <TabsTrigger value="signup" className="text-xs flex-1">Tenho convite</TabsTrigger>
               </TabsList>
 
               <TabsContent value="login">
@@ -139,7 +142,7 @@ export default function Auth() {
                     <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" required minLength={6} />
                   </div>
                   <Button type="submit" className="w-full" disabled={loading}>
-                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Criar conta"}
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Criar acesso"}
                   </Button>
                 </form>
               </TabsContent>

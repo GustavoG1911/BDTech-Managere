@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { isOperationalPosition } from "@/lib/roles";
 
 export type UserRole = "admin" | "gestor" | "user";
 
@@ -11,6 +12,7 @@ interface AuthContextType {
   role: UserRole;
   position: string;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -20,6 +22,7 @@ const AuthContext = createContext<AuthContextType>({
   role: "user",
   position: "",
   signOut: async () => {},
+  refreshProfile: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -40,8 +43,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
 
       if (profile && !error) {
-        setRole(profile.role as UserRole);
-        setPosition(profile.position ?? "");
+        const profilePosition = profile.position ?? "";
+        const normalizedRole = profile.role === "admin" && isOperationalPosition(profilePosition)
+          ? "user"
+          : profile.role;
+        setRole(normalizedRole as UserRole);
+        setPosition(profilePosition);
       } else {
         setRole("user");
         setPosition("");
@@ -96,8 +103,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   };
 
+  const refreshProfile = async () => {
+    if (session?.user) {
+      await fetchRole(session.user.id);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ session, user: session?.user ?? null, loading, role, position, signOut }}>
+    <AuthContext.Provider value={{ session, user: session?.user ?? null, loading, role, position, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

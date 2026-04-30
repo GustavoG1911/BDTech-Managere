@@ -66,6 +66,7 @@ interface SeedDeal {
   implantation_payment_date: string;
   payment_status: string;
   user_id: string;
+  sdr_user_id: string;
   is_test_data: true;
   commission_rate_snapshot: number;
   commission_amount_snapshot: number;
@@ -102,6 +103,7 @@ function makeDeal(
     implantation_payment_date: implPayment,
     payment_status: status === "pendente" ? "Pendente" : "Pago",
     user_id: EXECUTIVO_ID,
+    sdr_user_id: SDR_ID,
     is_test_data: true,
     commission_rate_snapshot: commissionRate,
     commission_amount_snapshot: commSnapshot,
@@ -204,17 +206,17 @@ function buildDeals(): SeedDeal[] {
 function buildPresentations(): SeedPresentation[] {
   return [
     // Janeiro 2026 — Abaixo da Meta (BP=8, OP=6)
-    { user_id: EXECUTIVO_ID, operation: "BluePex",   count: 8,  date: "2026-01-01", is_test_data: true },
-    { user_id: EXECUTIVO_ID, operation: "Opus Tech", count: 6,  date: "2026-01-01", is_test_data: true },
+    { user_id: SDR_ID, operation: "BluePex",   count: 8,  date: "2026-01-01", is_test_data: true },
+    { user_id: SDR_ID, operation: "Opus Tech", count: 6,  date: "2026-01-01", is_test_data: true },
     // Fevereiro 2026 — Meta exata (BP=15, OP=12)
-    { user_id: EXECUTIVO_ID, operation: "BluePex",   count: 15, date: "2026-02-01", is_test_data: true },
-    { user_id: EXECUTIVO_ID, operation: "Opus Tech", count: 12, date: "2026-02-01", is_test_data: true },
+    { user_id: SDR_ID, operation: "BluePex",   count: 15, date: "2026-02-01", is_test_data: true },
+    { user_id: SDR_ID, operation: "Opus Tech", count: 12, date: "2026-02-01", is_test_data: true },
     // Março 2026 — Super Meta (BP=32, OP=10)
-    { user_id: EXECUTIVO_ID, operation: "BluePex",   count: 32, date: "2026-03-01", is_test_data: true },
-    { user_id: EXECUTIVO_ID, operation: "Opus Tech", count: 10, date: "2026-03-01", is_test_data: true },
+    { user_id: SDR_ID, operation: "BluePex",   count: 32, date: "2026-03-01", is_test_data: true },
+    { user_id: SDR_ID, operation: "Opus Tech", count: 10, date: "2026-03-01", is_test_data: true },
     // Abril 2026 — Em andamento (BP=10, OP=8)
-    { user_id: EXECUTIVO_ID, operation: "BluePex",   count: 10, date: "2026-04-01", is_test_data: true },
-    { user_id: EXECUTIVO_ID, operation: "Opus Tech", count: 8,  date: "2026-04-01", is_test_data: true },
+    { user_id: SDR_ID, operation: "BluePex",   count: 10, date: "2026-04-01", is_test_data: true },
+    { user_id: SDR_ID, operation: "Opus Tech", count: 8,  date: "2026-04-01", is_test_data: true },
   ];
 }
 
@@ -321,4 +323,3 @@ export async function seedHistoricalData() {
   console.log("   → Login: executivo@teste.com / sdr@teste.com (senha: teste123)");
   console.log("   → Validate Dashboard KPIs, Financeiro Totals, and Regra do Dia 07");
 }
-

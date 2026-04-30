@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, BadgeDollarSign, Calendar, ChevronDown, ChevronUp, Clock, FileText, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, Check, Loader2, Wallet, Plus, CalendarDays, FileDown, Printer, HelpCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
-import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, CommissionPayment } from "@/lib/supabase-deals";
+import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, confirmCommissionPaymentById, rejectCommissionPaymentById, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, CommissionPayment } from "@/lib/supabase-deals";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
@@ -109,6 +109,34 @@ function formatSafeDate(date: any, fmt = "dd/MM/yyyy"): string {
   return format(d, fmt, { locale: ptBR });
 }
 
+function salaryReferenceKey(value: any): string {
+  if (!value) return "";
+  if (typeof value === "string") return value.slice(0, 7);
+  return getMonthKey(value);
+}
+
+function dedupeSalaryRows<T extends { user_id: string; reference_month: any; updated_at?: string; payment_date?: string; id?: string }>(rows: T[]): T[] {
+  const map = new Map<string, T>();
+  rows.forEach((row) => {
+    const key = `${row.user_id}:${salaryReferenceKey(row.reference_month)}`;
+    const current = map.get(key);
+    if (!current) {
+      map.set(key, row);
+      return;
+    }
+    const currentTime = new Date(current.updated_at || current.payment_date || 0).getTime();
+    const rowTime = new Date(row.updated_at || row.payment_date || 0).getTime();
+    if (rowTime >= currentTime) map.set(key, row);
+  });
+  return Array.from(map.values());
+}
+
+function dateInFinancePeriod(date: string | null | undefined, period: FinancePeriod): boolean {
+  if (!date) return false;
+  const monthKey = getMonthKey(date);
+  return period.filterType === "month" ? monthKey === period.selectedMonth : monthKey.startsWith(period.selectedYear);
+}
+
 /**
  * Retorna os meses financeiros separados para mensalidade e implantação.
  * Mensalidade: firstPaymentDate → closingDate
@@ -137,19 +165,48 @@ function monthKeyInPeriod(monthKey: string | null, period: FinancePeriod): boole
     : monthKey.startsWith(period.selectedYear);
 }
 
+function getInstallmentItems(deal: Deal, implantationCommission: number, period?: FinancePeriod) {
+  if (!deal.isInstallment || !Array.isArray(deal.installmentDates) || deal.installmentDates.length === 0) return [];
+  const count = deal.installmentDates.length || deal.installmentCount || 1;
+  const amount = count > 0 ? implantationCommission / count : 0;
+  return deal.installmentDates
+    .map((inst: any, index: number) => {
+      const date = inst?.date || inst;
+      if (!date) return null;
+      const monthKey = getPaymentDateInfo(date).monthKey;
+      if (period && !monthKeyInPeriod(monthKey, period)) return null;
+      return {
+        index,
+        date,
+        monthKey,
+        paid: !!inst?.paid,
+        commission: amount,
+        value: count > 0 ? (deal.implantationValue || 0) / count : 0,
+      };
+    })
+    .filter(Boolean) as Array<{ index: number; date: string; monthKey: string; paid: boolean; commission: number; value: number }>;
+}
+
 function getCommissionPeriodParts(deal: Deal, presentations: any, settings: any, period: FinancePeriod) {
   const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
   const presCount = getPresentationsForDeal(deal, presentations);
   const comm = calculateCommission(deal, presCount, settings, false);
   const mensalidadeInPeriod = monthKeyInPeriod(mensalidadeMonthKey, period);
-  const implantacaoInPeriod = monthKeyInPeriod(implantacaoMonthKey, period);
+  const installmentItems = getInstallmentItems(deal, comm.implantationCommission, period);
+  const implantacaoInPeriod = deal.isInstallment ? installmentItems.length > 0 : monthKeyInPeriod(implantacaoMonthKey, period);
   const mensalidadeCommission = mensalidadeInPeriod ? comm.monthlyCommission + comm.superMetaBonus : 0;
-  const implantacaoCommission = implantacaoInPeriod ? comm.implantationCommission : 0;
+  const implantacaoCommission = deal.isInstallment
+    ? installmentItems.reduce((acc, item) => acc + item.commission, 0)
+    : implantacaoInPeriod ? comm.implantationCommission : 0;
   const hasMensalidadeCommission = mensalidadeCommission > 0;
   const hasImplantacaoCommission = implantacaoCommission > 0;
   const labels = [
     mensalidadeCommission > 0 ? `Mensalidade: ${formatCurrency(mensalidadeCommission)}` : null,
-    implantacaoCommission > 0 ? `Implantacao: ${formatCurrency(implantacaoCommission)}` : null,
+    ...(
+      deal.isInstallment
+        ? installmentItems.map((item) => `Implantacao ${item.index + 1}/${deal.installmentCount || installmentItems.length}: ${formatCurrency(item.commission)}`)
+        : [implantacaoCommission > 0 ? `Implantacao: ${formatCurrency(implantacaoCommission)}` : null]
+    ),
   ].filter(Boolean) as string[];
 
   return {
@@ -160,11 +217,12 @@ function getCommissionPeriodParts(deal: Deal, presentations: any, settings: any,
     implantacaoInPeriod,
     mensalidadeCommission,
     implantacaoCommission,
+    installmentItems,
     total: mensalidadeCommission + implantacaoCommission,
     labels,
     unlocked: (hasMensalidadeCommission || hasImplantacaoCommission)
       && (!hasMensalidadeCommission || !!deal.isMensalidadePaidByClient)
-      && (!hasImplantacaoCommission || !!deal.isImplantacaoPaid),
+      && (!hasImplantacaoCommission || (deal.isInstallment ? installmentItems.every((item) => item.paid) : !!deal.isImplantacaoPaid)),
   };
 }
 
@@ -209,6 +267,11 @@ function getCommissionPaymentsForParts(
     && (
       (parts.mensalidadeInPeriod && parts.mensalidadeMonthKey === cp.competenceMonth && cp.component === "mensalidade")
       || (parts.implantacaoInPeriod && parts.implantacaoMonthKey === cp.competenceMonth && cp.component === "implantacao")
+      || parts.installmentItems?.some((item) =>
+        cp.component === "implantacao_parcela"
+        && item.monthKey === cp.competenceMonth
+        && item.index === cp.installmentIndex
+      )
     )
   );
 }
@@ -216,13 +279,15 @@ function getCommissionPaymentsForParts(
 function getCommissionStatusForPayments(
   deal: Deal,
   parts: ReturnType<typeof getCommissionPeriodParts>,
-  commissionPayments: CommissionPayment[] = []
+  commissionPayments: CommissionPayment[] = [],
+  useLegacyFallback = true
 ): "locked" | "ready" | "waiting" | "done" {
   if (parts.total <= 0 || !parts.unlocked) return "locked";
   const relevantPayments = getCommissionPaymentsForParts(deal.id, parts, commissionPayments);
   if (relevantPayments.length > 0) {
     return relevantPayments.every((cp) => !!cp.confirmedByUserAt) ? "done" : "waiting";
   }
+  if (!useLegacyFallback) return "ready";
   return getCommissionStatusForParts(deal, parts);
 }
 
@@ -256,7 +321,7 @@ export default function Financeiro() {
   return <FinanceiroContent />;
 }
 
-function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, settings, onConfirm, inPendingSection, highlighted, autoExpand }: any) {
+function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, settings, commissionPayments, onConfirm, inPendingSection, highlighted, autoExpand }: any) {
   const [expanded, setExpanded] = useState(!!autoExpand);
   const period = { filterType: "month" as const, selectedMonth, selectedYear: selectedMonth.slice(0, 4) };
   const parts = getCommissionPeriodParts(deal, presentations, settings, period);
@@ -267,8 +332,8 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
   const periodBaseCommission = (parts.mensalidadeInPeriod ? comm.monthlyCommission : 0) + (parts.implantacaoInPeriod ? comm.implantationCommission : 0);
   const periodSuperMetaBonus = parts.mensalidadeInPeriod ? comm.superMetaBonus : 0;
   const dealMonth = selectedMonth || mensalidadeMonthKey || implantacaoMonthKey;
-  const isPendingAction = deal.isPaidToUser && !deal.isUserConfirmedPayment;
-  const commissionStatus = getCommissionStatusForParts(deal, parts);
+  const commissionStatus = getCommissionStatusForPayments(deal, parts, commissionPayments || []);
+  const isPendingAction = commissionStatus === "waiting";
   const pendingPartLabels = [
     allMensalidadeCommission > 0 ? `Mensalidade${mensalidadeMonthKey ? ` (${formatMonthLabel(mensalidadeMonthKey)})` : ""}: ${formatCurrency(allMensalidadeCommission)}` : null,
     comm.implantationCommission > 0 ? `Implantacao${implantacaoMonthKey ? ` (${formatMonthLabel(implantacaoMonthKey)})` : ""}: ${formatCurrency(comm.implantationCommission)}` : null,
@@ -287,7 +352,7 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
         className={`border-border/25 cursor-pointer transition-colors ${
           highlighted
             ? "bg-primary/10 hover:bg-primary/15 border-l-2 border-l-primary"
-            : deal.isUserConfirmedPayment
+            : commissionStatus === "done"
             ? "bg-success/5 hover:bg-success/10 border-l-2 border-l-success/40"
             : isPendingAction
             ? "bg-warning/10 hover:bg-warning/15 border-l-2 border-l-warning/60"
@@ -408,11 +473,12 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
   );
 }
 
-function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth }: any) {
+function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, onConfirmSalary }: any) {
   const [expanded, setExpanded] = useState(false);
   const amount = salary?.amount ?? profiles?.[userId]?.fixed_salary ?? 0;
   const expectedDate = salary?.expected_payment_date;
   const isPaid = salary?.is_paid_by_gestor ?? false;
+  const isConfirmed = !!salary?.confirmed_by_user_at;
   const paymentDate = salary?.payment_date;
   const referenceMonth = salary?.reference_month;
 
@@ -433,7 +499,15 @@ function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth }: an
           {expectedDate ? formatSafeDate(expectedDate) : `Recorrente (20/${selectedMonth.split("-")[1]})`}
         </TableCell>
         <TableCell className="px-4 py-3 text-center">
-          {isPaid ? <span className="pill-green">Recebido</span> : <span className="pill-yellow">A Receber</span>}
+          {isConfirmed ? (
+            <span className="pill-green">Recebido</span>
+          ) : isPaid ? (
+            <Button size="sm" className="h-7 text-[10px]" onClick={(e) => { e.stopPropagation(); onConfirmSalary?.(salary.id); }}>
+              Confirmar Recebimento
+            </Button>
+          ) : (
+            <span className="pill-yellow">A Receber</span>
+          )}
         </TableCell>
       </TableRow>
       {expanded && (
@@ -479,6 +553,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
   const monthOptions = useMemo(() => buildMonthOptions(), []);
   const [pendingScroll, setPendingScroll] = useState(false);
+  const [pendingDialogOpen, setPendingDialogOpen] = useState(false);
   const pendingScrollAttempts = useRef(0);
   const focusedDealId = (location.state as any)?.dealId as string | undefined;
 
@@ -493,8 +568,16 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const { data, isLoading: loading } = useQuery({
     queryKey: ["user-finance-data", userId],
     queryFn: async () => {
-      const [salariesRes, profilesRes, commissionPaymentsData] = await Promise.all([
-        (supabase.from("salary_payments") as any).select("*").eq("user_id", userId),
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
+      let salariesRes = await (supabase.from("salary_payments") as any)
+        .select("*")
+        .eq("user_id", userId)
+        .eq("is_test_data", isTestEnv);
+      if (salariesRes.error && (salariesRes.error.message?.includes("is_test_data") || salariesRes.error.message?.includes("column"))) {
+        salariesRes = await (supabase.from("salary_payments") as any).select("*").eq("user_id", userId);
+      }
+      const [profilesRes, commissionPaymentsData] = await Promise.all([
         (supabase.from("profiles") as any).select("user_id, full_name, display_name, commission_percent, fixed_salary, position").eq("user_id", userId),
         fetchCommissionPaymentsForUser(userId),
       ]);
@@ -521,7 +604,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     }
   });
 
-  const querySalaries = data?.salaries || [];
+  const querySalaries = dedupeSalaryRows(data?.salaries || []);
   const profiles = data?.profiles || {};
   const commissionPayments: CommissionPayment[] = data?.commissionPayments || [];
   const userCommissionDealIds = useMemo(
@@ -563,6 +646,21 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     return [...cpPendingDeals, ...legacyPendingDeals];
   }, [scopedDeals, commissionPayments]);
 
+  const pendingCommissionItems = useMemo(() => {
+    return commissionPayments
+      .filter((cp) => cp.paidByDirectorAt && !cp.confirmedByUserAt)
+      .map((cp) => {
+        const deal = scopedDeals.find((d) => d.id === cp.dealId);
+        if (!deal) return null;
+        const baseDate = cp.component === "mensalidade"
+          ? deal.firstPaymentDate || deal.closingDate
+          : deal.implantationPaymentDate || deal.firstPaymentDate || deal.closingDate;
+        const expectedDate = baseDate ? getPaymentDateInfo(baseDate).expectedPaymentDate : null;
+        return { cp, deal, expectedDate };
+      })
+      .filter(Boolean) as Array<{ cp: CommissionPayment; deal: Deal; expectedDate: Date | null }>;
+  }, [commissionPayments, scopedDeals]);
+
   useEffect(() => {
     if (!pendingScroll) return;
 
@@ -592,24 +690,37 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number }> = {};
+    const paidCpKeys = new Set(
+      commissionPayments
+        .filter((cp) => cp.paidByDirectorAt || cp.confirmedByUserAt)
+        .map((cp) => `${cp.dealId}:${cp.component}:${cp.competenceMonth}:${cp.installmentIndex ?? ""}`)
+    );
     scopedDeals.forEach((deal) => {
       const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
       const presCount = getPresentationsForDeal(deal, presentations);
       const comm = calculateCommission(deal, presCount, settings, false);
       const mensalidadeComm = comm.monthlyCommission + comm.superMetaBonus;
+      const futureInstallments = getInstallmentItems(deal, comm.implantationCommission);
 
       // Mensalidade futura
-      if (mensalidadeMonthKey && mensalidadeMonthKey > selectedMonth) {
+      if (mensalidadeMonthKey && mensalidadeMonthKey > selectedMonth && !paidCpKeys.has(`${deal.id}:mensalidade:${mensalidadeMonthKey}:`)) {
         if (!projMap[mensalidadeMonthKey]) projMap[mensalidadeMonthKey] = { projectedIn: 0 };
         projMap[mensalidadeMonthKey].projectedIn += mensalidadeComm;
       }
       // Implantação futura (apenas se em mês diferente da mensalidade)
-      if (implantacaoMonthKey && implantacaoMonthKey > selectedMonth && implantacaoMonthKey !== mensalidadeMonthKey) {
+      if (deal.isInstallment) {
+        futureInstallments.forEach((item) => {
+          if (item.monthKey > selectedMonth && !paidCpKeys.has(`${deal.id}:implantacao_parcela:${item.monthKey}:${item.index}`)) {
+            if (!projMap[item.monthKey]) projMap[item.monthKey] = { projectedIn: 0 };
+            projMap[item.monthKey].projectedIn += item.commission;
+          }
+        });
+      } else if (implantacaoMonthKey && implantacaoMonthKey > selectedMonth && implantacaoMonthKey !== mensalidadeMonthKey && !paidCpKeys.has(`${deal.id}:implantacao:${implantacaoMonthKey}:`)) {
         if (!projMap[implantacaoMonthKey]) projMap[implantacaoMonthKey] = { projectedIn: 0 };
         projMap[implantacaoMonthKey].projectedIn += comm.implantationCommission;
       }
       // Se ambas no mesmo mês futuro, a mensalidade já inclui tudo (totalCommission)
-      if (mensalidadeMonthKey && mensalidadeMonthKey > selectedMonth && implantacaoMonthKey === mensalidadeMonthKey) {
+      if (!deal.isInstallment && mensalidadeMonthKey && mensalidadeMonthKey > selectedMonth && implantacaoMonthKey === mensalidadeMonthKey && !paidCpKeys.has(`${deal.id}:implantacao:${implantacaoMonthKey}:`)) {
         projMap[mensalidadeMonthKey].projectedIn += comm.implantationCommission;
       }
     });
@@ -617,25 +728,37 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     return Object.entries(projMap)
       .map(([key, vals]) => ({ monthKey: key, ...vals }))
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
-  }, [scopedDeals, selectedMonth, presentations, settings]);
+  }, [scopedDeals, selectedMonth, presentations, settings, commissionPayments]);
 
   const kpis = useMemo(() => {
     // Mapa de commission_payments por (dealId:component:competenceMonth) para lookup O(1)
-    const cpMap = new Map<string, CommissionPayment>();
+      const cpMap = new Map<string, CommissionPayment>();
     commissionPayments.forEach((cp) => {
-      cpMap.set(`${cp.dealId}:${cp.component}:${cp.competenceMonth}`, cp);
+      cpMap.set(`${cp.dealId}:${cp.component}:${cp.competenceMonth}:${cp.installmentIndex ?? ""}`, cp);
     });
 
     let projected = 0;
     let paid = 0;
     let volume = 0;
+
+    commissionPayments.forEach((cp) => {
+      if (cp.confirmedByUserAt && getMonthKey(cp.confirmedByUserAt) === selectedMonth) {
+        paid += cp.amount;
+      } else if (!cp.confirmedByUserAt && cp.competenceMonth === selectedMonth) {
+        projected += cp.amount;
+      }
+    });
+
     filteredDeals.forEach((deal) => {
       const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
+      const parts = getCommissionPeriodParts(deal, presentations, settings, { filterType: "month", selectedMonth, selectedYear: selectedMonth.slice(0, 4) });
       const mensalidadeInMonth = mensalidadeMonthKey === selectedMonth;
-      const implantacaoInMonth = implantacaoMonthKey === selectedMonth;
+      const implantacaoInMonth = deal.isInstallment ? (parts.installmentItems?.length || 0) > 0 : implantacaoMonthKey === selectedMonth;
 
       if (mensalidadeInMonth) volume += deal.monthlyValue || 0;
-      if (implantacaoInMonth) volume += deal.implantationValue || 0;
+      if (implantacaoInMonth) volume += deal.isInstallment
+        ? (parts.installmentItems || []).reduce((acc, item) => acc + item.value, 0)
+        : deal.implantationValue || 0;
 
       const presCount = getPresentationsForDeal(deal, presentations);
       const comm = calculateCommission(deal, presCount, settings, false);
@@ -643,11 +766,8 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
       // Mensalidade: usa commission_payments quando disponível (status por mês, não por deal)
       if (mensalidadeInMonth) {
-        const cp = mensalidadeMonthKey ? cpMap.get(`${deal.id}:mensalidade:${mensalidadeMonthKey}`) : undefined;
-        if (cp) {
-          if (cp.confirmedByUserAt) paid += cp.amount;
-          else projected += cp.amount;
-        } else {
+        const cp = mensalidadeMonthKey ? cpMap.get(`${deal.id}:mensalidade:${mensalidadeMonthKey}:`) : undefined;
+        if (!cp) {
           if (deal.isUserConfirmedPayment) paid += mensalidadeComm;
           else projected += mensalidadeComm;
         }
@@ -655,20 +775,28 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
       // Implantação: usa commission_payments quando disponível
       if (implantacaoInMonth) {
-        const cp = implantacaoMonthKey ? cpMap.get(`${deal.id}:implantacao:${implantacaoMonthKey}`) : undefined;
-        if (cp) {
-          if (cp.confirmedByUserAt) paid += cp.amount;
-          else projected += cp.amount;
+        if (deal.isInstallment) {
+          (parts.installmentItems || []).forEach((item) => {
+            const cp = cpMap.get(`${deal.id}:implantacao_parcela:${item.monthKey}:${item.index}`);
+            if (!cp) {
+              if (deal.isUserConfirmedPayment) paid += item.commission;
+              else projected += item.commission;
+            }
+          });
         } else {
-          if (deal.isUserConfirmedPayment) paid += comm.implantationCommission;
-          else projected += comm.implantationCommission;
+          const cp = implantacaoMonthKey ? cpMap.get(`${deal.id}:implantacao:${implantacaoMonthKey}:`) : undefined;
+          if (!cp) {
+            if (deal.isUserConfirmedPayment) paid += comm.implantationCommission;
+            else projected += comm.implantationCommission;
+          }
         }
       }
     });
 
     const totalFixo = filteredSalaries.length > 0 ? filteredSalaries.reduce((acc, s) => acc + s.amount, 0) : (profiles[userId]?.fixed_salary || 0);
+    const fixedConfirmed = filteredSalaries.some((s: any) => !!s.confirmed_by_user_at);
 
-    return { projected, paid, volume, fixed: totalFixo };
+    return { projected, paid, volume, fixed: totalFixo, fixedConfirmed };
   }, [filteredDeals, filteredSalaries, userId, selectedMonth, presentations, settings, commissionPayments]);
 
   if (loading) {
@@ -715,6 +843,62 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     queryClient.invalidateQueries({ queryKey: ["user-finance-data", userId] });
   };
 
+  const handleConfirmCommissionItem = async (paymentId: string) => {
+    try {
+      await confirmCommissionPaymentById(paymentId, userId);
+      const item = pendingCommissionItems.find(({ cp }) => cp.id === paymentId);
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
+      const { data: directors } = await (supabase as any)
+        .from("profiles")
+        .select("user_id")
+        .eq("position", "Diretor")
+        .eq("is_test_data", isTestEnv);
+      if (item && directors?.length) {
+        await Promise.all(directors.map((d: any) =>
+          createNotification(
+            d.user_id,
+            "Pagamento confirmado",
+            `${getUserName(userId)} confirmou o recebimento de ${formatCurrency(item.cp.amount)} referente a ${item.deal.clientName}.`,
+            item.deal.id
+          )
+        ));
+      }
+      toast.success("Recebimento confirmado!");
+      await refreshDeals();
+      queryClient.invalidateQueries({ queryKey: ["user-finance-data", userId] });
+    } catch (err: any) {
+      toast.error("Erro ao confirmar recebimento: " + err.message);
+    }
+  };
+
+  const handleRejectCommissionItem = async (paymentId: string) => {
+    try {
+      await rejectCommissionPaymentById(paymentId, userId);
+      toast.success("Marcado como nao recebido.");
+      await refreshDeals();
+      queryClient.invalidateQueries({ queryKey: ["user-finance-data", userId] });
+    } catch (err: any) {
+      toast.error("Erro ao informar nao recebimento: " + err.message);
+    }
+  };
+
+  const handleConfirmSalaryReceipt = async (salaryId: string) => {
+    const now = new Date().toISOString();
+    const { data, error } = await (supabase as any)
+      .from("salary_payments")
+      .update({ confirmed_by_user_at: now, rejected_by_user_at: null })
+      .eq("id", salaryId)
+      .eq("user_id", userId)
+      .eq("is_paid_by_gestor", true)
+      .select("id")
+      .maybeSingle();
+    if (error) { toast.error("Erro ao confirmar salario: " + error.message); return; }
+    if (!data) { toast.error("Salario nao encontrado para confirmacao."); return; }
+    toast.success("Salario confirmado!");
+    queryClient.invalidateQueries({ queryKey: ["user-finance-data", userId] });
+  };
+
   const getUserName = (id: string) => profiles[id]?.full_name || "-";
 
   return (
@@ -738,42 +922,91 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         </Select>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <KpiCard title="Comissão Paga" value={formatCurrency(kpis.paid)} icon={BadgeDollarSign} variant="success" subtitle="Já confirmada e recebida" />
-        <KpiCard title="Comissão Prevista" value={formatCurrency(kpis.projected)} icon={TrendingUp} variant="primary" subtitle="Esperado receber neste mês pela Regra do Dia 07" />
-        <KpiCard title="Volume de Vendas" value={formatCurrency(kpis.volume)} icon={BarChart3} variant="warning" subtitle="Valor bruto dos contratos do período" />
-        <KpiCard title="Salário Fixo" value={formatCurrency(kpis.fixed)} icon={DollarSign} variant="default" subtitle="Remuneração fixa mensal" />
+        <KpiCard title="Comissão Paga" value={formatCurrency(kpis.paid)} icon={BadgeDollarSign} variant="success" subtitle="Já confirmada e recebida" tooltip="Comissões que você confirmou como recebidas. Se o pagamento foi antecipado, conta no mês da confirmação." />
+        <KpiCard title="Comissão Prevista" value={formatCurrency(kpis.projected)} icon={TrendingUp} variant="primary" subtitle="Esperado receber neste mês pela Regra do Dia 07" tooltip="Comissões liberadas ou previstas para o mês financeiro selecionado, respeitando a Regra do Dia 07." />
+        <KpiCard title="Volume de Vendas" value={formatCurrency(kpis.volume)} icon={BarChart3} variant="warning" subtitle="Valor bruto dos contratos do período" tooltip="Soma dos valores dos contratos com competência no período. Em implantação parcelada, considera apenas a parcela do mês." />
+        <KpiCard title="Salário Fixo" value={formatCurrency(kpis.fixed)} icon={DollarSign} variant={kpis.fixedConfirmed ? "success" : "default"} subtitle={kpis.fixedConfirmed ? "Recebimento confirmado" : "Remuneração fixa mensal"} tooltip="Salário fixo cadastrado para o mês. Quando confirmado, o quadro fica marcado visualmente." />
       </div>
 
       {(() => {
         const pendingPayment = filteredDeals.filter((d) => !d.isPaidToUser).length;
-        if (pendingConfirmations.length === 0 && pendingPayment === 0) return null;
+        if (pendingCommissionItems.length === 0 && pendingPayment === 0) return null;
         return (
           <div className="flex flex-wrap gap-3 mb-5">
-            {pendingConfirmations.length > 0 && (
+            {pendingCommissionItems.length > 0 && (
               <button
-                onClick={() => document.getElementById("pending-confirmations")?.scrollIntoView({ behavior: "smooth" })}
+                onClick={() => setPendingDialogOpen(true)}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-warning/10 border border-warning/30 hover:bg-warning/20 hover:border-warning/50 transition-colors cursor-pointer"
               >
                 <span className="h-2 w-2 rounded-full bg-warning animate-pulse" />
                 <span className="text-xs font-semibold text-warning">
-                  {pendingConfirmations.length} comissão{pendingConfirmations.length > 1 ? "ões" : ""} aguardando sua confirmação
+                  {pendingCommissionItems.length} comissão{pendingCommissionItems.length > 1 ? "ões" : ""} aguardando sua confirmação
                 </span>
                 <ChevronDown className="h-3 w-3 text-warning/70" />
               </button>
             )}
             {pendingPayment > 0 && (
-              <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted/40 border border-border/40">
+              <button
+                onClick={() => document.getElementById("commissions-period")?.scrollIntoView({ behavior: "smooth" })}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted/40 border border-border/40 hover:bg-muted/60 hover:border-border/70 transition-colors cursor-pointer"
+              >
                 <span className="h-2 w-2 rounded-full bg-muted-foreground/40" />
                 <span className="text-xs text-muted-foreground">
                   {pendingPayment} comissão{pendingPayment > 1 ? "ões" : ""} pendente{pendingPayment > 1 ? "s" : ""} de pagamento
                 </span>
-              </div>
+                <ChevronDown className="h-3 w-3 text-muted-foreground/60" />
+              </button>
             )}
           </div>
         );
       })()}
 
-      {pendingConfirmations.length > 0 && (
+      <Dialog open={pendingDialogOpen} onOpenChange={setPendingDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Pagamentos aguardando confirmação</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {pendingCommissionItems.map(({ cp, deal, expectedDate }) => (
+              <div key={cp.id} className="rounded-lg border border-border/50 bg-muted/20 p-4 space-y-3">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-sm">{deal.clientName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {deal.operation} · {cp.component === "mensalidade" ? "Comissão de mensalidade" : "Comissão de implantação"} · {formatMonthLabel(cp.competenceMonth)}
+                    </p>
+                  </div>
+                  <p className="font-mono font-bold text-warning">{formatCurrency(cp.amount)}</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                  <div className="rounded-md bg-card/60 border border-border/40 p-3">
+                    <p className="text-muted-foreground">Data prevista</p>
+                    <p className="font-mono font-semibold mt-1">{expectedDate ? formatSafeDate(expectedDate) : "—"}</p>
+                  </div>
+                  <div className="rounded-md bg-card/60 border border-border/40 p-3">
+                    <p className="text-muted-foreground">Informado como pago em</p>
+                    <p className="font-mono font-semibold mt-1">{formatSafeDate(cp.paidByDirectorAt, "dd/MM/yyyy HH:mm")}</p>
+                  </div>
+                  <div className="rounded-md bg-card/60 border border-border/40 p-3">
+                    <p className="text-muted-foreground">Valor informado</p>
+                    <p className="font-mono font-semibold mt-1">{formatCurrency(cp.amount)}</p>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 justify-end">
+                  <Button size="sm" variant="outline" onClick={() => handleRejectCommissionItem(cp.id)}>
+                    Não recebi
+                  </Button>
+                  <Button size="sm" onClick={() => handleConfirmCommissionItem(cp.id)}>
+                    Confirmar recebimento
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {false && pendingConfirmations.length > 0 && (
         <div id="pending-confirmations" className="mb-5 bg-card rounded-xl border-2 border-warning/50 overflow-hidden">
           <div className="px-5 py-3 border-b border-warning/30 flex items-center gap-2 bg-warning/5">
             <span className="h-2 w-2 rounded-full bg-warning animate-pulse shrink-0" />
@@ -804,6 +1037,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                     selectedMonth={dealMonth || selectedMonth}
                     presentations={presentations}
                     settings={settings}
+                    commissionPayments={commissionPayments}
                     onConfirm={handleSDRConfirm}
                     highlighted={deal.id === focusedDealId}
                     autoExpand={deal.id === focusedDealId}
@@ -819,7 +1053,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       <FutureProjectionsAccumulatedCard projections={futureProjections} position={position} onSelectMonth={setSelectedMonth} />
 
       <div className="space-y-5">
-        <div className="bg-card rounded-xl border border-border/60 overflow-hidden">
+        <div id="commissions-period" className="bg-card rounded-xl border border-border/60 overflow-hidden">
           <div className="px-5 py-3 border-b border-border/40 flex items-center gap-2">
             <DollarSign className="h-4 w-4 text-primary" />
             <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Comissões do Período</span>
@@ -850,6 +1084,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                     selectedMonth={selectedMonth}
                     presentations={presentations}
                     settings={settings}
+                    commissionPayments={commissionPayments}
                     onConfirm={handleSDRConfirm}
                   />
                 ))
@@ -880,6 +1115,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                   profiles={profiles}
                   userId={userId}
                   selectedMonth={selectedMonth}
+                  onConfirmSalary={handleConfirmSalaryReceipt}
                 />
               ) : (
                 filteredSalaries.map((s) => (
@@ -889,6 +1125,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                     profiles={profiles}
                     userId={userId}
                     selectedMonth={selectedMonth}
+                    onConfirmSalary={handleConfirmSalaryReceipt}
                   />
                 ))
               )}
@@ -931,10 +1168,13 @@ function FinanceiroContent() {
         profilesRes = await (supabase.from("profiles") as any)
           .select("user_id, full_name, display_name, commission_percent, fixed_salary, position");
       }
-      const [salariesRes, commissionPaymentsData] = await Promise.all([
-        (supabase.from("salary_payments") as any).select("*"),
-        fetchCommissionPaymentsForEnvironment(),
-      ]);
+      let salariesRes = await (supabase.from("salary_payments") as any)
+        .select("*")
+        .eq("is_test_data", isTestEnv);
+      if (salariesRes.error && (salariesRes.error.message?.includes("is_test_data") || salariesRes.error.message?.includes("column"))) {
+        salariesRes = await (supabase.from("salary_payments") as any).select("*");
+      }
+      const commissionPaymentsData = await fetchCommissionPaymentsForEnvironment();
 
       if (profilesRes.error) throw profilesRes.error;
       if (salariesRes.error) throw salariesRes.error;
@@ -958,7 +1198,7 @@ function FinanceiroContent() {
     }
   });
 
-  const querySalaries = data?.salaries || [];
+  const querySalaries = dedupeSalaryRows(data?.salaries || []);
   const profiles = data?.profiles || {};
   const commissionPayments: CommissionPayment[] = data?.commissionPayments || [];
 
@@ -987,10 +1227,10 @@ function FinanceiroContent() {
       let passStatus = true;
       if (filtroStatus === "Finalizados") {
         const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
-        passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments) === "done";
+        passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments, false) === "done";
       } else if (filtroStatus === "Pendentes") {
         const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
-        passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments) !== "done";
+        passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments, false) !== "done";
       }
 
       return passTime && passOp && passUser && passStatus;
@@ -1033,33 +1273,40 @@ function FinanceiroContent() {
     let totalProjetado = 0;
     let totalPago = 0;
     let volumeTotal = 0;
+    const period = { filterType, selectedMonth, selectedYear };
+
+    commissionPayments
+      .filter((cp) => filtroFuncionario === "Todos" || cp.recipientUserId === filtroFuncionario)
+      .forEach((cp) => {
+        if (cp.confirmedByUserAt && dateInFinancePeriod(cp.confirmedByUserAt, period)) {
+          totalPago += cp.amount;
+        } else if (!cp.confirmedByUserAt && monthKeyInPeriod(cp.competenceMonth, period)) {
+          totalProjetado += cp.amount;
+        }
+      });
 
     filteredDeals.forEach((deal) => {
       const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
       const baseParts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
-      const cpInPeriod = getCommissionPaymentsForParts(deal.id, baseParts, commissionPayments)
-        .filter((cp) => filtroFuncionario === "Todos" || cp.recipientUserId === filtroFuncionario);
-
       // Conta apenas a parte que pertence ao período filtrado
       if (filterType === "month") {
         const mensalidadeInMonth = mensalidadeMonthKey === selectedMonth;
-        const implantacaoInMonth = implantacaoMonthKey === selectedMonth;
+        const implantacaoInMonth = deal.isInstallment ? baseParts.installmentItems.length > 0 : implantacaoMonthKey === selectedMonth;
         if (mensalidadeInMonth) volumeTotal += deal.monthlyValue || 0;
-        if (implantacaoInMonth) volumeTotal += deal.implantationValue || 0;
+        if (implantacaoInMonth) {
+          volumeTotal += deal.isInstallment
+            ? baseParts.installmentItems.reduce((acc, item) => acc + item.value, 0)
+            : deal.implantationValue || 0;
+        }
       } else {
         const mensalidadeInYear = mensalidadeMonthKey?.startsWith(selectedYear) ?? false;
-        const implantacaoInYear = implantacaoMonthKey?.startsWith(selectedYear) ?? false;
+        const implantacaoInYear = deal.isInstallment ? baseParts.installmentItems.length > 0 : (implantacaoMonthKey?.startsWith(selectedYear) ?? false);
         if (mensalidadeInYear) volumeTotal += deal.monthlyValue || 0;
-        if (implantacaoInYear && implantacaoMonthKey !== mensalidadeMonthKey) volumeTotal += deal.implantationValue || 0;
-        if (implantacaoInYear && implantacaoMonthKey === mensalidadeMonthKey && !mensalidadeInYear) volumeTotal += deal.implantationValue || 0;
-      }
-
-      if (cpInPeriod.length > 0) {
-        cpInPeriod.forEach((cp) => {
-          if (cp.confirmedByUserAt) totalPago += cp.amount;
-          else totalProjetado += cp.amount;
-        });
-        return;
+        if (implantacaoInYear) {
+          volumeTotal += deal.isInstallment
+            ? baseParts.installmentItems.reduce((acc, item) => acc + item.value, 0)
+            : deal.implantationValue || 0;
+        }
       }
 
       const recipients = [
@@ -1069,12 +1316,40 @@ function FinanceiroContent() {
 
       recipients.forEach((recipientUserId) => {
         const recipientParts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, { filterType, selectedMonth, selectedYear }, profiles, recipientUserId);
-        if (deal.isUserConfirmedPayment) totalPago += recipientParts.total;
-        else totalProjetado += recipientParts.total;
+        const recipientPayments = getCommissionPaymentsForParts(deal.id, recipientParts, commissionPayments)
+          .filter((cp) => cp.recipientUserId === recipientUserId);
+        const addLegacy = (amount: number) => {
+          if (deal.isUserConfirmedPayment) totalPago += amount;
+          else totalProjetado += amount;
+        };
+
+        if (recipientParts.mensalidadeInPeriod && recipientParts.mensalidadeCommission > 0) {
+          const hasCp = recipientPayments.some((cp) => cp.component === "mensalidade" && cp.competenceMonth === recipientParts.mensalidadeMonthKey);
+          if (!hasCp) addLegacy(recipientParts.mensalidadeCommission);
+        }
+
+        if (deal.isInstallment) {
+          recipientParts.installmentItems.forEach((item) => {
+            const hasCp = recipientPayments.some((cp) =>
+              cp.component === "implantacao_parcela"
+              && cp.competenceMonth === item.monthKey
+              && cp.installmentIndex === item.index
+            );
+            if (!hasCp) addLegacy(item.commission);
+          });
+        } else if (recipientParts.implantacaoInPeriod && recipientParts.implantacaoCommission > 0) {
+          const hasCp = recipientPayments.some((cp) => cp.component === "implantacao" && cp.competenceMonth === recipientParts.implantacaoMonthKey);
+          if (!hasCp) addLegacy(recipientParts.implantacaoCommission);
+        }
       });
     });
 
-    return { totalFixo, totalProjetado, totalPago, volumeTotal };
+    const totalSalariosPagos = filteredSalaries
+      .filter((s: any) => s.is_paid_by_gestor && dateInFinancePeriod(s.payment_date || s.confirmed_by_user_at, period))
+      .reduce((acc: number, s: any) => acc + (s.amount || 0), 0);
+    const totalPagoGeral = totalPago + totalSalariosPagos;
+
+    return { totalFixo, totalProjetado, totalPago, totalSalariosPagos, totalPagoGeral, volumeTotal };
   }, [filteredDeals, filteredSalaries, filterType, selectedMonth, selectedYear, presentations, settings, commissionPayments, filtroFuncionario, profiles]);
 
   // Rows para modal e Contas a Pagar: salary_payments explícitos + fallback de profiles
@@ -1103,6 +1378,11 @@ function FinanceiroContent() {
 
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number, projectedOut: number }> = {};
+    const paidCpKeys = new Set(
+      commissionPayments
+        .filter((cp) => cp.paidByDirectorAt || cp.confirmedByUserAt)
+        .map((cp) => `${cp.dealId}:${cp.component}:${cp.competenceMonth}:${cp.recipientUserId || ""}:${cp.installmentIndex ?? ""}`)
+    );
     const addToMap = (monthKey: string, volume: number, commission: number) => {
       if (!projMap[monthKey]) projMap[monthKey] = { projectedIn: 0, projectedOut: 0 };
       projMap[monthKey].projectedIn += volume;
@@ -1117,17 +1397,26 @@ function FinanceiroContent() {
       const presCount = getPresentationsForDeal(deal, presentations);
       const comm = calculateCommission(deal, presCount, settings, false);
       const mensalidadeComm = comm.monthlyCommission + comm.superMetaBonus;
+      const futureInstallments = getInstallmentItems(deal, comm.implantationCommission);
 
       const isFutureMes = (mk: string | null) => mk && (filterType === "month" ? mk > selectedMonth : mk.split("-")[0] > selectedYear);
 
-      if (isFutureMes(mensalidadeMonthKey)) {
+      const executivoMensalidadePaid = mensalidadeMonthKey ? paidCpKeys.has(`${deal.id}:mensalidade:${mensalidadeMonthKey}:${deal.userId || ""}:`) : false;
+      const executivoImplantacaoPaid = implantacaoMonthKey ? paidCpKeys.has(`${deal.id}:implantacao:${implantacaoMonthKey}:${deal.userId || ""}:`) : false;
+
+      if (isFutureMes(mensalidadeMonthKey) && !executivoMensalidadePaid) {
         addToMap(mensalidadeMonthKey!, deal.monthlyValue || 0, mensalidadeComm);
       }
-      if (isFutureMes(implantacaoMonthKey) && implantacaoMonthKey !== mensalidadeMonthKey) {
+      if (deal.isInstallment) {
+        futureInstallments.forEach((item) => {
+          const paid = paidCpKeys.has(`${deal.id}:implantacao_parcela:${item.monthKey}:${deal.userId || ""}:${item.index}`);
+          if (isFutureMes(item.monthKey) && !paid) addToMap(item.monthKey, item.value, item.commission);
+        });
+      } else if (isFutureMes(implantacaoMonthKey) && implantacaoMonthKey !== mensalidadeMonthKey && !executivoImplantacaoPaid) {
         addToMap(implantacaoMonthKey!, deal.implantationValue || 0, comm.implantationCommission);
       }
       // Se ambas no mesmo mês futuro, adiciona implantação junto
-      if (isFutureMes(implantacaoMonthKey) && implantacaoMonthKey === mensalidadeMonthKey) {
+      if (!deal.isInstallment && isFutureMes(implantacaoMonthKey) && implantacaoMonthKey === mensalidadeMonthKey && !executivoImplantacaoPaid) {
         projMap[mensalidadeMonthKey!].projectedIn += deal.implantationValue || 0;
         projMap[mensalidadeMonthKey!].projectedOut += comm.implantationCommission;
       }
@@ -1137,22 +1426,25 @@ function FinanceiroContent() {
       .map(([key, vals]) => ({ monthKey: key, ...vals }))
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
       .slice(0, 6);
-  }, [activeDeals, selectedMonth, filterType, selectedYear, filtroOperacao, filtroFuncionario, presentations, settings]);
+  }, [activeDeals, selectedMonth, filterType, selectedYear, filtroOperacao, filtroFuncionario, presentations, settings, commissionPayments]);
 
   const handleToggleMensalidade = async (dealId: string, currentStatus: boolean) => {
     if (currentStatus) {
       if (!confirm("Confirma o cancelamento deste recebimento revertendo-o para Pendente?")) return;
     }
     const newStatus = !currentStatus;
-    const { error } = await supabase
+    const { data: updatedDeal, error } = await supabase
       .from("deals")
       .update({ 
         is_mensalidade_paid_by_client: newStatus,
         actual_payment_date: newStatus ? new Date().toISOString() : null,
         mensalidade_payment_date: newStatus ? new Date().toISOString() : null
       } as any)
-      .eq("id", dealId);
+      .eq("id", dealId)
+      .select("id")
+      .maybeSingle();
     if (error) { toast.error("Erro: " + error.message); return; }
+    if (!updatedDeal) { toast.error("Nao foi possivel atualizar este recebimento."); return; }
     toast.success(newStatus ? "Recebimento confirmado!" : "Revertido para Pendente");
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
@@ -1163,15 +1455,18 @@ function FinanceiroContent() {
       if (!confirm("Confirma o cancelamento deste recebimento revertendo-o para Pendente?")) return;
     }
     const newStatus = !currentStatus;
-    const { error } = await supabase
+    const { data: updatedDeal, error } = await supabase
       .from("deals")
       .update({
         is_implantacao_paid_by_client: newStatus,
         is_implantacao_paid: newStatus,
         implantacao_payment_date: newStatus ? new Date().toISOString() : null
       } as any)
-      .eq("id", dealId);
+      .eq("id", dealId)
+      .select("id")
+      .maybeSingle();
     if (error) { toast.error("Erro: " + error.message); return; }
+    if (!updatedDeal) { toast.error("Nao foi possivel atualizar este recebimento."); return; }
     toast.success(newStatus ? "Recebimento confirmado!" : "Revertido para Pendente");
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
@@ -1194,7 +1489,7 @@ function FinanceiroContent() {
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
-  const handleToggleCommissionPayment = async (dealId: string, currentStatus: boolean) => {
+  const handleToggleCommissionPayment = async (dealId: string, currentStatus: boolean, targetRecipientUserId?: string) => {
     const newStatus = !currentStatus;
     if (!newStatus) {
       if (!confirm("Confirma o cancelamento do pagamento desta comissão revertendo-a para Pendente?")) return;
@@ -1216,7 +1511,11 @@ function FinanceiroContent() {
         if (parts.mensalidadeInPeriod && parts.mensalidadeCommission > 0 && parts.mensalidadeMonthKey) {
           await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, isTestData, recipientUserId);
         }
-        if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey) {
+        if (parts.installmentItems?.length) {
+          for (const item of parts.installmentItems) {
+            await upsertCommissionPaymentRow(dealId, "implantacao_parcela", item.monthKey, item.commission, isTestData, recipientUserId, item.index);
+          }
+        } else if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey) {
           await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, isTestData, recipientUserId);
         }
       };
@@ -1228,15 +1527,19 @@ function FinanceiroContent() {
         if (parts.mensalidadeInPeriod && parts.mensalidadeMonthKey) {
           await clearCommissionPaymentForComponent(dealId, "mensalidade", parts.mensalidadeMonthKey, recipientUserId).catch(console.error);
         }
-        if (parts.implantacaoInPeriod && parts.implantacaoMonthKey) {
+        if (parts.installmentItems?.length) {
+          for (const item of parts.installmentItems) {
+            await clearCommissionPaymentForComponent(dealId, "implantacao_parcela", item.monthKey, recipientUserId, item.index).catch(console.error);
+          }
+        } else if (parts.implantacaoInPeriod && parts.implantacaoMonthKey) {
           await clearCommissionPaymentForComponent(dealId, "implantacao", parts.implantacaoMonthKey, recipientUserId).catch(console.error);
         }
       };
 
       // 1. Grava commission_payments PRIMEIRO (se falhar, aborta sem alterar o deal)
       try {
-        await upsertPartsForRecipient(deal.userId, executivoParts);
-        if (sdrParts) await upsertPartsForRecipient(deal.sdrUserId, sdrParts);
+        if (!targetRecipientUserId || targetRecipientUserId === deal.userId) await upsertPartsForRecipient(deal.userId, executivoParts);
+        if (sdrParts && (!targetRecipientUserId || targetRecipientUserId === deal.sdrUserId)) await upsertPartsForRecipient(deal.sdrUserId, sdrParts);
       } catch (cpErr: any) {
         toast.error("Erro ao registrar comissão: " + cpErr.message);
         return;
@@ -1249,8 +1552,8 @@ function FinanceiroContent() {
         .eq("id", dealId);
       if (error) {
         // Rollback: apaga os registros de commission_payments que acabamos de criar
-        await clearPartsForRecipient(deal.userId, executivoParts);
-        if (sdrParts) await clearPartsForRecipient(deal.sdrUserId, sdrParts);
+        if (!targetRecipientUserId || targetRecipientUserId === deal.userId) await clearPartsForRecipient(deal.userId, executivoParts);
+        if (sdrParts && (!targetRecipientUserId || targetRecipientUserId === deal.sdrUserId)) await clearPartsForRecipient(deal.sdrUserId, sdrParts);
         toast.error("Erro: " + error.message);
         return;
       }
@@ -1259,8 +1562,8 @@ function FinanceiroContent() {
       const details = executivoParts.labels.length > 0 ? ` (${executivoParts.labels.join(" + ")})` : "";
       const notifTitle = "Comissão disponível 💰";
       const notifMsg = `Sua comissão${details} referente ao cliente ${deal.clientName} foi marcada como paga pelo gestor. Acesse o Financeiro para confirmar o recebimento.`;
-      if (deal.userId) await createNotification(deal.userId, notifTitle, notifMsg, deal.id);
-      if (sdrParts && deal.sdrUserId && deal.sdrUserId !== deal.userId) {
+      if (deal.userId && (!targetRecipientUserId || targetRecipientUserId === deal.userId)) await createNotification(deal.userId, notifTitle, notifMsg, deal.id);
+      if (sdrParts && deal.sdrUserId && deal.sdrUserId !== deal.userId && (!targetRecipientUserId || targetRecipientUserId === deal.sdrUserId)) {
         const sdrDetails = sdrParts.labels.length > 0 ? ` (${sdrParts.labels.join(" + ")})` : "";
         const sdrNotifMsg = `Sua comissão${sdrDetails} referente ao cliente ${deal.clientName} foi marcada como paga pelo gestor. Acesse o Financeiro para confirmar o recebimento.`;
         await createNotification(deal.sdrUserId, notifTitle, sdrNotifMsg, deal.id);
@@ -1272,10 +1575,14 @@ function FinanceiroContent() {
       const parts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
       try {
         if (parts.mensalidadeInPeriod && parts.mensalidadeMonthKey) {
-          await clearCommissionPaymentForComponent(dealId, "mensalidade", parts.mensalidadeMonthKey);
+          await clearCommissionPaymentForComponent(dealId, "mensalidade", parts.mensalidadeMonthKey, targetRecipientUserId);
         }
-        if (parts.implantacaoInPeriod && parts.implantacaoMonthKey) {
-          await clearCommissionPaymentForComponent(dealId, "implantacao", parts.implantacaoMonthKey);
+        if (parts.installmentItems?.length) {
+          for (const item of parts.installmentItems) {
+            await clearCommissionPaymentForComponent(dealId, "implantacao_parcela", item.monthKey, targetRecipientUserId, item.index);
+          }
+        } else if (parts.implantacaoInPeriod && parts.implantacaoMonthKey) {
+          await clearCommissionPaymentForComponent(dealId, "implantacao", parts.implantacaoMonthKey, targetRecipientUserId);
         }
       } catch (cpErr: any) {
         toast.error("Erro ao reverter comissão: " + cpErr.message);
@@ -1295,31 +1602,49 @@ function FinanceiroContent() {
 
   const handleToggleSalaryPayment = async (salaryId: string, currentStatus: boolean) => {
     const newStatus = !currentStatus;
-    const { error } = await supabase
+    const { data: updatedSalary, error } = await supabase
       .from("salary_payments")
-      .update({ is_paid_by_gestor: newStatus, payment_date: newStatus ? new Date().toISOString() : null } as any)
-      .eq("id", salaryId);
+      .update({ is_paid_by_gestor: newStatus, payment_date: newStatus ? new Date().toISOString() : null, confirmed_by_user_at: null, rejected_by_user_at: null } as any)
+      .eq("id", salaryId)
+      .select("id")
+      .maybeSingle();
     if (error) { toast.error("Erro: " + error.message); return; }
+    if (!updatedSalary) { toast.error("Nao foi possivel atualizar este salario."); return; }
     toast.success(newStatus ? "Salário marcado como pago com sucesso!" : "Baixa de salário desmarcada");
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
   const handleCreateAndToggleSalaryPayment = async (userId: string, amount: number, referenceMonth: string) => {
     const dateStr = referenceMonth.slice(0, 7) + "-20";
-    const { data, error } = await (supabase as any)
+    const referenceDate = referenceMonth.slice(0, 7) + "-01";
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
+    const existing = await (supabase as any)
       .from("salary_payments")
-      .insert({
-        user_id: userId,
-        amount,
-        reference_month: referenceMonth.slice(0, 7) + "-01",
-        expected_payment_date: dateStr,
-        is_paid_by_gestor: true,
-        payment_date: new Date().toISOString(),
-      })
-      .select()
-      .single();
-    if (error) { toast.error("Erro ao registrar salário: " + error.message); return; }
-    toast.success("Salário registrado e marcado como pago!");
+      .select("id")
+      .eq("user_id", userId)
+      .eq("reference_month", referenceDate)
+      .eq("is_test_data", isTestEnv)
+      .maybeSingle();
+    if (existing.error) { toast.error("Erro ao verificar salario: " + existing.error.message); return; }
+    const payload = {
+      user_id: userId,
+      amount,
+      reference_month: referenceDate,
+      expected_payment_date: dateStr,
+      is_paid_by_gestor: true,
+      payment_date: new Date().toISOString(),
+      confirmed_by_user_at: null,
+      rejected_by_user_at: null,
+      is_test_data: isTestEnv,
+    };
+    const query = existing.data?.id
+      ? (supabase as any).from("salary_payments").update(payload).eq("id", existing.data.id)
+      : (supabase as any).from("salary_payments").insert(payload);
+    const { error } = await query.select("id").single();
+    if (error) { toast.error("Erro ao registrar salario: " + error.message); return; }
+    await createNotification(userId, "Salario disponivel", `Seu salario de ${formatMonthLabel(referenceMonth.slice(0, 7))} foi marcado como transferido. Acesse o Financeiro para confirmar o recebimento.`);
+    toast.success("Salario registrado e marcado como transferido!");
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
@@ -1413,13 +1738,22 @@ function FinanceiroContent() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
         <KpiCard
-          title={`Volume Bruto (${filterType === "month" ? "Mês" : "Ano"})`}
+          title="Total Pago"
+          value={formatCurrency(kpis.totalPagoGeral)}
+          icon={CheckCircle2}
+          variant="success"
+          subtitle="Comissões e salários pagos no período"
+          tooltip="Soma comissões confirmadas e salários transferidos no período. Para antecipações, usa a data real da confirmação."
+        />
+        <KpiCard
+          title={`Volume com Recebimento (${filterType === "month" ? "Mês" : "Ano"})`}
           value={formatCurrency(kpis.volumeTotal)}
           icon={BarChart3}
           variant="default"
-          subtitle="Valor bruto total dos contratos"
+          subtitle="Contratos com vencimento no período"
+          tooltip="Soma o volume dos contratos que têm recebimento previsto no período. Em implantação parcelada, usa apenas a parcela do período."
           onClick={() => setKpiModalType("volume")}
         />
         <KpiCard
@@ -1428,6 +1762,7 @@ function FinanceiroContent() {
           icon={CheckCircle2}
           variant="success"
           subtitle="Já confirmada e recebida"
+          tooltip="Comissões que os funcionários já confirmaram como recebidas."
           onClick={() => setKpiModalType("pago")}
         />
         <KpiCard
@@ -1436,6 +1771,7 @@ function FinanceiroContent() {
           icon={ArrowDownToLine}
           variant="warning"
           subtitle="Esperado receber neste mês pela Regra do Dia 07"
+          tooltip="Comissões ainda previstas ou aguardando confirmação, separadas por funcionário, componente e mês financeiro."
           onClick={() => setKpiModalType("projetado")}
         />
         <KpiCard
@@ -1444,6 +1780,7 @@ function FinanceiroContent() {
           icon={Wallet}
           variant="default"
           subtitle="Remuneração fixa consolidada do período"
+          tooltip="Soma os salários fixos cadastrados ou previstos para os funcionários no período."
           onClick={() => setKpiModalType("fixo")}
         />
       </div>
@@ -1579,6 +1916,7 @@ function FinanceiroContent() {
                     })
                     .map((d) => {
                       const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
+                      const status = getCommissionStatusForPayments(d, parts, commissionPayments);
                       return (
                         <TableRow key={d.id} className="border-border/25 hover:bg-[#242842]/40">
                           <TableCell className="text-sm font-medium">{d.clientName}</TableCell>
@@ -1586,9 +1924,9 @@ function FinanceiroContent() {
                           <TableCell className="text-sm">{getUserName(d.userId)}</TableCell>
                           <TableCell className="text-right font-mono font-bold text-primary">{formatCurrency(parts.total)}</TableCell>
                           <TableCell className="text-center">
-                            {d.isUserConfirmedPayment ? (
+                            {status === "done" ? (
                               <span className="pill-green">Recebido</span>
-                            ) : d.isPaidToUser ? (
+                            ) : status === "waiting" ? (
                               <span className="pill-blue">Aguardando Confirmação</span>
                             ) : (
                               <span className="pill-yellow">Pendente</span>
@@ -1794,7 +2132,7 @@ function ReceivablesTab({ deals, selectedMonth, getUserName, onToggleMensalidade
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Cliente</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Operação</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Executivo</TableHead>
-              <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">SDR</TableHead>
+              <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Funcionario</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Mensalidade</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Implantação</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Data Prevista</TableHead>
@@ -1832,19 +2170,19 @@ interface PayablesTabProps {
   settings: any;
   commissionPayments: CommissionPayment[];
   period: FinancePeriod;
-  onToggleCommissionPayment: (dealId: string, currentStatus: boolean) => void;
+  onToggleCommissionPayment: (dealId: string, currentStatus: boolean, recipientUserId?: string) => void;
   onToggleSalaryPayment: (salaryId: string, currentStatus: boolean) => void;
   onCreateAndToggleSalaryPayment: (userId: string, amount: number, referenceMonth: string) => void;
 }
 
-function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presentations, commissionPayments, period, onToggleCommissionPayment }: any) {
+function ExpandableCommissionRow({ deal, recipientUserId, settings, profiles, getUserName, presentations, commissionPayments, period, onToggleCommissionPayment }: any) {
   const [expanded, setExpanded] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const parts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, deal.userId);
-  const sdrParts = deal.sdrUserId && deal.sdrUserId !== deal.userId
-    ? getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, deal.sdrUserId)
-    : null;
-  const commissionStatus = getCommissionStatusForPayments(deal, parts, commissionPayments || []);
+  const recipientId = recipientUserId || deal.userId;
+  const parts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, recipientId);
+  const recipientPayments = (commissionPayments || []).filter((cp: CommissionPayment) => cp.recipientUserId === recipientId);
+  const commissionStatus = getCommissionStatusForPayments(deal, parts, recipientPayments, false);
+  const hasDirectorPayment = commissionStatus === "waiting" || commissionStatus === "done";
 
   const baseDate = parts.mensalidadeInPeriod ? deal.firstPaymentDate : parts.implantacaoInPeriod ? deal.implantationPaymentDate : deal.firstPaymentDate || deal.implantationPaymentDate;
   let expectedPaymentDateStr = "Data Pendente";
@@ -1855,7 +2193,7 @@ function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presen
   }
 
   const comm = parts.comm;
-  const dealComiss = parts.total + (sdrParts?.total || 0);
+  const dealComiss = parts.total;
   const periodBaseCommission = (parts.mensalidadeInPeriod ? comm.monthlyCommission : 0) + (parts.implantacaoInPeriod ? comm.implantationCommission : 0);
   const periodSuperMetaBonus = parts.mensalidadeInPeriod ? comm.superMetaBonus : 0;
 
@@ -1864,9 +2202,9 @@ function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presen
       <TableRow
         onClick={() => setExpanded(!expanded)}
         className={`border-border/25 cursor-pointer transition-colors ${
-          deal.isUserConfirmedPayment
+          commissionStatus === "done"
             ? "bg-success/5 hover:bg-success/10 border-l-2 border-l-success/40"
-            : deal.isPaidToUser
+            : commissionStatus === "waiting"
             ? "bg-warning/5 hover:bg-warning/10 border-l-2 border-l-warning/40"
             : "hover:bg-[#242842]/40"
         }`}
@@ -1874,7 +2212,7 @@ function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presen
         <TableCell className="w-[30px] px-2 py-3">
           {expanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/50" />}
         </TableCell>
-        <TableCell className="px-3 py-3 text-sm font-medium">{getUserName(deal.userId)}</TableCell>
+        <TableCell className="px-3 py-3 text-sm font-medium">{getUserName(recipientId)}</TableCell>
         <TableCell className="px-3 py-3 text-sm">{deal.clientName}</TableCell>
         <TableCell className="px-3 py-3">
           <Badge variant="outline" className="text-[10px] border-border/40">{deal.operation}</Badge>
@@ -1902,11 +2240,11 @@ function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presen
               <Button
                 size="sm"
                 disabled={commissionStatus === "locked" || dealComiss <= 0}
-                variant={deal.isUserConfirmedPayment ? "outline" : "default"}
+                variant={commissionStatus === "done" ? "outline" : "default"}
                 className={`h-7 text-xs ${
-                  deal.isUserConfirmedPayment
+                  commissionStatus === "done"
                     ? "text-success border-success/30 bg-success/10 hover:bg-success/20"
-                    : deal.isPaidToUser
+                    : commissionStatus === "waiting"
                     ? "bg-warning/20 border-warning/30 text-warning hover:bg-warning/30"
                     : "bg-success hover:bg-success/90 text-success-foreground"
                 }`}
@@ -1917,17 +2255,17 @@ function ExpandableCommissionRow({ deal, settings, profiles, getUserName, presen
             <PopoverContent className="w-64 p-3 shadow-lg bg-card border-border/60" align="end">
               <div className="space-y-3">
                 <p className="text-sm font-medium">
-                  {deal.isPaidToUser ? "Remover baixa de comissao" : "Enviar baixa de comissao"}
+                  {hasDirectorPayment ? "Remover baixa de comissao" : "Enviar baixa de comissao"}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
                   O funcionario recebera uma notificacao para confirmar o recebimento.
                 </p>
                 <Button
                   size="sm"
-                  className={`w-full h-8 text-xs ${deal.isPaidToUser ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground" : "bg-success hover:bg-success/90 text-success-foreground"}`}
-                  onClick={() => { onToggleCommissionPayment(deal.id, deal.isPaidToUser || false); setPopoverOpen(false); }}
+                  className={`w-full h-8 text-xs ${hasDirectorPayment ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground" : "bg-success hover:bg-success/90 text-success-foreground"}`}
+                  onClick={() => { onToggleCommissionPayment(deal.id, hasDirectorPayment, recipientId); setPopoverOpen(false); }}
                 >
-                  {deal.isPaidToUser ? "Remover Baixa" : "Dar Baixa"}
+                  {hasDirectorPayment ? "Remover Baixa" : "Dar Baixa"}
                 </Button>
               </div>
             </PopoverContent>
@@ -1976,7 +2314,7 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
           <TableHeader>
             <TableRow className="border-border/30 hover:bg-transparent">
               <TableHead className="w-[30px] px-2"></TableHead>
-              <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">SDR</TableHead>
+              <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Funcionario</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Cliente</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Operação</TableHead>
               <TableHead className="px-3 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Comissão do Período</TableHead>
@@ -1993,19 +2331,29 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
                 </TableCell>
               </TableRow>
             ) : (
-              deals.map((deal) => (
-                <ExpandableCommissionRow
-                  key={deal.id}
-                  deal={deal}
-                  settings={settings}
-                  profiles={profiles}
-                  getUserName={getUserName}
-                  presentations={presentations}
-                  commissionPayments={commissionPayments}
-                  period={period}
-                  onToggleCommissionPayment={onToggleCommissionPayment}
-                />
-              ))
+              deals.flatMap((deal) => {
+                const recipients = [
+                  deal.userId,
+                  deal.sdrUserId && deal.sdrUserId !== deal.userId ? deal.sdrUserId : null,
+                ].filter(Boolean).filter((recipientUserId) => {
+                  const parts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, recipientUserId as string);
+                  return parts.total > 0;
+                }) as string[];
+                return recipients.map((recipientUserId) => (
+                  <ExpandableCommissionRow
+                    key={`${deal.id}-${recipientUserId}`}
+                    deal={deal}
+                    recipientUserId={recipientUserId}
+                    settings={settings}
+                    profiles={profiles}
+                    getUserName={getUserName}
+                    presentations={presentations}
+                    commissionPayments={commissionPayments}
+                    period={period}
+                    onToggleCommissionPayment={onToggleCommissionPayment}
+                  />
+                ));
+              })
             )}
           </TableBody>
         </Table>

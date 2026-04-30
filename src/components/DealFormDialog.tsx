@@ -9,10 +9,10 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Deal, Operation, PaymentStatus } from "@/lib/types";
 import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import { CalendarIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { InfoHint } from "@/components/InfoHint";
 
 interface DealFormDialogProps {
   open: boolean;
@@ -29,7 +29,37 @@ function genId() {
   return crypto.randomUUID();
 }
 
-export function DealFormDialog({ open, onOpenChange, onSave, editDeal, currentPosition, currentUserId, executivos, sdrs }: DealFormDialogProps) {
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function FieldLabel({ children, info }: { children: string; info: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Label>{children}</Label>
+      <InfoHint text={info} />
+    </div>
+  );
+}
+
+export function DealFormDialog({
+  open,
+  onOpenChange,
+  onSave,
+  editDeal,
+  currentPosition,
+  currentUserId,
+  executivos,
+  sdrs,
+}: DealFormDialogProps) {
   const [closingDate, setClosingDate] = useState<Date | undefined>();
   const [selectedExecutivoId, setSelectedExecutivoId] = useState("");
   const [selectedSdrId, setSelectedSdrId] = useState("");
@@ -60,49 +90,49 @@ export function DealFormDialog({ open, onOpenChange, onSave, editDeal, currentPo
       setSelectedSdrId(editDeal.sdrUserId || "");
       if (currentPosition === "Diretor" && editDeal.userId) setSelectedExecutivoId(editDeal.userId);
     } else {
-      setClosingDate(new Date());
+      const today = new Date();
+      setClosingDate(today);
       setOperation("BluePex");
       setClientName("");
       setMonthlyValue("");
       setImplantationValue("");
-
-      // Dia 1 do próximo mês: ≤ 7, então conta no próprio mês (sem transbordo pela Regra do Dia 07)
-      const defaultPayDate = new Date();
-      defaultPayDate.setMonth(defaultPayDate.getMonth() + 1);
-      defaultPayDate.setDate(1);
-      setFirstPaymentDate(defaultPayDate);
-      setImplantationPaymentDate(defaultPayDate);
-
+      setFirstPaymentDate(addDays(today, 30));
+      setImplantationPaymentDate(addDays(today, 10));
       setIsInstallment(false);
       setInstallmentCount("2");
       setInstallmentDates([]);
       setPaymentStatus("Pendente");
-
-      if (currentPosition === "Diretor" && executivos?.length) {
-        setSelectedExecutivoId(executivos[0].id);
-      }
+      setSelectedSdrId(sdrs?.[0]?.id || "");
+      if (currentPosition === "Diretor" && executivos?.length) setSelectedExecutivoId(executivos[0].id);
     }
-  }, [editDeal, open, currentPosition, executivos]);
+  }, [editDeal, open, currentPosition, executivos, sdrs]);
 
   useEffect(() => {
     const count = parseInt(installmentCount) || 2;
     setInstallmentDates((prev) => {
       const arr = [...prev];
-      while (arr.length < count) arr.push(undefined);
+      const base = implantationPaymentDate || closingDate || new Date();
+      while (arr.length < count) arr.push(addMonths(base, arr.length));
       return arr.slice(0, count);
     });
-  }, [installmentCount]);
+  }, [installmentCount, implantationPaymentDate, closingDate]);
 
-  useEffect(() => {
-    if (!editDeal && closingDate && !firstPaymentDate) {
-      // Dia 1 do mês seguinte ao fechamento — ≤ 7, sem transbordo pela Regra do Dia 07
-      const d = new Date(closingDate);
-      d.setMonth(d.getMonth() + 1);
-      d.setDate(1);
-      setFirstPaymentDate(d);
-      setImplantationPaymentDate(d);
+  const handleClosingDateSelect = (date: Date | undefined) => {
+    setClosingDate(date);
+    if (!editDeal && date) {
+      setFirstPaymentDate(addDays(date, 30));
+      setImplantationPaymentDate(addDays(date, 10));
     }
-  }, [closingDate, editDeal, firstPaymentDate]);
+  };
+
+  const handleInstallmentChange = (checked: boolean) => {
+    setIsInstallment(checked);
+    if (checked && installmentDates.every((date) => !date)) {
+      const count = parseInt(installmentCount) || 2;
+      const base = implantationPaymentDate || closingDate || new Date();
+      setInstallmentDates(Array.from({ length: count }, (_, index) => addMonths(base, index)));
+    }
+  };
 
   const handleSave = () => {
     if (currentPosition === "SDR") {
@@ -114,16 +144,21 @@ export function DealFormDialog({ open, onOpenChange, onSave, editDeal, currentPo
       return;
     }
     if (!firstPaymentDate || !implantationPaymentDate) {
-      toast.error("O preenchimento da Data do Primeiro Pagamento e Data de Implantação é OBRIGATÓRIO.");
+      toast.error("O preenchimento da data do primeiro pagamento e da data de implantação é obrigatório.");
+      return;
+    }
+    if (currentPosition === "Diretor" && !selectedExecutivoId) {
+      toast.error("Selecione o executivo responsável pelo fechamento.");
+      return;
+    }
+    if (isInstallment && installmentDates.some((date) => !date)) {
+      toast.error("Preencha a data de todas as parcelas da implantação.");
       return;
     }
 
-    let dealUserId: string | undefined;
-    if (currentPosition === "Diretor") {
-      dealUserId = selectedExecutivoId || undefined;
-    } else {
-      dealUserId = editDeal?.userId || currentUserId;
-    }
+    const dealUserId = currentPosition === "Diretor"
+      ? selectedExecutivoId || undefined
+      : editDeal?.userId || currentUserId;
 
     const deal: Deal = {
       id: editDeal?.id || genId(),
@@ -136,13 +171,12 @@ export function DealFormDialog({ open, onOpenChange, onSave, editDeal, currentPo
       implantationPaymentDate: implantationPaymentDate.toISOString(),
       isInstallment,
       installmentCount: isInstallment ? parseInt(installmentCount) || 2 : 0,
-      installmentDates: isInstallment
-        ? installmentDates.map((d) => ({ date: d?.toISOString() || "" }))
-        : [],
+      installmentDates: isInstallment ? installmentDates.map((d) => ({ date: d!.toISOString() })) : [],
       paymentStatus,
       userId: dealUserId,
       sdrUserId: selectedSdrId || undefined,
     };
+
     onSave(deal);
     onOpenChange(false);
   };
@@ -155,15 +189,13 @@ export function DealFormDialog({ open, onOpenChange, onSave, editDeal, currentPo
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Closing Date */}
           <div className="space-y-1.5">
-            <Label>Data do Fechamento</Label>
-            <DatePicker date={closingDate} onSelect={setClosingDate} />
+            <FieldLabel info="Data em que o contrato foi assinado. Ela alimenta os KPIs de fechamento do Dashboard.">Data do Fechamento</FieldLabel>
+            <DatePicker date={closingDate} onSelect={handleClosingDateSelect} />
           </div>
 
-          {/* Operation */}
           <div className="space-y-1.5">
-            <Label>Operação</Label>
+            <FieldLabel info="Define se o fechamento entra nos totais da BluePex ou da Opus Tech.">Operação</FieldLabel>
             <Select value={operation} onValueChange={(v) => setOperation(v as Operation)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -173,84 +205,80 @@ export function DealFormDialog({ open, onOpenChange, onSave, editDeal, currentPo
             </Select>
           </div>
 
-          {/* Executivo picker — apenas para Diretor em novo fechamento */}
           {currentPosition === "Diretor" && !editDeal && executivos && executivos.length > 0 && (
             <div className="space-y-1.5">
-              <Label>Executivo Responsável</Label>
+              <FieldLabel info="O executivo selecionado será o dono comercial do contrato e receberá a comissão dele.">Executivo Responsável</FieldLabel>
               <Select value={selectedExecutivoId} onValueChange={setSelectedExecutivoId}>
                 <SelectTrigger><SelectValue placeholder="Selecione o executivo" /></SelectTrigger>
                 <SelectContent>
-                  {executivos.map(e => (
-                    <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
+                  {executivos.map((executivo) => (
+                    <SelectItem key={executivo.id} value={executivo.id}>{executivo.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           )}
 
-          {/* SDR picker — para Executivo e Diretor */}
           {currentPosition !== "SDR" && sdrs && sdrs.length > 0 && (
             <div className="space-y-1.5">
-              <Label>SDR Responsável</Label>
+              <FieldLabel info="Quando houver SDR no contrato, a comissão dele é separada da comissão do executivo.">SDR Responsável</FieldLabel>
               <Select value={selectedSdrId} onValueChange={setSelectedSdrId}>
                 <SelectTrigger><SelectValue placeholder="Selecione o SDR" /></SelectTrigger>
                 <SelectContent>
-                  {sdrs.map(s => (
-                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  {sdrs.map((sdr) => (
+                    <SelectItem key={sdr.id} value={sdr.id}>{sdr.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           )}
 
-          {/* Client */}
           <div className="space-y-1.5">
-            <Label>Empresa Cliente</Label>
+            <FieldLabel info="Nome que aparecerá no Dashboard, Financeiro, notificações e relatórios.">Empresa Cliente</FieldLabel>
             <Input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nome da empresa" />
           </div>
 
-          {/* Values */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Valor Mensalidade (R$)</Label>
+              <FieldLabel info="Valor recorrente mensal do contrato. A comissão segue a data do primeiro pagamento.">Valor Mensalidade (R$)</FieldLabel>
               <Input type="number" min="0" step="0.01" value={monthlyValue} onChange={(e) => setMonthlyValue(e.target.value)} placeholder="0,00" />
             </div>
             <div className="space-y-1.5">
-              <Label>Valor Implantação (R$)</Label>
+              <FieldLabel info="Valor único ou parcelado da implantação. Se parcelar, cada parcela entra separada no Financeiro.">Valor Implantação (R$)</FieldLabel>
               <Input type="number" min="0" step="0.01" value={implantationValue} onChange={(e) => setImplantationValue(e.target.value)} placeholder="0,00" />
             </div>
           </div>
 
-          {/* First Payment Date */}
           <div className="space-y-1.5">
-            <Label>Data Pgto. 1ª Mensalidade</Label>
+            <FieldLabel info="Por padrão fica 30 dias após o fechamento. Se cair depois do dia 07, a comissão transborda para o mês seguinte.">Data Pgto. 1ª Mensalidade</FieldLabel>
             <DatePicker date={firstPaymentDate} onSelect={setFirstPaymentDate} />
           </div>
 
-          {/* Implantation Payment Date */}
           <div className="space-y-1.5">
-            <Label>Data Pgto. Implantação</Label>
+            <FieldLabel info="Por padrão fica 10 dias após o fechamento. Para implantação parcelada, use as datas de cada parcela.">Data Pgto. Implantação</FieldLabel>
             <DatePicker date={implantationPaymentDate} onSelect={setImplantationPaymentDate} />
           </div>
 
-          {/* Installment */}
           <div className="flex items-center gap-3">
-            <Switch checked={isInstallment} onCheckedChange={setIsInstallment} />
-            <Label>Implantação Parcelada?</Label>
+            <Switch checked={isInstallment} onCheckedChange={handleInstallmentChange} />
+            <div className="flex items-center gap-1.5">
+              <Label>Implantação Parcelada?</Label>
+              <InfoHint text="Ative quando a implantação será recebida em mais de uma parcela. Cada parcela terá vencimento, baixa e comissão próprios." />
+            </div>
           </div>
 
           {isInstallment && (
             <div className="space-y-3 pl-4 border-l-2 border-primary/20">
               <div className="space-y-1.5">
-                <Label>Número de Parcelas</Label>
+                <FieldLabel info="Cada parcela divide proporcionalmente o valor e a comissão de implantação.">Número de Parcelas</FieldLabel>
                 <Input type="number" min="2" max="24" value={installmentCount} onChange={(e) => setInstallmentCount(e.target.value)} />
               </div>
-              {installmentDates.map((d, i) => (
-                <div key={i} className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Parcela {i + 1}</Label>
-                  <DatePicker date={d} onSelect={(date) => {
+              {installmentDates.map((date, index) => (
+                <div key={index} className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Parcela {index + 1}</Label>
+                  <DatePicker date={date} onSelect={(selectedDate) => {
                     const updated = [...installmentDates];
-                    updated[i] = date;
+                    updated[index] = selectedDate;
                     setInstallmentDates(updated);
                   }} />
                 </div>
@@ -258,9 +286,8 @@ export function DealFormDialog({ open, onOpenChange, onSave, editDeal, currentPo
             </div>
           )}
 
-          {/* Status */}
           <div className="space-y-1.5">
-            <Label>Status do Pagamento</Label>
+            <FieldLabel info="Status geral do contrato. As baixas reais de mensalidade, implantação, comissão e salário acontecem no Financeiro.">Status do Pagamento</FieldLabel>
             <Select value={paymentStatus} onValueChange={(v) => setPaymentStatus(v as PaymentStatus)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>

@@ -378,12 +378,14 @@ export async function markAllNotificationsRead(userId: string): Promise<void> {
 export interface CommissionPayment {
   id: string;
   dealId: string;
-  component: "mensalidade" | "implantacao";
+  component: "mensalidade" | "implantacao" | "implantacao_parcela";
   competenceMonth: string;
+  installmentIndex: number | null;
   amount: number;
   recipientUserId: string | null;
   paidByDirectorAt: string | null;
   confirmedByUserAt: string | null;
+  rejectedByUserAt: string | null;
   isTestData: boolean;
   createdAt: string;
   updatedAt: string;
@@ -395,10 +397,12 @@ function dbToCommissionPayment(cp: any): CommissionPayment {
     dealId: cp.deal_id,
     component: cp.component,
     competenceMonth: cp.competence_month,
+    installmentIndex: cp.installment_index ?? null,
     amount: cp.amount,
     recipientUserId: cp.recipient_user_id ?? null,
     paidByDirectorAt: cp.paid_by_director_at ?? null,
     confirmedByUserAt: cp.confirmed_by_user_at ?? null,
+    rejectedByUserAt: cp.rejected_by_user_at ?? null,
     isTestData: cp.is_test_data,
     createdAt: cp.created_at,
     updatedAt: cp.updated_at,
@@ -409,11 +413,12 @@ function dbToCommissionPayment(cp: any): CommissionPayment {
 // Reseta confirmed_by_user_at ao reutilizar o registro num novo ciclo.
 export async function upsertCommissionPaymentRow(
   dealId: string,
-  component: "mensalidade" | "implantacao",
+  component: "mensalidade" | "implantacao" | "implantacao_parcela",
   competenceMonth: string,
   amount: number,
   isTestData: boolean,
-  recipientUserId: string
+  recipientUserId: string,
+  installmentIndex?: number | null
 ): Promise<void> {
   const now = new Date().toISOString();
   const { error } = await (supabase as any)
@@ -423,14 +428,16 @@ export async function upsertCommissionPaymentRow(
         deal_id: dealId,
         component,
         competence_month: competenceMonth,
+        installment_index: installmentIndex ?? null,
         amount,
         recipient_user_id: recipientUserId,
         paid_by_director_at: now,
         confirmed_by_user_at: null,
+        rejected_by_user_at: null,
         is_test_data: isTestData,
         updated_at: now,
       },
-      { onConflict: "deal_id,component,competence_month,recipient_user_id" }
+      { onConflict: "deal_id,component,competence_month,recipient_user_id,installment_index_key" }
     );
   if (error) throw error;
 }
@@ -438,9 +445,10 @@ export async function upsertCommissionPaymentRow(
 // Remove apenas o registro de um componente/mês específico (não apaga outros meses).
 export async function clearCommissionPaymentForComponent(
   dealId: string,
-  component: "mensalidade" | "implantacao",
+  component: "mensalidade" | "implantacao" | "implantacao_parcela",
   competenceMonth: string,
-  recipientUserId?: string
+  recipientUserId?: string,
+  installmentIndex?: number | null
 ): Promise<void> {
   let query = (supabase as any)
     .from("commission_payments")
@@ -448,6 +456,10 @@ export async function clearCommissionPaymentForComponent(
     .eq("deal_id", dealId)
     .eq("component", component)
     .eq("competence_month", competenceMonth);
+
+  if (typeof installmentIndex === "number") {
+    query = query.eq("installment_index", installmentIndex);
+  }
 
   if (recipientUserId) {
     query = query.eq("recipient_user_id", recipientUserId);
@@ -473,6 +485,42 @@ export async function confirmCommissionPaymentsByRecipient(
     .select("id");
   if (error) throw error;
   return (data || []).length;
+}
+
+export async function confirmCommissionPaymentById(
+  paymentId: string,
+  recipientUserId: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  const { data, error } = await (supabase as any)
+    .from("commission_payments")
+    .update({ confirmed_by_user_at: now, rejected_by_user_at: null, updated_at: now })
+    .eq("id", paymentId)
+    .eq("recipient_user_id", recipientUserId)
+    .not("paid_by_director_at", "is", null)
+    .is("confirmed_by_user_at", null)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Pagamento nao encontrado ou ja confirmado.");
+}
+
+export async function rejectCommissionPaymentById(
+  paymentId: string,
+  recipientUserId: string
+): Promise<void> {
+  const now = new Date().toISOString();
+  const { data, error } = await (supabase as any)
+    .from("commission_payments")
+    .update({ rejected_by_user_at: now, updated_at: now })
+    .eq("id", paymentId)
+    .eq("recipient_user_id", recipientUserId)
+    .not("paid_by_director_at", "is", null)
+    .is("confirmed_by_user_at", null)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Pagamento nao encontrado ou ja confirmado.");
 }
 
 // Busca todos os commission_payments do usuário (para KPIs e seção pendente).

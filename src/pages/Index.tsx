@@ -24,6 +24,7 @@ import { Plus, DollarSign, TrendingUp, BadgeDollarSign, CalendarDays, FileDown, 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
+import { InfoHint } from "@/components/InfoHint";
 
 export default function Index() {
   const queryClient = useQueryClient();
@@ -48,7 +49,7 @@ export default function Index() {
   const [periodLabel, setPeriodLabel] = useState(formatMonthLabel(currentMonthKey));
   const [formOpen, setFormOpen] = useState(false);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
-  const [kpiModalType, setKpiModalType] = useState<"projected" | "paid" | "deals" | null>(null);
+  const [kpiModalType, setKpiModalType] = useState<"projected" | "paid" | "deals" | "volume" | null>(null);
   const [filtroOperacao, setFiltroOperacao] = useState("Todas");
   const [profiles, setProfiles] = useState<any>({});
   const [executivos, setExecutivos] = useState<{id: string, name: string}[]>([]);
@@ -115,7 +116,7 @@ export default function Index() {
 
       if (position === "Diretor") {
         const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
-        const passUser = filtroFuncionario === "Todos" || d.userId === filtroFuncionario;
+        const passUser = filtroFuncionario === "Todos" || d.userId === filtroFuncionario || d.sdrUserId === filtroFuncionario;
         return passDate && passOp && passUser;
       }
       return passDate;
@@ -139,7 +140,7 @@ export default function Index() {
 
       if (isDirector) {
         const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
-        const passUser = filtroFuncionario === "Todos" || d.userId === filtroFuncionario;
+        const passUser = filtroFuncionario === "Todos" || d.userId === filtroFuncionario || d.sdrUserId === filtroFuncionario;
         return passDate && passOp && passUser;
       }
       return passDate; // fetchDeals já filtra por position (SDR vê Executivos, Executivo vê próprios)
@@ -243,7 +244,8 @@ export default function Index() {
         type: "number" as const,
         icon: BarChart3,
         variant: "success" as const,
-        modalType: "deals" as "projected" | "paid" | "deals" | null
+        modalType: "deals" as "projected" | "paid" | "deals" | "volume" | null,
+        tooltip: "Conta os contratos assinados no período selecionado, pela data de fechamento."
       },
       {
         title: "Comissão dos Fechamentos",
@@ -252,7 +254,18 @@ export default function Index() {
         type: "currency" as const,
         icon: TrendingUp,
         variant: "primary" as const,
-        modalType: "projected" as "projected" | "paid" | "deals" | null
+        modalType: "projected" as "projected" | "paid" | "deals" | "volume" | null,
+        tooltip: "Soma a comissão dos contratos assinados no período, usando metas, apresentações e percentuais configurados."
+      },
+      {
+        title: "Volume Bruto do Mês",
+        subtitle: "Valor dos contratos assinados",
+        value: volumeFechamentos,
+        type: "currency" as const,
+        icon: DollarSign,
+        variant: "default" as const,
+        modalType: "volume" as "projected" | "paid" | "deals" | "volume" | null,
+        tooltip: "Soma mensalidade e implantação dos contratos assinados no período."
       },
       {
         title: "Receita Prevista neste Mês",
@@ -261,7 +274,8 @@ export default function Index() {
         type: "currency" as const,
         icon: BadgeDollarSign,
         variant: "warning" as const,
-        modalType: null
+        modalType: null,
+        tooltip: "Mostra a comissão com competência financeira no mês selecionado. Pagamentos após o dia 07 entram no mês seguinte."
       },
       {
         title: "Ticket Médio",
@@ -270,7 +284,8 @@ export default function Index() {
         type: "currency" as const,
         icon: DollarSign,
         variant: "default" as const,
-        modalType: null
+        modalType: null,
+        tooltip: "Divide o volume bruto dos fechamentos pela quantidade de contratos assinados no período."
       }
     ];
   }, [closedDeals, financialDeals, optimisticPresentations, settings]);
@@ -397,7 +412,7 @@ export default function Index() {
       </div>
 
       {/* ── LINHA 1: KPI cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-4">
         {kpis.map((kpi, idx) => (
           <KpiCard
             key={idx}
@@ -406,6 +421,7 @@ export default function Index() {
             value={kpi.type === "currency" ? formatCurrency(kpi.value) : kpi.value.toString()}
             icon={kpi.icon}
             variant={kpi.variant}
+            tooltip={kpi.tooltip}
             onClick={kpi.modalType ? () => setKpiModalType(kpi.modalType) : undefined}
           />
         ))}

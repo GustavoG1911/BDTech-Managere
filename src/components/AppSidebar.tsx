@@ -2,6 +2,7 @@ import { Home, Target, CalendarDays, Settings, LogOut, DollarSign, Landmark, Tre
 import { NavLink } from "@/components/NavLink";
 import { useAuth, UserRole } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
+import { isPureSystemAdmin } from "@/lib/roles";
 import {
   Sidebar,
   SidebarContent,
@@ -42,7 +43,10 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const { signOut, role, position } = useAuth();
 
-  const visibleItems = navItems.filter((item) => !item.roles || item.roles.includes(role));
+  const visibleItems = navItems.filter((item) => {
+    if (isPureSystemAdmin(role, position)) return item.url === "/settings";
+    return !item.roles || item.roles.includes(role);
+  });
   const posInfo = positionLabels[position] || { label: position || "User", color: "bg-muted text-muted-foreground border-border" };
 
   return (
@@ -102,11 +106,11 @@ export function AppSidebar() {
 
       <SidebarFooter className="border-t border-sidebar-border/60 pt-2">
         {/* Position badge */}
-        {!collapsed && position && (
+        {!collapsed && (
           <div className="px-2 pb-2">
             <span className={`inline-flex items-center gap-1.5 text-[10px] font-semibold px-2 py-1 rounded-md border ${posInfo.color}`}>
               <DollarSign className="h-3 w-3" />
-              {posInfo.label}
+              {isPureSystemAdmin(role, position) ? "Admin" : posInfo.label}
             </span>
           </div>
         )}
