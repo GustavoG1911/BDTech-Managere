@@ -115,6 +115,12 @@ function salaryReferenceKey(value: any): string {
   return getMonthKey(value);
 }
 
+function salaryActionKey(row: { id: string; user_id: string; reference_month: any; isFallback?: boolean }): string {
+  return row.isFallback
+    ? `fallback:${row.user_id}:${salaryReferenceKey(row.reference_month)}`
+    : `salary:${row.id}`;
+}
+
 function dedupeSalaryRows<T extends { user_id: string; reference_month: any; updated_at?: string; payment_date?: string; id?: string }>(rows: T[]): T[] {
   const map = new Map<string, T>();
   rows.forEach((row) => {
@@ -163,6 +169,13 @@ function monthKeyInPeriod(monthKey: string | null, period: FinancePeriod): boole
   return period.filterType === "month"
     ? monthKey === period.selectedMonth
     : monthKey.startsWith(period.selectedYear);
+}
+
+function dealHasFinancialMovementInPeriod(deal: Deal, period: FinancePeriod): boolean {
+  const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
+  if (monthKeyInPeriod(mensalidadeMonthKey, period)) return true;
+  if (!deal.isInstallment && monthKeyInPeriod(implantacaoMonthKey, period)) return true;
+  return getInstallmentItems(deal, 0).some((item) => monthKeyInPeriod(item.monthKey, period));
 }
 
 function getInstallmentItems(deal: Deal, implantationCommission: number, period?: FinancePeriod) {
@@ -282,11 +295,11 @@ function getCommissionStatusForPayments(
   commissionPayments: CommissionPayment[] = [],
   useLegacyFallback = true
 ): "locked" | "ready" | "waiting" | "done" {
-  if (parts.total <= 0 || !parts.unlocked) return "locked";
   const relevantPayments = getCommissionPaymentsForParts(deal.id, parts, commissionPayments);
   if (relevantPayments.length > 0) {
     return relevantPayments.every((cp) => !!cp.confirmedByUserAt) ? "done" : "waiting";
   }
+  if (parts.total <= 0 || !parts.unlocked) return "locked";
   if (!useLegacyFallback) return "ready";
   return getCommissionStatusForParts(deal, parts);
 }
@@ -624,8 +637,11 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   // Deals onde mensalidade OU implantação têm competência financeira no mês selecionado
   const filteredDeals = useMemo(() => {
     return scopedDeals.filter((d) => {
-      const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(d);
-      return mensalidadeMonthKey === selectedMonth || implantacaoMonthKey === selectedMonth;
+      return dealHasFinancialMovementInPeriod(d, {
+        filterType: "month",
+        selectedMonth,
+        selectedYear: selectedMonth.slice(0, 4),
+      });
     });
   }, [scopedDeals, selectedMonth]);
 
@@ -637,7 +653,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     // Usa commission_payments como fonte primária (granular por componente/mês)
     const pendingCpIds = new Set(
       commissionPayments
-        .filter((cp) => cp.paidByDirectorAt && !cp.confirmedByUserAt)
+        .filter((cp) => cp.paidByDirectorAt && !cp.confirmedByUserAt && !cp.rejectedByUserAt)
         .map((cp) => cp.dealId)
     );
     const cpPendingDeals = scopedDeals.filter((d) => pendingCpIds.has(d.id));
@@ -648,7 +664,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
   const pendingCommissionItems = useMemo(() => {
     return commissionPayments
-      .filter((cp) => cp.paidByDirectorAt && !cp.confirmedByUserAt)
+      .filter((cp) => cp.paidByDirectorAt && !cp.confirmedByUserAt && !cp.rejectedByUserAt)
       .map((cp) => {
         const deal = scopedDeals.find((d) => d.id === cp.dealId);
         if (!deal) return null;
@@ -1151,6 +1167,7 @@ function FinanceiroContent() {
   const [filterType, setFilterType] = useState<"month" | "year">("month");
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [kpiModalType, setKpiModalType] = useState<"volume" | "pago" | "projetado" | "fixo" | null>(null);
+  const [processingSalaryKeys, setProcessingSalaryKeys] = useState<Set<string>>(() => new Set());
   
   const monthOptions = useMemo(() => buildMonthOptions(), []);
 
@@ -1209,13 +1226,7 @@ function FinanceiroContent() {
   const filteredDeals = useMemo(() => {
     return activeDeals.filter((d) => {
       // Time filtering: deal entra no mês se mensalidade OU implantação cai nele
-      const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(d);
-      let passTime = false;
-      if (filterType === "month") {
-        passTime = mensalidadeMonthKey === selectedMonth || implantacaoMonthKey === selectedMonth;
-      } else {
-        passTime = (mensalidadeMonthKey?.startsWith(selectedYear) ?? false) || (implantacaoMonthKey?.startsWith(selectedYear) ?? false);
-      }
+      const passTime = dealHasFinancialMovementInPeriod(d, { filterType, selectedMonth, selectedYear });
 
       // Operation
       const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
@@ -1588,11 +1599,6 @@ function FinanceiroContent() {
         toast.error("Erro ao reverter comissão: " + cpErr.message);
         return;
       }
-      const { error } = await (supabase as any)
-        .from("deals")
-        .update({ is_paid_to_user: false, is_user_confirmed_payment: null })
-        .eq("id", dealId);
-      if (error) { toast.error("Erro: " + error.message); return; }
       toast.success("Baixa de comissão desmarcada");
     }
 
@@ -1615,18 +1621,14 @@ function FinanceiroContent() {
   };
 
   const handleCreateAndToggleSalaryPayment = async (userId: string, amount: number, referenceMonth: string) => {
+    const referenceKey = salaryReferenceKey(referenceMonth);
+    const processingKey = `fallback:${userId}:${referenceKey}`;
+    if (processingSalaryKeys.has(processingKey)) return;
+    setProcessingSalaryKeys((prev) => new Set(prev).add(processingKey));
     const dateStr = referenceMonth.slice(0, 7) + "-20";
     const referenceDate = referenceMonth.slice(0, 7) + "-01";
     const { data: { user: currentUser } } = await supabase.auth.getUser();
     const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
-    const existing = await (supabase as any)
-      .from("salary_payments")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("reference_month", referenceDate)
-      .eq("is_test_data", isTestEnv)
-      .maybeSingle();
-    if (existing.error) { toast.error("Erro ao verificar salario: " + existing.error.message); return; }
     const payload = {
       user_id: userId,
       amount,
@@ -1638,14 +1640,23 @@ function FinanceiroContent() {
       rejected_by_user_at: null,
       is_test_data: isTestEnv,
     };
-    const query = existing.data?.id
-      ? (supabase as any).from("salary_payments").update(payload).eq("id", existing.data.id)
-      : (supabase as any).from("salary_payments").insert(payload);
-    const { error } = await query.select("id").single();
-    if (error) { toast.error("Erro ao registrar salario: " + error.message); return; }
-    await createNotification(userId, "Salario disponivel", `Seu salario de ${formatMonthLabel(referenceMonth.slice(0, 7))} foi marcado como transferido. Acesse o Financeiro para confirmar o recebimento.`);
-    toast.success("Salario registrado e marcado como transferido!");
-    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+    try {
+      const { error } = await (supabase as any)
+        .from("salary_payments")
+        .upsert(payload, { onConflict: "user_id,reference_month,is_test_data" })
+        .select("id")
+        .single();
+      if (error) { toast.error("Erro ao registrar salario: " + error.message); return; }
+      await createNotification(userId, "Salario disponivel", `Seu salario de ${formatMonthLabel(referenceMonth.slice(0, 7))} foi marcado como transferido. Acesse o Financeiro para confirmar o recebimento.`);
+      toast.success("Salario registrado e marcado como transferido!");
+      queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+    } finally {
+      setProcessingSalaryKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(processingKey);
+        return next;
+      });
+    }
   };
 
   const getUserName = (userId: string) => profiles[userId]?.full_name || "-";
@@ -1820,6 +1831,7 @@ function FinanceiroContent() {
             settings={settings}
             commissionPayments={commissionPayments}
             period={{ filterType, selectedMonth, selectedYear }}
+            processingSalaryKeys={processingSalaryKeys}
             onToggleCommissionPayment={handleToggleCommissionPayment}
             onToggleSalaryPayment={handleToggleSalaryPayment}
             onCreateAndToggleSalaryPayment={handleCreateAndToggleSalaryPayment}
@@ -2170,6 +2182,7 @@ interface PayablesTabProps {
   settings: any;
   commissionPayments: CommissionPayment[];
   period: FinancePeriod;
+  processingSalaryKeys: Set<string>;
   onToggleCommissionPayment: (dealId: string, currentStatus: boolean, recipientUserId?: string) => void;
   onToggleSalaryPayment: (salaryId: string, currentStatus: boolean) => void;
   onCreateAndToggleSalaryPayment: (userId: string, amount: number, referenceMonth: string) => void;
@@ -2301,7 +2314,7 @@ function ExpandableCommissionRow({ deal, recipientUserId, settings, profiles, ge
   );
 }
 
-function PayablesTab({ deals, salaries, profiles, getUserName, presentations, settings, commissionPayments, period, onToggleCommissionPayment, onToggleSalaryPayment, onCreateAndToggleSalaryPayment }: PayablesTabProps) {
+function PayablesTab({ deals, salaries, profiles, getUserName, presentations, settings, commissionPayments, period, processingSalaryKeys, onToggleCommissionPayment, onToggleSalaryPayment, onCreateAndToggleSalaryPayment }: PayablesTabProps) {
   return (
     <div className="space-y-5">
       {/* Commissions */}
@@ -2382,7 +2395,9 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
                 </TableCell>
               </TableRow>
             ) : (
-              salaries.map((s) => (
+              salaries.map((s) => {
+                const isSalaryProcessing = processingSalaryKeys.has(salaryActionKey(s));
+                return (
                 <TableRow key={s.id} className={`border-border/25 hover:bg-[#242842]/40 ${s.is_paid_by_gestor ? "bg-success/5" : ""}`}>
                   <TableCell className="px-4 py-3 text-sm font-medium">
                     {getUserName(s.user_id)}
@@ -2396,18 +2411,21 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
                     {(s as any).isFallback ? (
                       <Checkbox
                         checked={false}
+                        disabled={isSalaryProcessing}
                         onCheckedChange={() => onCreateAndToggleSalaryPayment(s.user_id, s.amount, s.reference_month)}
                         title="Clique para registrar e marcar como pago"
                       />
                     ) : (
                       <Checkbox
                         checked={s.is_paid_by_gestor || false}
+                        disabled={isSalaryProcessing}
                         onCheckedChange={() => onToggleSalaryPayment(s.id, s.is_paid_by_gestor || false)}
                       />
                     )}
                   </TableCell>
                 </TableRow>
-              ))
+              );
+              })
             )}
           </TableBody>
         </Table>

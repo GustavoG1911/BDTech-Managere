@@ -50,9 +50,12 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
 
   const pureAdmin = isPureSystemAdmin(profileRole || role, form.cargo || position);
   const canChooseDirector = role === "admin" || role === "gestor" || position === "Diretor";
+  const lockedOperationalCargo = isOperationalPosition(position) || isOperationalPosition(form.cargo);
   const availableCargoOptions = useMemo(
-    () => CARGO_OPTIONS.filter((cargo) => canChooseDirector || cargo.value !== "Diretor"),
-    [canChooseDirector]
+    () => lockedOperationalCargo && form.cargo
+      ? CARGO_OPTIONS.filter((cargo) => cargo.value === form.cargo)
+      : CARGO_OPTIONS.filter((cargo) => canChooseDirector || cargo.value !== "Diretor"),
+    [canChooseDirector, lockedOperationalCargo, form.cargo]
   );
 
   useEffect(() => {
@@ -214,7 +217,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
                 <Label className="text-xs">Cargo no sistema *</Label>
                 <InfoHint text="O cargo controla a visão do sistema: Diretor vê a operação completa, Executivo vê seus fechamentos e SDR acompanha os executivos." />
               </div>
-              <Select value={form.cargo} onValueChange={(v) => setForm({ ...form, cargo: v })}>
+              <Select value={form.cargo} onValueChange={(v) => setForm({ ...form, cargo: v })} disabled={lockedOperationalCargo}>
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione seu cargo" />
                 </SelectTrigger>
