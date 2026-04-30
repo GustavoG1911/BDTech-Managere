@@ -15,6 +15,14 @@ const CARGO_OPTIONS = [
   { value: "SDR", label: "SDR" },
 ] as const;
 
+function isOperationalPosition(position?: string | null) {
+  return ["Diretor", "Executivo de Negócios", "Executivo de NegÃ³cios", "SDR"].includes(position || "");
+}
+
+function isPureAdmin(profile: any) {
+  return profile?.role === "admin" && !isOperationalPosition(profile?.position);
+}
+
 interface ProfileData {
   full_name: string;
   cargo: string;
@@ -55,7 +63,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
   const checkProfile = async () => {
     const { data, error } = await supabase
       .from("profiles")
-      .select("full_name, position, job_title, fixed_salary, commission_percent")
+      .select("full_name, position, role, job_title, fixed_salary, commission_percent")
       .eq("user_id", user!.id)
       .maybeSingle();
 
@@ -70,6 +78,11 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
         fixed_salary: data.fixed_salary || 0,
         commission_percent: data.commission_percent || 20,
       });
+      if (isPureAdmin(data)) {
+        setIsForced(false);
+        setOpen(false);
+        return;
+      }
       if (!data.full_name || !data.position) {
         setIsForced(true);
         setOpen(true);
@@ -84,7 +97,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
     if (!user) return;
     const { data } = await supabase
       .from("profiles")
-      .select("full_name, position, job_title, fixed_salary, commission_percent")
+      .select("full_name, position, role, job_title, fixed_salary, commission_percent")
       .eq("user_id", user.id)
       .maybeSingle();
 
