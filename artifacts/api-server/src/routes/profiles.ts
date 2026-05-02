@@ -22,6 +22,8 @@ const selfUpdateSchema = z.object({
   displayName: z.string().optional(),
   avatarUrl: z.string().url().optional().nullable(),
   jobTitle: z.string().nullable().optional(),
+  commissionPercent: z.string().optional().nullable(),
+  fixedSalary: z.string().optional().nullable(),
 }).strict();
 
 const onboardingSchema = z.object({
