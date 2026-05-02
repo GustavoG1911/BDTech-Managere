@@ -128,16 +128,19 @@ router.patch("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response
   }
 });
 
-router.delete("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
+router.delete("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const [deleted] = await db
-      .delete(dealsTable)
-      .where(eq(dealsTable.id, req.params["id"] as string))
-      .returning();
-    if (!deleted) {
+    const [existing] = await db.select().from(dealsTable).where(eq(dealsTable.id, req.params["id"] as string));
+    if (!existing) {
       res.status(404).json({ error: "Deal not found" });
       return;
     }
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    if (!isManager && existing.userId !== req.userId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    await db.delete(dealsTable).where(eq(dealsTable.id, req.params["id"] as string));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete deal" });
