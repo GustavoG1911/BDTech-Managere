@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@workspace/db";
 import { salaryPaymentsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
-import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
+import { requireAuthWithRole, requireGestor, isManagerLevel, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
@@ -26,7 +26,7 @@ const salaryPaymentPatchSchema = z.object({
 
 router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const isManager = isManagerLevel(req);
     const { userId: filterUserId } = req.query as { userId?: string };
 
     let rows;
@@ -70,7 +70,7 @@ router.patch("/:id/confirm", requireAuthWithRole, async (req: AuthRequest, res: 
       res.status(404).json({ error: "Salary payment not found" });
       return;
     }
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const isManager = isManagerLevel(req);
     if (!isManager && existing.userId !== req.userId) {
       res.status(403).json({ error: "Forbidden" });
       return;
