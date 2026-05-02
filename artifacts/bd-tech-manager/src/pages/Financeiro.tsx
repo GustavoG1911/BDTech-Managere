@@ -1003,7 +1003,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         </DialogContent>
       </Dialog>
 
-      {false && pendingConfirmations.length > 0 && (
+      {pendingConfirmations.length > 0 && (
         <div id="pending-confirmations" className="mb-5 bg-card rounded-xl border-2 border-warning/50 overflow-hidden">
           <div className="px-5 py-3 border-b border-warning/30 flex items-center gap-2 bg-warning/5">
             <span className="h-2 w-2 rounded-full bg-warning animate-pulse shrink-0" />
