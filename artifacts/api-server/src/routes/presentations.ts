@@ -1,29 +1,27 @@
-import { Router, Request, Response } from "express";
-import { getAuth } from "@clerk/express";
+import { Router, Response } from "express";
 import { db } from "@workspace/db";
 import { presentationsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
-const requireAuth = (req: any, res: any, next: any) => {
-  const auth = getAuth(req);
-  const userId = auth?.sessionClaims?.userId || auth?.userId;
-  if (!userId) return res.status(401).json({ error: "Unauthorized" });
-  req.userId = userId;
-  next();
-};
-
-router.get("/", requireAuth, async (_req: Request, res: Response): Promise<void> => {
+router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const rows = await db.select().from(presentationsTable).orderBy(presentationsTable.createdAt);
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    let rows;
+    if (isManager) {
+      rows = await db.select().from(presentationsTable).orderBy(presentationsTable.createdAt);
+    } else {
+      rows = await db.select().from(presentationsTable).where(eq(presentationsTable.userId, req.userId)).orderBy(presentationsTable.createdAt);
+    }
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch presentations" });
   }
 });
 
-router.post("/", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.post("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const [row] = await db
       .insert(presentationsTable)
@@ -35,28 +33,37 @@ router.post("/", requireAuth, async (req: any, res: Response): Promise<void> => 
   }
 });
 
-router.patch("/:id", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.patch("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const [row] = await db
-      .update(presentationsTable)
-      .set(req.body)
-      .where(eq(presentationsTable.id, req.params.id as string))
-      .returning();
-    if (!row) {
+    const [existing] = await db
+      .select()
+      .from(presentationsTable)
+      .where(eq(presentationsTable.id, req.params["id"] as string));
+    if (!existing) {
       res.status(404).json({ error: "Not found" });
       return;
     }
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    if (!isManager && existing.userId !== req.userId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    const [row] = await db
+      .update(presentationsTable)
+      .set(req.body)
+      .where(eq(presentationsTable.id, req.params["id"] as string))
+      .returning();
     res.json(row);
   } catch (err) {
     res.status(500).json({ error: "Failed to update presentation" });
   }
 });
 
-router.delete("/:id", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.delete("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const [deleted] = await db
       .delete(presentationsTable)
-      .where(eq(presentationsTable.id, req.params.id as string))
+      .where(eq(presentationsTable.id, req.params["id"] as string))
       .returning();
     if (!deleted) {
       res.status(404).json({ error: "Not found" });
