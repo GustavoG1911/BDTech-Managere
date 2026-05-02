@@ -1,27 +1,25 @@
-import { Router, Request, Response } from "express";
-import { getAuth } from "@clerk/express";
+import { Router, Response } from "express";
 import { db } from "@workspace/db";
 import { salaryPaymentsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
+import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
-const requireAuth = (req: any, res: any, next: any) => {
-  const auth = getAuth(req);
-  const userId = auth?.sessionClaims?.userId || auth?.userId;
-  if (!userId) return res.status(401).json({ error: "Unauthorized" });
-  req.userId = userId;
-  next();
-};
-
-router.get("/", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { userId: filterUserId } = req.query;
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const { userId: filterUserId } = req.query as { userId?: string };
+
     let rows;
-    if (filterUserId) {
-      rows = await db.select().from(salaryPaymentsTable).where(eq(salaryPaymentsTable.userId, filterUserId as string));
+    if (isManager) {
+      if (filterUserId) {
+        rows = await db.select().from(salaryPaymentsTable).where(eq(salaryPaymentsTable.userId, filterUserId));
+      } else {
+        rows = await db.select().from(salaryPaymentsTable);
+      }
     } else {
-      rows = await db.select().from(salaryPaymentsTable);
+      rows = await db.select().from(salaryPaymentsTable).where(eq(salaryPaymentsTable.userId, req.userId));
     }
     res.json(rows);
   } catch (err) {
@@ -29,7 +27,7 @@ router.get("/", requireAuth, async (req: any, res: Response): Promise<void> => {
   }
 });
 
-router.post("/", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.post("/", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const [row] = await db
       .insert(salaryPaymentsTable)
@@ -41,30 +39,39 @@ router.post("/", requireAuth, async (req: any, res: Response): Promise<void> => 
   }
 });
 
-router.patch("/:id/confirm", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.patch("/:id/confirm", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const [existing] = await db
+      .select()
+      .from(salaryPaymentsTable)
+      .where(eq(salaryPaymentsTable.id, req.params["id"] as string));
+    if (!existing) {
+      res.status(404).json({ error: "Salary payment not found" });
+      return;
+    }
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    if (!isManager && existing.userId !== req.userId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
     const now = new Date();
     const [row] = await db
       .update(salaryPaymentsTable)
       .set({ confirmedByUserAt: now, rejectedByUserAt: null })
-      .where(and(eq(salaryPaymentsTable.id, req.params.id), eq(salaryPaymentsTable.userId, req.userId)))
+      .where(and(eq(salaryPaymentsTable.id, req.params["id"] as string), eq(salaryPaymentsTable.userId, existing.userId)))
       .returning();
-    if (!row) {
-      res.status(404).json({ error: "Salary payment not found" });
-      return;
-    }
     res.json(row);
   } catch (err) {
     res.status(500).json({ error: "Failed to confirm salary payment" });
   }
 });
 
-router.patch("/:id", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const [row] = await db
       .update(salaryPaymentsTable)
       .set(req.body)
-      .where(eq(salaryPaymentsTable.id, req.params.id))
+      .where(eq(salaryPaymentsTable.id, req.params["id"] as string))
       .returning();
     if (!row) {
       res.status(404).json({ error: "Salary payment not found" });

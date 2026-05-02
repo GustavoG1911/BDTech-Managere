@@ -1,20 +1,22 @@
-import { Router, Request, Response } from "express";
-import { getAuth } from "@clerk/express";
+import { Router, Response } from "express";
 import { db } from "@workspace/db";
 import { profilesTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
-const requireAuth = (req: any, res: any, next: any) => {
-  const auth = getAuth(req);
-  const userId = auth?.sessionClaims?.userId || auth?.userId;
-  if (!userId) return res.status(401).json({ error: "Unauthorized" });
-  req.userId = userId;
-  next();
-};
+const PROTECTED_FIELDS = ["role", "isTestData", "isSandbox"] as const;
 
-router.get("/", requireAuth, async (_req: Request, res: Response): Promise<void> => {
+function stripProtectedFields(body: Record<string, unknown>): Record<string, unknown> {
+  const safe = { ...body };
+  for (const field of PROTECTED_FIELDS) {
+    delete safe[field];
+  }
+  return safe;
+}
+
+router.get("/", requireAuthWithRole, requireGestor, async (_req: AuthRequest, res: Response): Promise<void> => {
   try {
     const profiles = await db.select().from(profilesTable);
     res.json(profiles);
@@ -23,7 +25,7 @@ router.get("/", requireAuth, async (_req: Request, res: Response): Promise<void>
   }
 });
 
-router.get("/me", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.get("/me", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const [profile] = await db
       .select()
@@ -39,8 +41,9 @@ router.get("/me", requireAuth, async (req: any, res: Response): Promise<void> =>
   }
 });
 
-router.patch("/me", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.patch("/me", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const safeBody = stripProtectedFields(req.body);
     const existing = await db
       .select()
       .from(profilesTable)
@@ -49,7 +52,7 @@ router.patch("/me", requireAuth, async (req: any, res: Response): Promise<void> 
     if (existing.length === 0) {
       const [profile] = await db
         .insert(profilesTable)
-        .values({ userId: req.userId, ...req.body })
+        .values({ userId: req.userId, ...safeBody })
         .returning();
       res.json(profile);
       return;
@@ -57,7 +60,7 @@ router.patch("/me", requireAuth, async (req: any, res: Response): Promise<void> 
 
     const [profile] = await db
       .update(profilesTable)
-      .set(req.body)
+      .set(safeBody)
       .where(eq(profilesTable.userId, req.userId))
       .returning();
     res.json(profile);
@@ -66,12 +69,12 @@ router.patch("/me", requireAuth, async (req: any, res: Response): Promise<void> 
   }
 });
 
-router.patch("/:id", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const [profile] = await db
       .update(profilesTable)
       .set(req.body)
-      .where(eq(profilesTable.id, req.params.id as string))
+      .where(eq(profilesTable.id, req.params["id"] as string))
       .returning();
     if (!profile) {
       res.status(404).json({ error: "Profile not found" });

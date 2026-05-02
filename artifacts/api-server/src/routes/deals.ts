@@ -1,35 +1,34 @@
-import { Router, Request, Response } from "express";
-import { getAuth } from "@clerk/express";
+import { Router, Response } from "express";
 import { db } from "@workspace/db";
 import { dealsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
-const requireAuth = (req: any, res: any, next: any) => {
-  const auth = getAuth(req);
-  const userId = auth?.sessionClaims?.userId || auth?.userId;
-  if (!userId) return res.status(401).json({ error: "Unauthorized" });
-  req.userId = userId;
-  next();
-};
-
-router.get("/", requireAuth, async (_req: Request, res: Response): Promise<void> => {
+router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const deals = await db.select().from(dealsTable).orderBy(dealsTable.createdAt);
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    let deals;
+    if (isManager) {
+      deals = await db.select().from(dealsTable).orderBy(dealsTable.createdAt);
+    } else {
+      deals = await db.select().from(dealsTable).where(eq(dealsTable.userId, req.userId)).orderBy(dealsTable.createdAt);
+    }
     res.json(deals);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch deals" });
   }
 });
 
-router.post("/", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.post("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const userId = req.userId;
     const body = req.body;
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const targetUserId = isManager && body.userId ? body.userId : req.userId;
     const [deal] = await db
       .insert(dealsTable)
-      .values({ ...body, userId: body.userId ?? userId })
+      .values({ ...body, userId: targetUserId })
       .returning();
     res.status(201).json(deal);
   } catch (err) {
@@ -37,11 +36,16 @@ router.post("/", requireAuth, async (req: any, res: Response): Promise<void> => 
   }
 });
 
-router.get("/:id", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.get("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, req.params.id as string));
+    const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, req.params["id"] as string));
     if (!deal) {
       res.status(404).json({ error: "Deal not found" });
+      return;
+    }
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    if (!isManager && deal.userId !== req.userId) {
+      res.status(403).json({ error: "Forbidden" });
       return;
     }
     res.json(deal);
@@ -50,28 +54,36 @@ router.get("/:id", requireAuth, async (req: any, res: Response): Promise<void> =
   }
 });
 
-router.patch("/:id", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.patch("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const [deal] = await db
-      .update(dealsTable)
-      .set(req.body)
-      .where(eq(dealsTable.id, req.params.id as string))
-      .returning();
-    if (!deal) {
+    const [existing] = await db.select().from(dealsTable).where(eq(dealsTable.id, req.params["id"] as string));
+    if (!existing) {
       res.status(404).json({ error: "Deal not found" });
       return;
     }
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    if (!isManager && existing.userId !== req.userId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    const { userId: _uid, ...safeBody } = req.body;
+    const updateData = isManager ? req.body : safeBody;
+    const [deal] = await db
+      .update(dealsTable)
+      .set(updateData)
+      .where(eq(dealsTable.id, req.params["id"] as string))
+      .returning();
     res.json(deal);
   } catch (err) {
     res.status(500).json({ error: "Failed to update deal" });
   }
 });
 
-router.delete("/:id", requireAuth, async (req: any, res: Response): Promise<void> => {
+router.delete("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const [deleted] = await db
       .delete(dealsTable)
-      .where(eq(dealsTable.id, req.params.id as string))
+      .where(eq(dealsTable.id, req.params["id"] as string))
       .returning();
     if (!deleted) {
       res.status(404).json({ error: "Deal not found" });
