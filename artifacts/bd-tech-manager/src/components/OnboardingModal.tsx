@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Save, User } from "lucide-react";
@@ -82,24 +81,20 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
   };
 
   const checkProfile = async () => {
-    const { data, error } = await (supabase as any)
-      .from("profiles")
-      .select("full_name, display_name, role, position, job_title, fixed_salary, commission_percent")
-      .eq("user_id", user!.id)
-      .maybeSingle();
-
-    if (error) {
-      console.error("[Onboarding] Erro ao verificar perfil:", error.message);
-      return;
-    }
-
-    if (data) {
-      hydrateForm(data);
-      if (!isProfileComplete(data, data.role || role)) {
+    try {
+      const res = await fetch("/api/profiles/me");
+      if (res.ok) {
+        const data = await res.json();
+        hydrateForm(data);
+        if (!isProfileComplete(data, data.role || role)) {
+          setIsForced(true);
+          setOpen(true);
+        }
+      } else {
         setIsForced(true);
         setOpen(true);
       }
-    } else {
+    } catch {
       setIsForced(true);
       setOpen(true);
     }
@@ -107,13 +102,13 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
 
   const loadProfile = async () => {
     if (!user) return;
-    const { data } = await (supabase as any)
-      .from("profiles")
-      .select("full_name, display_name, role, position, job_title, fixed_salary, commission_percent")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (data) hydrateForm(data);
+    try {
+      const res = await fetch("/api/profiles/me");
+      if (res.ok) {
+        const data = await res.json();
+        hydrateForm(data);
+      }
+    } catch { /* ignore */ }
   };
 
   const handleSave = async () => {
@@ -135,38 +130,39 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
       return;
     }
 
-    const isTestData = user.email?.endsWith("@teste.com") || false;
     const displayName = form.full_name.trim().split(/\s+/).slice(0, 2).join(" ");
 
     setSaving(true);
-    const { error } = await (supabase as any)
-      .from("profiles")
-      .upsert(
-        {
-          user_id: user.id,
-          full_name: form.full_name.trim(),
-          display_name: displayName,
+    try {
+      const res = await fetch("/api/profiles/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullName: form.full_name.trim(),
+          displayName,
           position: selectedCargo?.value ?? null,
-          job_title: selectedCargo?.label ?? "Administrador do Sistema",
-          fixed_salary: form.fixed_salary,
-          commission_percent: Math.round(form.commission_percent),
-          is_test_data: isTestData,
-        },
-        { onConflict: "user_id" }
-      );
+          jobTitle: selectedCargo?.label ?? "Administrador do Sistema",
+          fixedSalary: String(form.fixed_salary),
+          commissionPercent: String(Math.round(form.commission_percent)),
+        }),
+      });
 
-    setSaving(false);
-    if (error) {
-      console.error("[Onboarding] Erro ao salvar:", error);
-      toast.error("Erro ao salvar perfil: " + error.message);
-      return;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Erro desconhecido" }));
+        toast.error("Erro ao salvar perfil: " + (err.error || ""));
+        return;
+      }
+
+      await refreshProfile();
+      toast.success("Perfil atualizado com sucesso!");
+      setIsForced(false);
+      setOpen(false);
+      onClose?.();
+    } catch {
+      toast.error("Erro ao salvar perfil.");
+    } finally {
+      setSaving(false);
     }
-
-    await refreshProfile();
-    toast.success("Perfil atualizado com sucesso!");
-    setIsForced(false);
-    setOpen(false);
-    onClose?.();
   };
 
   const handleOpenChange = (value: boolean) => {

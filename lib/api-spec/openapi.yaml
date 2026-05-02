@@ -1,22 +1,30 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: BD Tech Manager API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: deals
+    description: Deal management
+  - name: profiles
+    description: User profiles
+  - name: presentations
+    description: Presentations tracking
+  - name: notifications
+    description: Notifications
+  - name: commission-payments
+    description: Commission payments
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +32,387 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /deals:
+    get:
+      operationId: getDeals
+      tags: [deals]
+      summary: List all deals
+      responses:
+        "200":
+          description: List of deals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Deal"
+    post:
+      operationId: createDeal
+      tags: [deals]
+      summary: Create a deal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDealInput"
+      responses:
+        "201":
+          description: Created deal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+
+  /deals/{id}:
+    get:
+      operationId: getDeal
+      tags: [deals]
+      summary: Get a deal by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateDeal
+      tags: [deals]
+      summary: Update a deal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDealInput"
+      responses:
+        "200":
+          description: Updated deal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteDeal
+      tags: [deals]
+      summary: Delete a deal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /profiles:
+    get:
+      operationId: getProfiles
+      tags: [profiles]
+      summary: List all profiles
+      responses:
+        "200":
+          description: List of profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Profile"
+
+  /profiles/me:
+    get:
+      operationId: getMyProfile
+      tags: [profiles]
+      summary: Get current user profile
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateMyProfile
+      tags: [profiles]
+      summary: Update current user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+
+  /profiles/{id}:
+    patch:
+      operationId: updateProfile
+      tags: [profiles]
+      summary: Update a profile by ID (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+
+  /presentations:
+    get:
+      operationId: getPresentations
+      tags: [presentations]
+      summary: List presentations
+      responses:
+        "200":
+          description: List of presentations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Presentation"
+    post:
+      operationId: createPresentation
+      tags: [presentations]
+      summary: Create a presentation record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePresentationInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Presentation"
+
+  /presentations/{id}:
+    patch:
+      operationId: updatePresentation
+      tags: [presentations]
+      summary: Update a presentation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePresentationInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Presentation"
+    delete:
+      operationId: deletePresentation
+      tags: [presentations]
+      summary: Delete a presentation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /notifications:
+    get:
+      operationId: getNotifications
+      tags: [notifications]
+      summary: List notifications for current user
+      responses:
+        "200":
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Notification"
+    post:
+      operationId: createNotification
+      tags: [notifications]
+      summary: Create a notification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNotificationInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+
+  /notifications/{id}/read:
+    patch:
+      operationId: markNotificationRead
+      tags: [notifications]
+      summary: Mark notification as read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+
+  /notifications/read-all:
+    patch:
+      operationId: markAllNotificationsRead
+      tags: [notifications]
+      summary: Mark all notifications as read
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /commission-payments:
+    get:
+      operationId: getCommissionPayments
+      tags: [commission-payments]
+      summary: List commission payments
+      responses:
+        "200":
+          description: List of commission payments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CommissionPayment"
+    post:
+      operationId: createCommissionPayment
+      tags: [commission-payments]
+      summary: Create a commission payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommissionPaymentInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommissionPayment"
+
+  /commission-payments/{id}:
+    patch:
+      operationId: updateCommissionPayment
+      tags: [commission-payments]
+      summary: Update a commission payment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCommissionPaymentInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommissionPayment"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +423,434 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required:
+        - success
+
+    Deal:
+      type: object
+      properties:
+        id:
+          type: string
+        clientName:
+          type: string
+        operation:
+          type: string
+        closingDate:
+          type: string
+        implantationValue:
+          type: string
+        monthlyValue:
+          type: string
+        isImplantacaoPaid:
+          type: ["boolean", "null"]
+        isImplantacaoPaidByClient:
+          type: ["boolean", "null"]
+        isMensalidadePaid:
+          type: ["boolean", "null"]
+        isMensalidadePaidByClient:
+          type: ["boolean", "null"]
+        isPaidToUser:
+          type: ["boolean", "null"]
+        isUserConfirmedPayment:
+          type: ["boolean", "null"]
+        isInstallment:
+          type: boolean
+        installmentCount:
+          type: string
+        installmentDates:
+          type: ["object", "null"]
+        userId:
+          type: ["string", "null"]
+        sdrUserId:
+          type: ["string", "null"]
+        actualPaymentDate:
+          type: ["string", "null"]
+        mensalidadePaymentDate:
+          type: ["string", "null"]
+        implantacaoPaymentDate:
+          type: ["string", "null"]
+        implantationPaymentDate:
+          type: ["string", "null"]
+        firstPaymentDate:
+          type: ["string", "null"]
+        commissionRateSnapshot:
+          type: ["string", "null"]
+        commissionAmountSnapshot:
+          type: ["string", "null"]
+        paymentStatus:
+          type: string
+        isTestData:
+          type: ["boolean", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - clientName
+        - operation
+        - closingDate
+        - implantationValue
+        - monthlyValue
+        - isInstallment
+        - installmentCount
+        - paymentStatus
+        - createdAt
+        - updatedAt
+
+    CreateDealInput:
+      type: object
+      properties:
+        clientName:
+          type: string
+        operation:
+          type: string
+        closingDate:
+          type: string
+        implantationValue:
+          type: string
+        monthlyValue:
+          type: string
+        isImplantacaoPaid:
+          type: ["boolean", "null"]
+        isImplantacaoPaidByClient:
+          type: ["boolean", "null"]
+        isMensalidadePaid:
+          type: ["boolean", "null"]
+        isMensalidadePaidByClient:
+          type: ["boolean", "null"]
+        isPaidToUser:
+          type: ["boolean", "null"]
+        isUserConfirmedPayment:
+          type: ["boolean", "null"]
+        isInstallment:
+          type: boolean
+        installmentCount:
+          type: string
+        installmentDates:
+          type: ["object", "null"]
+        userId:
+          type: ["string", "null"]
+        sdrUserId:
+          type: ["string", "null"]
+        actualPaymentDate:
+          type: ["string", "null"]
+        mensalidadePaymentDate:
+          type: ["string", "null"]
+        implantacaoPaymentDate:
+          type: ["string", "null"]
+        implantationPaymentDate:
+          type: ["string", "null"]
+        firstPaymentDate:
+          type: ["string", "null"]
+        commissionRateSnapshot:
+          type: ["string", "null"]
+        commissionAmountSnapshot:
+          type: ["string", "null"]
+        paymentStatus:
+          type: string
+        isTestData:
+          type: ["boolean", "null"]
+      required:
+        - clientName
+
+    UpdateDealInput:
+      type: object
+      properties:
+        clientName:
+          type: string
+        operation:
+          type: string
+        closingDate:
+          type: string
+        implantationValue:
+          type: string
+        monthlyValue:
+          type: string
+        isImplantacaoPaid:
+          type: ["boolean", "null"]
+        isImplantacaoPaidByClient:
+          type: ["boolean", "null"]
+        isMensalidadePaid:
+          type: ["boolean", "null"]
+        isMensalidadePaidByClient:
+          type: ["boolean", "null"]
+        isPaidToUser:
+          type: ["boolean", "null"]
+        isUserConfirmedPayment:
+          type: ["boolean", "null"]
+        isInstallment:
+          type: boolean
+        installmentCount:
+          type: string
+        installmentDates:
+          type: ["object", "null"]
+        userId:
+          type: ["string", "null"]
+        sdrUserId:
+          type: ["string", "null"]
+        actualPaymentDate:
+          type: ["string", "null"]
+        mensalidadePaymentDate:
+          type: ["string", "null"]
+        implantacaoPaymentDate:
+          type: ["string", "null"]
+        implantationPaymentDate:
+          type: ["string", "null"]
+        firstPaymentDate:
+          type: ["string", "null"]
+        commissionRateSnapshot:
+          type: ["string", "null"]
+        commissionAmountSnapshot:
+          type: ["string", "null"]
+        paymentStatus:
+          type: string
+        isTestData:
+          type: ["boolean", "null"]
+
+    Profile:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        fullName:
+          type: ["string", "null"]
+        displayName:
+          type: ["string", "null"]
+        avatarUrl:
+          type: ["string", "null"]
+        role:
+          type: ["string", "null"]
+        position:
+          type: ["string", "null"]
+        jobTitle:
+          type: ["string", "null"]
+        commissionPercent:
+          type: ["string", "null"]
+        fixedSalary:
+          type: ["string", "null"]
+        isTestData:
+          type: ["boolean", "null"]
+        isSandbox:
+          type: ["boolean", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - userId
+        - createdAt
+        - updatedAt
+
+    UpdateProfileInput:
+      type: object
+      properties:
+        fullName:
+          type: ["string", "null"]
+        displayName:
+          type: ["string", "null"]
+        avatarUrl:
+          type: ["string", "null"]
+        role:
+          type: ["string", "null"]
+        position:
+          type: ["string", "null"]
+        jobTitle:
+          type: ["string", "null"]
+        commissionPercent:
+          type: ["string", "null"]
+        fixedSalary:
+          type: ["string", "null"]
+
+    Presentation:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: ["string", "null"]
+        operation:
+          type: string
+        count:
+          type: ["integer", "null"]
+        date:
+          type: ["string", "null"]
+        isTestData:
+          type: ["boolean", "null"]
+        createdAt:
+          type: string
+      required:
+        - id
+        - operation
+        - createdAt
+
+    CreatePresentationInput:
+      type: object
+      properties:
+        userId:
+          type: ["string", "null"]
+        operation:
+          type: string
+        count:
+          type: ["integer", "null"]
+        date:
+          type: ["string", "null"]
+        isTestData:
+          type: ["boolean", "null"]
+      required:
+        - operation
+
+    UpdatePresentationInput:
+      type: object
+      properties:
+        operation:
+          type: string
+        count:
+          type: ["integer", "null"]
+        date:
+          type: ["string", "null"]
+        isTestData:
+          type: ["boolean", "null"]
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: ["string", "null"]
+        dealId:
+          type: ["string", "null"]
+        title:
+          type: string
+        message:
+          type: string
+        isRead:
+          type: ["boolean", "null"]
+        isTestData:
+          type: boolean
+        createdAt:
+          type: string
+      required:
+        - id
+        - title
+        - message
+        - isTestData
+        - createdAt
+
+    CreateNotificationInput:
+      type: object
+      properties:
+        userId:
+          type: ["string", "null"]
+        dealId:
+          type: ["string", "null"]
+        title:
+          type: string
+        message:
+          type: string
+        isRead:
+          type: ["boolean", "null"]
+        isTestData:
+          type: ["boolean", "null"]
+      required:
+        - title
+        - message
+
+    CommissionPayment:
+      type: object
+      properties:
+        id:
+          type: string
+        dealId:
+          type: string
+        component:
+          type: string
+        competenceMonth:
+          type: string
+        installmentIndex:
+          type: ["integer", "null"]
+        amount:
+          type: string
+        recipientUserId:
+          type: ["string", "null"]
+        paidByDirectorAt:
+          type: ["string", "null"]
+        confirmedByUserAt:
+          type: ["string", "null"]
+        rejectedByUserAt:
+          type: ["string", "null"]
+        isTestData:
+          type: boolean
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - dealId
+        - component
+        - competenceMonth
+        - amount
+        - isTestData
+        - createdAt
+        - updatedAt
+
+    CreateCommissionPaymentInput:
+      type: object
+      properties:
+        dealId:
+          type: string
+        component:
+          type: string
+        competenceMonth:
+          type: string
+        installmentIndex:
+          type: ["integer", "null"]
+        amount:
+          type: string
+        recipientUserId:
+          type: ["string", "null"]
+        paidByDirectorAt:
+          type: ["string", "null"]
+        confirmedByUserAt:
+          type: ["string", "null"]
+        rejectedByUserAt:
+          type: ["string", "null"]
+        isTestData:
+          type: ["boolean", "null"]
+      required:
+        - dealId
+        - component
+        - competenceMonth
+        - amount
+
+    UpdateCommissionPaymentInput:
+      type: object
+      properties:
+        paidByDirectorAt:
+          type: ["string", "null"]
+        confirmedByUserAt:
+          type: ["string", "null"]
+        rejectedByUserAt:
+          type: ["string", "null"]
+        amount:
+          type: string
+        isTestData:
+          type: ["boolean", "null"]

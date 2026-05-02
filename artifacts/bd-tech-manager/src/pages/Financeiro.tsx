@@ -2,9 +2,8 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/hooks/useAppData";
-import { supabase } from "@/integrations/supabase/client";
 import { KpiCard } from "@/components/KpiCard";
-import { Navigate, useLocation } from "react-router-dom";
+import { Redirect, useLocation } from "wouter";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -121,7 +120,20 @@ function salaryActionKey(row: { id: string; user_id: string; reference_month: an
     : `salary:${row.id}`;
 }
 
-function dedupeSalaryRows<T extends { user_id: string; reference_month: any; updated_at?: string; payment_date?: string; id?: string }>(rows: T[]): T[] {
+function dbToSalaryRow(r: any): SalaryRow {
+  return {
+    id: r.id,
+    user_id: r.userId ?? r.user_id,
+    reference_month: r.referenceMonth ?? r.reference_month,
+    amount: Number(r.amount ?? 0),
+    expected_payment_date: r.expectedPaymentDate ?? r.expected_payment_date,
+    is_paid_by_gestor: r.isPaidByGestor ?? r.is_paid_by_gestor ?? false,
+    user_confirmed_receipt: !!(r.confirmedByUserAt ?? r.confirmed_by_user_at ?? r.user_confirmed_receipt),
+    payment_date: r.paymentDate ?? r.payment_date ?? null,
+  };
+}
+
+function dedupeSalaryRows<T extends { user_id: string; reference_month: any; updated_at?: string; payment_date?: string | null; id?: string }>(rows: T[]): T[] {
   const map = new Map<string, T>();
   rows.forEach((row) => {
     const key = `${row.user_id}:${salaryReferenceKey(row.reference_month)}`;
@@ -568,49 +580,34 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const [pendingScroll, setPendingScroll] = useState(false);
   const [pendingDialogOpen, setPendingDialogOpen] = useState(false);
   const pendingScrollAttempts = useRef(0);
-  const focusedDealId = (location.state as any)?.dealId as string | undefined;
+  const focusedDealId = undefined as string | undefined;
 
   useEffect(() => {
-    if ((location.state as any)?.scrollToPending) {
-      pendingScrollAttempts.current = 0;
-      setPendingScroll(true);
-      void refreshDeals();
-    }
-  }, [location.state, refreshDeals]);
+    // location.state not available in wouter; scroll-to-pending handled via query params if needed
+  }, [refreshDeals]);
 
   const { data, isLoading: loading } = useQuery({
     queryKey: ["user-finance-data", userId],
     queryFn: async () => {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
-      let salariesRes = await (supabase.from("salary_payments") as any)
-        .select("*")
-        .eq("user_id", userId)
-        .eq("is_test_data", isTestEnv);
-      if (salariesRes.error && (salariesRes.error.message?.includes("is_test_data") || salariesRes.error.message?.includes("column"))) {
-        salariesRes = await (supabase.from("salary_payments") as any).select("*").eq("user_id", userId);
-      }
-      const [profilesRes, commissionPaymentsData] = await Promise.all([
-        (supabase.from("profiles") as any).select("user_id, full_name, display_name, commission_percent, fixed_salary, position").eq("user_id", userId),
+      const [salariesRes, profilesRes, commissionPaymentsData] = await Promise.all([
+        fetch(`/api/salary-payments?userId=${userId}`).then((r) => r.ok ? r.json() : []),
+        fetch("/api/profiles/me").then((r) => r.ok ? r.json() : null),
         fetchCommissionPaymentsForUser(userId),
       ]);
 
-      if (salariesRes.error) throw salariesRes.error;
-      if (profilesRes.error) throw profilesRes.error;
-
       const map: ProfileMap = {};
-      (profilesRes.data as any[]).forEach((p) => {
-        map[p.user_id] = {
-          full_name: p.full_name || p.display_name || "-",
-          display_name: p.display_name || "",
-          commission_percent: p.commission_percent || 0,
-          fixed_salary: p.fixed_salary || 0,
-          position: p.position || "",
+      if (profilesRes) {
+        map[profilesRes.userId] = {
+          full_name: profilesRes.fullName || profilesRes.displayName || "-",
+          display_name: profilesRes.displayName || "",
+          commission_percent: Number(profilesRes.commissionPercent || 0),
+          fixed_salary: Number(profilesRes.fixedSalary || 0),
+          position: profilesRes.position || "",
         };
-      });
+      }
 
       return {
-        salaries: salariesRes.data as any[],
+        salaries: (Array.isArray(salariesRes) ? salariesRes : []).map(dbToSalaryRow),
         profiles: map,
         commissionPayments: commissionPaymentsData,
       };
@@ -809,8 +806,8 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       }
     });
 
-    const totalFixo = filteredSalaries.length > 0 ? filteredSalaries.reduce((acc, s) => acc + s.amount, 0) : (profiles[userId]?.fixed_salary || 0);
-    const fixedConfirmed = filteredSalaries.some((s: any) => !!s.confirmed_by_user_at);
+    const totalFixo = filteredSalaries.length > 0 ? filteredSalaries.reduce((acc, s) => acc + (s.amount || 0), 0) : (profiles[userId]?.fixed_salary || 0);
+    const fixedConfirmed = filteredSalaries.some((s) => !!s.user_confirmed_receipt);
 
     return { projected, paid, volume, fixed: totalFixo, fixedConfirmed };
   }, [filteredDeals, filteredSalaries, userId, selectedMonth, presentations, settings, commissionPayments]);
@@ -836,20 +833,16 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     // 2. Atualiza flag legado no deal somente se o usuário for o dono do deal (Executivo)
     const deal = scopedDeals.find((d) => d.id === dealId);
     if (deal?.userId === userId) {
-      const { data: updatedDeal, error } = await (supabase.from("deals") as any)
-        .update({ is_user_confirmed_payment: true })
-        .eq("id", dealId)
-        .eq("user_id", userId)
-        .eq("is_paid_to_user", true)
-        .select("id")
-        .maybeSingle();
-      if (error) { toast.error("Erro: " + error.message); return; }
-      if (!updatedDeal && cpCount === 0) {
+      const res = await fetch(`/api/deals/${dealId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isUserConfirmedPayment: true }),
+      });
+      if (!res.ok && cpCount === 0) {
         toast.error("Pagamento não encontrado ou ainda não liberado para confirmação.");
         return;
       }
     } else if (cpCount === 0) {
-      // SDR sem commission_payments ainda liberados
       toast.error("Pagamento não encontrado ou ainda não liberado para confirmação.");
       return;
     }
@@ -863,22 +856,19 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     try {
       await confirmCommissionPaymentById(paymentId, userId);
       const item = pendingCommissionItems.find(({ cp }) => cp.id === paymentId);
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
-      const { data: directors } = await (supabase as any)
-        .from("profiles")
-        .select("user_id")
-        .eq("position", "Diretor")
-        .eq("is_test_data", isTestEnv);
-      if (item && directors?.length) {
-        await Promise.all(directors.map((d: any) =>
-          createNotification(
-            d.user_id,
-            "Pagamento confirmado",
-            `${getUserName(userId)} confirmou o recebimento de ${formatCurrency(item.cp.amount)} referente a ${item.deal.clientName}.`,
-            item.deal.id
-          )
-        ));
+      if (item) {
+        const directorsRes = await fetch("/api/profiles").then((r) => r.ok ? r.json() : []);
+        const directors = (directorsRes as any[]).filter((p) => p.position === "Diretor");
+        if (directors.length) {
+          await Promise.all(directors.map((d: any) =>
+            createNotification(
+              d.userId,
+              "Pagamento confirmado",
+              `${getUserName(userId)} confirmou o recebimento de ${formatCurrency(item.cp.amount)} referente a ${item.deal.clientName}.`,
+              item.deal.id
+            )
+          ));
+        }
       }
       toast.success("Recebimento confirmado!");
       await refreshDeals();
@@ -900,17 +890,8 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   };
 
   const handleConfirmSalaryReceipt = async (salaryId: string) => {
-    const now = new Date().toISOString();
-    const { data, error } = await (supabase as any)
-      .from("salary_payments")
-      .update({ confirmed_by_user_at: now, rejected_by_user_at: null })
-      .eq("id", salaryId)
-      .eq("user_id", userId)
-      .eq("is_paid_by_gestor", true)
-      .select("id")
-      .maybeSingle();
-    if (error) { toast.error("Erro ao confirmar salario: " + error.message); return; }
-    if (!data) { toast.error("Salario nao encontrado para confirmacao."); return; }
+    const res = await fetch(`/api/salary-payments/${salaryId}/confirm`, { method: "PATCH" });
+    if (!res.ok) { toast.error("Erro ao confirmar salario."); return; }
     toast.success("Salario confirmado!");
     queryClient.invalidateQueries({ queryKey: ["user-finance-data", userId] });
   };
@@ -1174,41 +1155,25 @@ function FinanceiroContent() {
   const { data, isLoading: loading } = useQuery({
     queryKey: ["finance-data", role, user?.id, filterType, selectedYear],
     queryFn: async () => {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
-
-      // profiles filtrado por is_test_data para isolamento test/prod
-      let profilesRes = await (supabase.from("profiles") as any)
-        .select("user_id, full_name, display_name, commission_percent, fixed_salary, position")
-        .eq("is_test_data", isTestEnv);
-      if (profilesRes.error && (profilesRes.error.message?.includes("is_test_data") || profilesRes.error.message?.includes("column"))) {
-        profilesRes = await (supabase.from("profiles") as any)
-          .select("user_id, full_name, display_name, commission_percent, fixed_salary, position");
-      }
-      let salariesRes = await (supabase.from("salary_payments") as any)
-        .select("*")
-        .eq("is_test_data", isTestEnv);
-      if (salariesRes.error && (salariesRes.error.message?.includes("is_test_data") || salariesRes.error.message?.includes("column"))) {
-        salariesRes = await (supabase.from("salary_payments") as any).select("*");
-      }
-      const commissionPaymentsData = await fetchCommissionPaymentsForEnvironment();
-
-      if (profilesRes.error) throw profilesRes.error;
-      if (salariesRes.error) throw salariesRes.error;
+      const [profilesData, salariesData, commissionPaymentsData] = await Promise.all([
+        fetch("/api/profiles").then((r) => r.ok ? r.json() : []),
+        fetch("/api/salary-payments").then((r) => r.ok ? r.json() : []),
+        fetchCommissionPaymentsForEnvironment(),
+      ]);
 
       const map: ProfileMap = {};
-      (profilesRes.data as any[]).forEach((p) => {
-        map[p.user_id] = {
-          full_name: p.full_name || p.display_name || "-",
-          display_name: p.display_name || "",
-          commission_percent: p.commission_percent || 0,
-          fixed_salary: p.fixed_salary || 0,
+      (profilesData as any[]).forEach((p) => {
+        map[p.userId] = {
+          full_name: p.fullName || p.displayName || "-",
+          display_name: p.displayName || "",
+          commission_percent: Number(p.commissionPercent || 0),
+          fixed_salary: Number(p.fixedSalary || 0),
           position: p.position || "",
         };
       });
 
       return {
-        salaries: salariesRes.data as any[],
+        salaries: (Array.isArray(salariesData) ? salariesData : []).map(dbToSalaryRow),
         profiles: map,
         commissionPayments: commissionPaymentsData,
       };
@@ -1365,7 +1330,7 @@ function FinanceiroContent() {
 
   // Rows para modal e Contas a Pagar: salary_payments explícitos + fallback de profiles
   const salaryModalRows = useMemo(() => {
-    const rows: Array<SalaryRow & { isFallback?: boolean }> = [...filteredSalaries];
+    const rows: Array<SalaryRow & { isFallback?: boolean }> = filteredSalaries.map((s) => ({ ...s }));
     const usersWithPayments = new Set(filteredSalaries.map((s: any) => s.user_id));
     Object.entries(profiles).forEach(([uid, profile]) => {
       if (usersWithPayments.has(uid)) return;
@@ -1444,18 +1409,17 @@ function FinanceiroContent() {
       if (!confirm("Confirma o cancelamento deste recebimento revertendo-o para Pendente?")) return;
     }
     const newStatus = !currentStatus;
-    const { data: updatedDeal, error } = await supabase
-      .from("deals")
-      .update({ 
-        is_mensalidade_paid_by_client: newStatus,
-        actual_payment_date: newStatus ? new Date().toISOString() : null,
-        mensalidade_payment_date: newStatus ? new Date().toISOString() : null
-      } as any)
-      .eq("id", dealId)
-      .select("id")
-      .maybeSingle();
-    if (error) { toast.error("Erro: " + error.message); return; }
-    if (!updatedDeal) { toast.error("Nao foi possivel atualizar este recebimento."); return; }
+    const now = new Date().toISOString();
+    const res = await fetch(`/api/deals/${dealId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        isMensalidadePaidByClient: newStatus,
+        actualPaymentDate: newStatus ? now : null,
+        mensalidadePaymentDate: newStatus ? now : null,
+      }),
+    });
+    if (!res.ok) { toast.error("Nao foi possivel atualizar este recebimento."); return; }
     toast.success(newStatus ? "Recebimento confirmado!" : "Revertido para Pendente");
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
@@ -1466,18 +1430,17 @@ function FinanceiroContent() {
       if (!confirm("Confirma o cancelamento deste recebimento revertendo-o para Pendente?")) return;
     }
     const newStatus = !currentStatus;
-    const { data: updatedDeal, error } = await supabase
-      .from("deals")
-      .update({
-        is_implantacao_paid_by_client: newStatus,
-        is_implantacao_paid: newStatus,
-        implantacao_payment_date: newStatus ? new Date().toISOString() : null
-      } as any)
-      .eq("id", dealId)
-      .select("id")
-      .maybeSingle();
-    if (error) { toast.error("Erro: " + error.message); return; }
-    if (!updatedDeal) { toast.error("Nao foi possivel atualizar este recebimento."); return; }
+    const now = new Date().toISOString();
+    const res = await fetch(`/api/deals/${dealId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        isImplantacaoPaidByClient: newStatus,
+        isImplantacaoPaid: newStatus,
+        implantacaoPaymentDate: newStatus ? now : null,
+      }),
+    });
+    if (!res.ok) { toast.error("Nao foi possivel atualizar este recebimento."); return; }
     toast.success(newStatus ? "Recebimento confirmado!" : "Revertido para Pendente");
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
@@ -1490,11 +1453,12 @@ function FinanceiroContent() {
     if (dates[index]) {
       dates[index] = { ...dates[index], paid: checked };
     }
-    const { error } = await supabase
-      .from("deals")
-      .update({ installment_dates: dates } as any)
-      .eq("id", dealId);
-    if (error) { toast.error("Erro: " + error.message); return; }
+    const res = await fetch(`/api/deals/${dealId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ installmentDates: dates }),
+    });
+    if (!res.ok) { toast.error("Erro ao atualizar parcela."); return; }
     toast.success(checked ? "Parcela confirmada!" : "Parcela desmarcada");
     await refreshDeals();
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
@@ -1557,15 +1521,15 @@ function FinanceiroContent() {
       }
 
       // 2. Atualiza flag legado no deal
-      const { error } = await (supabase as any)
-        .from("deals")
-        .update({ is_paid_to_user: true, is_user_confirmed_payment: false })
-        .eq("id", dealId);
-      if (error) {
-        // Rollback: apaga os registros de commission_payments que acabamos de criar
+      const dealRes = await fetch(`/api/deals/${dealId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPaidToUser: true, isUserConfirmedPayment: false }),
+      });
+      if (!dealRes.ok) {
         if (!targetRecipientUserId || targetRecipientUserId === deal.userId) await clearPartsForRecipient(deal.userId, executivoParts);
         if (sdrParts && (!targetRecipientUserId || targetRecipientUserId === deal.sdrUserId)) await clearPartsForRecipient(deal.sdrUserId, sdrParts);
-        toast.error("Erro: " + error.message);
+        toast.error("Erro ao atualizar deal.");
         return;
       }
 
@@ -1608,46 +1572,43 @@ function FinanceiroContent() {
 
   const handleToggleSalaryPayment = async (salaryId: string, currentStatus: boolean) => {
     const newStatus = !currentStatus;
-    const { data: updatedSalary, error } = await supabase
-      .from("salary_payments")
-      .update({ is_paid_by_gestor: newStatus, payment_date: newStatus ? new Date().toISOString() : null, confirmed_by_user_at: null, rejected_by_user_at: null } as any)
-      .eq("id", salaryId)
-      .select("id")
-      .maybeSingle();
-    if (error) { toast.error("Erro: " + error.message); return; }
-    if (!updatedSalary) { toast.error("Nao foi possivel atualizar este salario."); return; }
+    const res = await fetch(`/api/salary-payments/${salaryId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        isPaidByGestor: newStatus,
+        paymentDate: newStatus ? new Date().toISOString() : null,
+        confirmedByUserAt: null,
+        rejectedByUserAt: null,
+      }),
+    });
+    if (!res.ok) { toast.error("Nao foi possivel atualizar este salario."); return; }
     toast.success(newStatus ? "Salário marcado como pago com sucesso!" : "Baixa de salário desmarcada");
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
-  const handleCreateAndToggleSalaryPayment = async (userId: string, amount: number, referenceMonth: string) => {
+  const handleCreateAndToggleSalaryPayment = async (salaryUserId: string, amount: number, referenceMonth: string) => {
     const referenceKey = salaryReferenceKey(referenceMonth);
-    const processingKey = `fallback:${userId}:${referenceKey}`;
+    const processingKey = `fallback:${salaryUserId}:${referenceKey}`;
     if (processingSalaryKeys.has(processingKey)) return;
     setProcessingSalaryKeys((prev) => new Set(prev).add(processingKey));
     const dateStr = referenceMonth.slice(0, 7) + "-20";
     const referenceDate = referenceMonth.slice(0, 7) + "-01";
-    const { data: { user: currentUser } } = await supabase.auth.getUser();
-    const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
-    const payload = {
-      user_id: userId,
-      amount,
-      reference_month: referenceDate,
-      expected_payment_date: dateStr,
-      is_paid_by_gestor: true,
-      payment_date: new Date().toISOString(),
-      confirmed_by_user_at: null,
-      rejected_by_user_at: null,
-      is_test_data: isTestEnv,
-    };
     try {
-      const { error } = await (supabase as any)
-        .from("salary_payments")
-        .upsert(payload, { onConflict: "user_id,reference_month,is_test_data" })
-        .select("id")
-        .single();
-      if (error) { toast.error("Erro ao registrar salario: " + error.message); return; }
-      await createNotification(userId, "Salario disponivel", `Seu salario de ${formatMonthLabel(referenceMonth.slice(0, 7))} foi marcado como transferido. Acesse o Financeiro para confirmar o recebimento.`);
+      const res = await fetch("/api/salary-payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: salaryUserId,
+          amount,
+          referenceMonth: referenceDate,
+          expectedPaymentDate: dateStr,
+          isPaidByGestor: true,
+          paymentDate: new Date().toISOString(),
+        }),
+      });
+      if (!res.ok) { toast.error("Erro ao registrar salario."); return; }
+      await createNotification(salaryUserId, "Salario disponivel", `Seu salario de ${formatMonthLabel(referenceMonth.slice(0, 7))} foi marcado como transferido. Acesse o Financeiro para confirmar o recebimento.`);
       toast.success("Salario registrado e marcado como transferido!");
       queryClient.invalidateQueries({ queryKey: ["finance-data"] });
     } finally {
@@ -1898,7 +1859,7 @@ function FinanceiroContent() {
                     <TableRow key={d.id} className="border-border/25 hover:bg-[#242842]/40">
                       <TableCell className="text-sm font-medium">{d.clientName}</TableCell>
                       <TableCell><Badge variant="outline" className="text-[10px] border-border/40">{d.operation}</Badge></TableCell>
-                      <TableCell className="text-sm">{getUserName(d.userId)}</TableCell>
+                      <TableCell className="text-sm">{getUserName(d.userId ?? "")}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{d.monthlyValue > 0 ? formatCurrency(d.monthlyValue) : "—"}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{d.implantationValue > 0 ? formatCurrency(d.implantationValue) : "—"}</TableCell>
                       <TableCell className="text-right font-mono font-bold text-primary">{formatCurrency((d.monthlyValue || 0) + (d.implantationValue || 0))}</TableCell>
@@ -1933,7 +1894,7 @@ function FinanceiroContent() {
                         <TableRow key={d.id} className="border-border/25 hover:bg-[#242842]/40">
                           <TableCell className="text-sm font-medium">{d.clientName}</TableCell>
                           <TableCell><Badge variant="outline" className="text-[10px] border-border/40">{d.operation}</Badge></TableCell>
-                          <TableCell className="text-sm">{getUserName(d.userId)}</TableCell>
+                          <TableCell className="text-sm">{getUserName(d.userId ?? "")}</TableCell>
                           <TableCell className="text-right font-mono font-bold text-primary">{formatCurrency(parts.total)}</TableCell>
                           <TableCell className="text-center">
                             {status === "done" ? (
