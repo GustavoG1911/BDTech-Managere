@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import { dealsTable } from "@workspace/db/schema";
 import { eq, or } from "drizzle-orm";
 import { requireAuthWithRole, isManagerLevel, AuthRequest } from "../middlewares/auth";
+import type { InsertDeal } from "@workspace/db/schema";
 
 const router = Router();
 
@@ -38,33 +39,84 @@ const dealWriteSchema = z.object({
 
 const dealPatchSchema = dealWriteSchema.partial().omit({ userId: true });
 
-function normalizeNumericFields(data: Record<string, unknown>): Record<string, unknown> {
-  const numFields = ["implantationValue", "monthlyValue", "installmentCount", "commissionRateSnapshot", "commissionAmountSnapshot"];
-  const result = { ...data };
-  for (const field of numFields) {
-    if (result[field] !== undefined && result[field] !== null) {
-      result[field] = String(result[field]);
-    }
-  }
-  return result;
+type DealWriteInput = z.infer<typeof dealWriteSchema>;
+type DealPatchInput = z.infer<typeof dealPatchSchema>;
+
+function toNumericString(val: string | number | null | undefined): string | undefined {
+  if (val == null) return undefined;
+  return String(val);
+}
+
+function buildInsertPayload(data: DealWriteInput & { userId: string }): InsertDeal {
+  return {
+    clientName: data.clientName,
+    operation: data.operation,
+    closingDate: data.closingDate,
+    implantationValue: toNumericString(data.implantationValue),
+    monthlyValue: toNumericString(data.monthlyValue),
+    isImplantacaoPaid: data.isImplantacaoPaid,
+    isImplantacaoPaidByClient: data.isImplantacaoPaidByClient,
+    isMensalidadePaid: data.isMensalidadePaid,
+    isMensalidadePaidByClient: data.isMensalidadePaidByClient,
+    isPaidToUser: data.isPaidToUser,
+    isUserConfirmedPayment: data.isUserConfirmedPayment,
+    isInstallment: data.isInstallment,
+    installmentCount: toNumericString(data.installmentCount),
+    installmentDates: data.installmentDates as InsertDeal["installmentDates"],
+    userId: data.userId,
+    sdrUserId: data.sdrUserId,
+    actualPaymentDate: data.actualPaymentDate,
+    mensalidadePaymentDate: data.mensalidadePaymentDate,
+    implantacaoPaymentDate: data.implantacaoPaymentDate,
+    implantationPaymentDate: data.implantationPaymentDate,
+    firstPaymentDate: data.firstPaymentDate,
+    commissionRateSnapshot: toNumericString(data.commissionRateSnapshot),
+    commissionAmountSnapshot: toNumericString(data.commissionAmountSnapshot),
+    paymentStatus: data.paymentStatus,
+  };
+}
+
+function buildUpdatePayload(data: DealPatchInput): Partial<InsertDeal> {
+  const patch: Partial<InsertDeal> = {};
+  if (data.clientName !== undefined) patch.clientName = data.clientName;
+  if (data.operation !== undefined) patch.operation = data.operation;
+  if (data.closingDate !== undefined) patch.closingDate = data.closingDate;
+  if (data.implantationValue !== undefined) patch.implantationValue = toNumericString(data.implantationValue);
+  if (data.monthlyValue !== undefined) patch.monthlyValue = toNumericString(data.monthlyValue);
+  if (data.isImplantacaoPaid !== undefined) patch.isImplantacaoPaid = data.isImplantacaoPaid;
+  if (data.isImplantacaoPaidByClient !== undefined) patch.isImplantacaoPaidByClient = data.isImplantacaoPaidByClient;
+  if (data.isMensalidadePaid !== undefined) patch.isMensalidadePaid = data.isMensalidadePaid;
+  if (data.isMensalidadePaidByClient !== undefined) patch.isMensalidadePaidByClient = data.isMensalidadePaidByClient;
+  if (data.isPaidToUser !== undefined) patch.isPaidToUser = data.isPaidToUser;
+  if (data.isUserConfirmedPayment !== undefined) patch.isUserConfirmedPayment = data.isUserConfirmedPayment;
+  if (data.isInstallment !== undefined) patch.isInstallment = data.isInstallment;
+  if (data.installmentCount !== undefined) patch.installmentCount = toNumericString(data.installmentCount);
+  if (data.installmentDates !== undefined) patch.installmentDates = data.installmentDates as InsertDeal["installmentDates"];
+  if (data.sdrUserId !== undefined) patch.sdrUserId = data.sdrUserId;
+  if (data.actualPaymentDate !== undefined) patch.actualPaymentDate = data.actualPaymentDate;
+  if (data.mensalidadePaymentDate !== undefined) patch.mensalidadePaymentDate = data.mensalidadePaymentDate;
+  if (data.implantacaoPaymentDate !== undefined) patch.implantacaoPaymentDate = data.implantacaoPaymentDate;
+  if (data.implantationPaymentDate !== undefined) patch.implantationPaymentDate = data.implantationPaymentDate;
+  if (data.firstPaymentDate !== undefined) patch.firstPaymentDate = data.firstPaymentDate;
+  if (data.commissionRateSnapshot !== undefined) patch.commissionRateSnapshot = toNumericString(data.commissionRateSnapshot);
+  if (data.commissionAmountSnapshot !== undefined) patch.commissionAmountSnapshot = toNumericString(data.commissionAmountSnapshot);
+  if (data.paymentStatus !== undefined) patch.paymentStatus = data.paymentStatus;
+  return patch;
 }
 
 router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const isManager = isManagerLevel(req);
-    let deals;
-    if (isManager) {
-      deals = await db.select().from(dealsTable).orderBy(dealsTable.createdAt);
-    } else {
-      deals = await db.select().from(dealsTable)
-        .where(or(
-          eq(dealsTable.userId, req.userId),
-          eq(dealsTable.sdrUserId, req.userId)
-        ))
-        .orderBy(dealsTable.createdAt);
-    }
+    const deals = isManager
+      ? await db.select().from(dealsTable).orderBy(dealsTable.createdAt)
+      : await db.select().from(dealsTable)
+          .where(or(
+            eq(dealsTable.userId, req.userId),
+            eq(dealsTable.sdrUserId, req.userId)
+          ))
+          .orderBy(dealsTable.createdAt);
     res.json(deals);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to fetch deals" });
   }
 });
@@ -78,13 +130,10 @@ router.post("/", requireAuthWithRole, async (req: AuthRequest, res: Response): P
     }
     const isManager = isManagerLevel(req);
     const targetUserId = isManager && parsed.data.userId ? parsed.data.userId : req.userId;
-    const values = normalizeNumericFields({ ...parsed.data, userId: targetUserId });
-    const [deal] = await db
-      .insert(dealsTable)
-      .values(values as any)
-      .returning();
+    const payload = buildInsertPayload({ ...parsed.data, userId: targetUserId });
+    const [deal] = await db.insert(dealsTable).values(payload).returning();
     res.status(201).json(deal);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to create deal" });
   }
 });
@@ -102,7 +151,7 @@ router.get("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response):
       return;
     }
     res.json(deal);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to fetch deal" });
   }
 });
@@ -124,14 +173,10 @@ router.patch("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
-    const values = normalizeNumericFields(parsed.data as Record<string, unknown>);
-    const [deal] = await db
-      .update(dealsTable)
-      .set(values as any)
-      .where(eq(dealsTable.id, req.params["id"] as string))
-      .returning();
+    const payload = buildUpdatePayload(parsed.data);
+    const [deal] = await db.update(dealsTable).set(payload).where(eq(dealsTable.id, req.params["id"] as string)).returning();
     res.json(deal);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to update deal" });
   }
 });
@@ -150,7 +195,7 @@ router.delete("/:id", requireAuthWithRole, async (req: AuthRequest, res: Respons
     }
     await db.delete(dealsTable).where(eq(dealsTable.id, req.params["id"] as string));
     res.json({ success: true });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to delete deal" });
   }
 });
