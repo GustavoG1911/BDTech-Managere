@@ -85,10 +85,12 @@ router.patch("/me/onboarding", requireAuthWithRole, async (req: AuthRequest, res
       .from(profilesTable)
       .where(eq(profilesTable.userId, req.userId));
 
+    const bootstrapRole = parsed.data.position === "Diretor" ? "gestor" : "user";
+
     if (existing.length === 0) {
       const [profile] = await db
         .insert(profilesTable)
-        .values({ userId: req.userId, role: "user", ...safeData })
+        .values({ userId: req.userId, role: bootstrapRole, ...safeData })
         .returning();
       res.json(profile);
       return;

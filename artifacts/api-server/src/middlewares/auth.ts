@@ -12,7 +12,7 @@ export interface AuthRequest extends Request {
 }
 
 export function isManagerLevel(req: AuthRequest): boolean {
-  return req.userRole === "gestor" || req.userRole === "admin";
+  return req.userRole === "gestor" || req.userRole === "admin" || req.userPosition === "Diretor";
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
