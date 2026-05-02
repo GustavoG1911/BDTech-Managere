@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@workspace/db";
 import { profilesTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
-import { requireAuthWithRole, requireGestor, isManagerLevel, AuthRequest } from "../middlewares/auth";
+import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
@@ -15,6 +15,10 @@ function stripProtectedFields(body: Record<string, unknown>): Record<string, unk
     delete safe[field];
   }
   return safe;
+}
+
+function normalizedRoleForPosition(position: string | null | undefined): "gestor" | "user" {
+  return position === "Diretor" ? "gestor" : "user";
 }
 
 const selfUpdateSchema = z.object({
@@ -48,7 +52,7 @@ router.get("/", requireAuthWithRole, requireGestor, async (_req: AuthRequest, re
   try {
     const profiles = await db.select().from(profilesTable);
     res.json(profiles);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to fetch profiles" });
   }
 });
@@ -64,7 +68,7 @@ router.get("/me", requireAuthWithRole, async (req: AuthRequest, res: Response): 
       return;
     }
     res.json(profile);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to fetch profile" });
   }
 });
@@ -77,6 +81,8 @@ router.patch("/me/onboarding", requireAuthWithRole, async (req: AuthRequest, res
       return;
     }
     const safeData = stripProtectedFields(parsed.data as Record<string, unknown>);
+    const derivedRole = normalizedRoleForPosition(parsed.data.position);
+
     const existing = await db
       .select()
       .from(profilesTable)
@@ -85,19 +91,23 @@ router.patch("/me/onboarding", requireAuthWithRole, async (req: AuthRequest, res
     if (existing.length === 0) {
       const [profile] = await db
         .insert(profilesTable)
-        .values({ userId: req.userId, role: "user", ...safeData })
+        .values({ userId: req.userId, role: derivedRole, ...safeData })
         .returning();
       res.json(profile);
       return;
     }
 
+    const updateData: Record<string, unknown> = { ...safeData };
+    if (parsed.data.position !== undefined) {
+      updateData.role = derivedRole;
+    }
     const [profile] = await db
       .update(profilesTable)
-      .set(safeData)
+      .set(updateData)
       .where(eq(profilesTable.userId, req.userId))
       .returning();
     res.json(profile);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to save onboarding profile" });
   }
 });
@@ -130,7 +140,7 @@ router.patch("/me", requireAuthWithRole, async (req: AuthRequest, res: Response)
       .where(eq(profilesTable.userId, req.userId))
       .returning();
     res.json(profile);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to update profile" });
   }
 });
@@ -142,10 +152,13 @@ router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
-    const safeBody = { ...parsed.data };
+    const safeBody: Record<string, unknown> = { ...parsed.data };
     if (safeBody.role === "admin" && req.userRole !== "admin") {
       res.status(403).json({ error: "Only admins can elevate accounts to admin role" });
       return;
+    }
+    if (parsed.data.position !== undefined && parsed.data.role === undefined) {
+      safeBody.role = normalizedRoleForPosition(parsed.data.position);
     }
     const [profile] = await db
       .update(profilesTable)
@@ -157,7 +170,7 @@ router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest
       return;
     }
     res.json(profile);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to update profile" });
   }
 });
