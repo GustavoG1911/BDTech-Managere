@@ -3,11 +3,12 @@ import { z } from "zod";
 import { db } from "@workspace/db";
 import { notificationsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
-import { requireAuth, AuthRequest } from "../middlewares/auth";
+import { requireAuth, requireAuthWithRole, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
 const notificationWriteSchema = z.object({
+  userId: z.string().optional(),
   dealId: z.string().optional().nullable(),
   title: z.string(),
   message: z.string(),
@@ -27,16 +28,19 @@ router.get("/", requireAuth, async (req: AuthRequest, res: Response): Promise<vo
   }
 });
 
-router.post("/", requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const parsed = notificationWriteSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const recipientUserId = (isManager && parsed.data.userId) ? parsed.data.userId : req.userId;
+    const { userId: _uid, ...rest } = parsed.data;
     const [row] = await db
       .insert(notificationsTable)
-      .values({ userId: req.userId, ...parsed.data })
+      .values({ ...rest, userId: recipientUserId })
       .returning();
     res.status(201).json(row);
   } catch (err) {

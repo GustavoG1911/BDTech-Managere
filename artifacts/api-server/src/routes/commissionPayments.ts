@@ -131,7 +131,7 @@ router.post("/clear", requireAuthWithRole, requireGestor, async (req: AuthReques
   }
 });
 
-router.post("/confirm-by-recipient", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
+router.post("/confirm-by-recipient", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const parsed = confirmByRecipientSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -139,6 +139,11 @@ router.post("/confirm-by-recipient", requireAuthWithRole, requireGestor, async (
       return;
     }
     const { dealId, recipientUserId } = parsed.data;
+    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    if (!isManager && recipientUserId !== req.userId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
     const now = new Date();
 
     const rows = await db
