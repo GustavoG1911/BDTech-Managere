@@ -1,8 +1,9 @@
 import { Router, Response } from "express";
 import { z } from "zod";
+import { clerkClient } from "@clerk/express";
 import { db } from "@workspace/db";
-import { profilesTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
+import { profilesTable, userInvitationsTable } from "@workspace/db/schema";
+import { eq, and } from "drizzle-orm";
 import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
@@ -85,18 +86,62 @@ router.patch("/me/onboarding", requireAuthWithRole, async (req: AuthRequest, res
       .where(eq(profilesTable.userId, req.userId));
 
     if (existing.length === 0) {
+      let inviteRole: string = "user";
+      let invitePosition: string | null = null;
+      let inviteFixedSalary: string | null = null;
+      let inviteCommissionPercent: string | null = null;
+
+      try {
+        const clerkUser = await clerkClient.users.getUser(req.userId);
+        const primaryEmail = clerkUser.emailAddresses.find(
+          (e) => e.id === clerkUser.primaryEmailAddressId
+        )?.emailAddress;
+
+        if (primaryEmail) {
+          const normalizedEmail = primaryEmail.toLowerCase().trim();
+          const [invite] = await db
+            .select()
+            .from(userInvitationsTable)
+            .where(and(
+              eq(userInvitationsTable.email, normalizedEmail),
+              eq(userInvitationsTable.status, "pending")
+            ));
+
+          if (invite) {
+            inviteRole = invite.role ?? "user";
+            invitePosition = invite.position ?? null;
+            inviteFixedSalary = invite.fixedSalary ?? null;
+            inviteCommissionPercent = invite.commissionPercent ?? null;
+
+            await db
+              .update(userInvitationsTable)
+              .set({ status: "accepted", acceptedAt: new Date() })
+              .where(eq(userInvitationsTable.id, invite.id));
+          }
+        }
+      } catch {
+        // Non-critical: Clerk lookup or invite lookup failure falls back to defaults
+      }
+
       const safeData = stripProtectedFields(parsed.data as Record<string, unknown>);
-      const bootstrapRole = parsed.data.position === "Diretor" ? "gestor" : "user";
       const [profile] = await db
         .insert(profilesTable)
-        .values({ userId: req.userId, role: bootstrapRole, ...safeData })
+        .values({
+          userId: req.userId,
+          role: inviteRole,
+          position: invitePosition,
+          fixedSalary: (safeData.fixedSalary as string | null | undefined) ?? inviteFixedSalary ?? null,
+          commissionPercent: (safeData.commissionPercent as string | null | undefined) ?? inviteCommissionPercent ?? null,
+          fullName: (safeData.fullName as string | undefined) ?? null,
+          displayName: (safeData.displayName as string | undefined) ?? null,
+          jobTitle: (safeData.jobTitle as string | null | undefined) ?? null,
+        })
         .returning();
       res.json(profile);
       return;
     }
 
-    const { position: _position, ...nonPositionData } = parsed.data;
-    const safeData = stripProtectedFields(nonPositionData as Record<string, unknown>);
+    const safeData = stripProtectedFields(parsed.data as Record<string, unknown>);
     const [profile] = await db
       .update(profilesTable)
       .set(safeData)
