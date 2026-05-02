@@ -229,37 +229,20 @@ export async function savePresentationToDb(monthKey: string, operation: "bluepex
   // Usa o primeiro dia do mês como data canônica
   const dateStr = monthKey + "-01";
 
-  // Busca linha canônica do mês+operação (global, ignora user_id)
-  const { data: existingRows, error: readErr } = await (supabase as any)
+  const { error } = await (supabase as any)
     .from("presentations")
-    .select("id")
-    .eq("date", dateStr)
-    .eq("operation", dbOperation)
-    .eq("is_test_data", isTestEnv);
-
-  if (readErr) throw readErr;
-
-  if (existingRows?.length) {
-    const ids = existingRows.map((row: any) => row.id);
-    // Atualiza a linha existente pelo id
-    const { error: updateErr } = await (supabase as any)
-      .from("presentations")
-      .update({ count })
-      .in("id", ids);
-    if (updateErr) throw updateErr;
-  } else {
-    // Insere nova linha para este mês+operação
-    const { error: insertErr } = await (supabase as any)
-      .from("presentations")
-      .insert({
+    .upsert(
+      {
         user_id: userId,
         operation: dbOperation,
         count,
         date: dateStr,
         is_test_data: isTestEnv,
-      });
-    if (insertErr) throw insertErr;
-  }
+      },
+      { onConflict: "date,operation,is_test_data" }
+    );
+
+  if (error) throw error;
 }
 
 export async function fetchUserCommissionRate(userId: string): Promise<number | null> {
@@ -399,7 +382,7 @@ function dbToCommissionPayment(cp: any): CommissionPayment {
     component: cp.component,
     competenceMonth: cp.competence_month,
     installmentIndex: cp.installment_index ?? null,
-    amount: cp.amount,
+    amount: Number(cp.amount ?? 0),
     recipientUserId: cp.recipient_user_id ?? null,
     paidByDirectorAt: cp.paid_by_director_at ?? null,
     confirmedByUserAt: cp.confirmed_by_user_at ?? null,

@@ -94,6 +94,10 @@ interface SalaryRow {
   is_paid_by_gestor: boolean;
   user_confirmed_receipt: boolean;
   payment_date: string | null;
+  confirmed_by_user_at?: string | null;
+  rejected_by_user_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 interface ProfileMap {
@@ -121,7 +125,69 @@ function salaryActionKey(row: { id: string; user_id: string; reference_month: an
     : `salary:${row.id}`;
 }
 
-function dedupeSalaryRows<T extends { user_id: string; reference_month: any; updated_at?: string; payment_date?: string; id?: string }>(rows: T[]): T[] {
+function getSalaryRowPriority(row: {
+  is_paid_by_gestor?: boolean | null;
+  confirmed_by_user_at?: string | null;
+  rejected_by_user_at?: string | null;
+  payment_date?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+  id?: string;
+}) {
+  const statusScore = row.confirmed_by_user_at
+    ? 4
+    : row.is_paid_by_gestor
+      ? 3
+      : row.rejected_by_user_at
+        ? 2
+        : 1;
+  const time = new Date(
+    row.confirmed_by_user_at ||
+    row.rejected_by_user_at ||
+    row.updated_at ||
+    row.payment_date ||
+    row.created_at ||
+    0
+  ).getTime();
+
+  return {
+    statusScore,
+    time: Number.isNaN(time) ? 0 : time,
+    id: row.id || "",
+  };
+}
+
+function shouldReplaceSalaryRow<T extends {
+  is_paid_by_gestor?: boolean | null;
+  confirmed_by_user_at?: string | null;
+  rejected_by_user_at?: string | null;
+  payment_date?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+  id?: string;
+}>(current: T, candidate: T) {
+  const currentPriority = getSalaryRowPriority(current);
+  const candidatePriority = getSalaryRowPriority(candidate);
+  if (candidatePriority.statusScore !== currentPriority.statusScore) {
+    return candidatePriority.statusScore > currentPriority.statusScore;
+  }
+  if (candidatePriority.time !== currentPriority.time) {
+    return candidatePriority.time > currentPriority.time;
+  }
+  return candidatePriority.id.localeCompare(currentPriority.id) > 0;
+}
+
+function dedupeSalaryRows<T extends {
+  user_id: string;
+  reference_month: any;
+  is_paid_by_gestor?: boolean | null;
+  confirmed_by_user_at?: string | null;
+  rejected_by_user_at?: string | null;
+  payment_date?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+  id?: string;
+}>(rows: T[]): T[] {
   const map = new Map<string, T>();
   rows.forEach((row) => {
     const key = `${row.user_id}:${salaryReferenceKey(row.reference_month)}`;
@@ -130,11 +196,18 @@ function dedupeSalaryRows<T extends { user_id: string; reference_month: any; upd
       map.set(key, row);
       return;
     }
-    const currentTime = new Date(current.updated_at || current.payment_date || 0).getTime();
-    const rowTime = new Date(row.updated_at || row.payment_date || 0).getTime();
-    if (rowTime >= currentTime) map.set(key, row);
+    if (shouldReplaceSalaryRow(current, row)) map.set(key, row);
   });
   return Array.from(map.values());
+}
+
+function normalizeSalaryRows<T extends { amount?: any; is_paid_by_gestor?: any; user_confirmed_receipt?: any }>(rows: T[]): T[] {
+  return rows.map((row) => ({
+    ...row,
+    amount: Number(row.amount ?? 0),
+    is_paid_by_gestor: Boolean(row.is_paid_by_gestor),
+    user_confirmed_receipt: Boolean(row.user_confirmed_receipt),
+  }));
 }
 
 function dateInFinancePeriod(date: string | null | undefined, period: FinancePeriod): boolean {
@@ -617,7 +690,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     }
   });
 
-  const querySalaries = dedupeSalaryRows(data?.salaries || []);
+  const querySalaries = dedupeSalaryRows(normalizeSalaryRows(data?.salaries || []));
   const profiles = data?.profiles || {};
   const commissionPayments: CommissionPayment[] = data?.commissionPayments || [];
   const userCommissionDealIds = useMemo(
@@ -1215,7 +1288,7 @@ function FinanceiroContent() {
     }
   });
 
-  const querySalaries = dedupeSalaryRows(data?.salaries || []);
+  const querySalaries = dedupeSalaryRows(normalizeSalaryRows(data?.salaries || []));
   const profiles = data?.profiles || {};
   const commissionPayments: CommissionPayment[] = data?.commissionPayments || [];
 
@@ -1608,14 +1681,23 @@ function FinanceiroContent() {
 
   const handleToggleSalaryPayment = async (salaryId: string, currentStatus: boolean) => {
     const newStatus = !currentStatus;
-    const { data: updatedSalary, error } = await supabase
+    let salaryUpdate = (supabase as any)
       .from("salary_payments")
       .update({ is_paid_by_gestor: newStatus, payment_date: newStatus ? new Date().toISOString() : null, confirmed_by_user_at: null, rejected_by_user_at: null } as any)
-      .eq("id", salaryId)
-      .select("id")
-      .maybeSingle();
+      .eq("id", salaryId);
+
+    if (!newStatus) {
+      salaryUpdate = salaryUpdate.is("confirmed_by_user_at", null);
+    }
+
+    const { data: updatedSalary, error } = await salaryUpdate.select("id").maybeSingle();
     if (error) { toast.error("Erro: " + error.message); return; }
-    if (!updatedSalary) { toast.error("Nao foi possivel atualizar este salario."); return; }
+    if (!updatedSalary) {
+      toast.error(newStatus
+        ? "Nao foi possivel atualizar este salario."
+        : "Este salario ja foi confirmado pelo funcionario e nao pode ter a baixa desfeita.");
+      return;
+    }
     toast.success(newStatus ? "Salário marcado como pago com sucesso!" : "Baixa de salário desmarcada");
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
@@ -1641,6 +1723,25 @@ function FinanceiroContent() {
       is_test_data: isTestEnv,
     };
     try {
+      const { data: existingSalary, error: existingError } = await (supabase as any)
+        .from("salary_payments")
+        .select("id, confirmed_by_user_at")
+        .eq("user_id", userId)
+        .eq("reference_month", referenceDate)
+        .eq("is_test_data", isTestEnv)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingError) {
+        toast.error("Erro ao verificar salario: " + existingError.message);
+        return;
+      }
+      if (existingSalary?.confirmed_by_user_at) {
+        toast.error("Este salario ja foi confirmado pelo funcionario.");
+        return;
+      }
+
       const { error } = await (supabase as any)
         .from("salary_payments")
         .upsert(payload, { onConflict: "user_id,reference_month,is_test_data" })
@@ -2418,7 +2519,8 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
                     ) : (
                       <Checkbox
                         checked={s.is_paid_by_gestor || false}
-                        disabled={isSalaryProcessing}
+                        disabled={isSalaryProcessing || !!(s as any).confirmed_by_user_at}
+                        title={(s as any).confirmed_by_user_at ? "Salario ja confirmado pelo funcionario" : undefined}
                         onCheckedChange={() => onToggleSalaryPayment(s.id, s.is_paid_by_gestor || false)}
                       />
                     )}
