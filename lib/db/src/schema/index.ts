@@ -23,3 +23,4 @@ export * from "./presentations";
 export * from "./notifications";
 export * from "./commissionPayments";
 export * from "./salaryPayments";
+export * from "./invitations";
