@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { AppNotification, fetchNotifications, markAllNotificationsRead, markNotificationRead } from "@/lib/supabase-deals";
+import { AppNotification, fetchNotifications, markAllNotificationsRead, markNotificationRead } from "@/lib/api-client";
 
 export function useNotifications(userId?: string) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);

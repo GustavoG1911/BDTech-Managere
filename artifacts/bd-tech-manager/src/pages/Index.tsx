@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAppData } from "@/hooks/useAppData";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchAvailableYears } from "@/lib/supabase-deals";
+import { fetchAvailableYears } from "@/lib/api-client";
 import { KpiCard } from "@/components/KpiCard";
 import { PresentationsCard } from "@/components/PresentationsCard";
 import { OperationsChart } from "@/components/OperationsChart";
