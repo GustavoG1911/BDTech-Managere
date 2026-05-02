@@ -1,13 +1,6 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
-import { clerkMiddleware } from "@clerk/express";
-import { publishableKeyFromHost } from "@clerk/shared/keys";
-import {
-  CLERK_PROXY_PATH,
-  clerkProxyMiddleware,
-  getClerkProxyHost,
-} from "./middlewares/clerkProxyMiddleware";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
@@ -32,43 +25,9 @@ app.use(
     },
   }),
 );
-
-app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
-
-const allowedOrigins = process.env["ALLOWED_ORIGINS"]
-  ? process.env["ALLOWED_ORIGINS"].split(",").map((o) => o.trim())
-  : [];
-
-app.use(cors({
-  credentials: true,
-  origin: (origin, callback) => {
-    if (!origin) {
-      callback(null, true);
-      return;
-    }
-    const replitDomain = process.env["REPLIT_DEV_DOMAIN"];
-    const originHost = (() => { try { return new URL(origin).hostname; } catch { return ""; } })();
-    if (
-      (replitDomain && (originHost === replitDomain || originHost.endsWith(`.${replitDomain}`))) ||
-      allowedOrigins.includes(origin)
-    ) {
-      callback(null, true);
-    } else {
-      callback(null, false);
-    }
-  },
-}));
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY,
-    ),
-  })),
-);
 
 app.use("/api", router);
 
