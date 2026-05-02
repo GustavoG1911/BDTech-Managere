@@ -7,12 +7,14 @@ import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/
 
 const router = Router();
 
+const numericField = z.union([z.string(), z.number()]).optional().nullable();
+
 const dealWriteSchema = z.object({
   clientName: z.string(),
   operation: z.string().optional(),
   closingDate: z.string().optional(),
-  implantationValue: z.string().optional(),
-  monthlyValue: z.string().optional(),
+  implantationValue: numericField,
+  monthlyValue: numericField,
   isImplantacaoPaid: z.boolean().optional().nullable(),
   isImplantacaoPaidByClient: z.boolean().optional().nullable(),
   isMensalidadePaid: z.boolean().optional().nullable(),
@@ -20,7 +22,7 @@ const dealWriteSchema = z.object({
   isPaidToUser: z.boolean().optional().nullable(),
   isUserConfirmedPayment: z.boolean().optional().nullable(),
   isInstallment: z.boolean().optional(),
-  installmentCount: z.string().optional(),
+  installmentCount: numericField,
   installmentDates: z.unknown().optional(),
   userId: z.string().optional(),
   sdrUserId: z.string().optional().nullable(),
@@ -29,12 +31,23 @@ const dealWriteSchema = z.object({
   implantacaoPaymentDate: z.string().optional().nullable(),
   implantationPaymentDate: z.string().optional().nullable(),
   firstPaymentDate: z.string().optional().nullable(),
-  commissionRateSnapshot: z.string().optional().nullable(),
-  commissionAmountSnapshot: z.string().optional().nullable(),
+  commissionRateSnapshot: numericField,
+  commissionAmountSnapshot: numericField,
   paymentStatus: z.string().optional(),
 });
 
 const dealPatchSchema = dealWriteSchema.partial().omit({ userId: true });
+
+function normalizeNumericFields(data: Record<string, unknown>): Record<string, unknown> {
+  const numFields = ["implantationValue", "monthlyValue", "installmentCount", "commissionRateSnapshot", "commissionAmountSnapshot"];
+  const result = { ...data };
+  for (const field of numFields) {
+    if (result[field] !== undefined && result[field] !== null) {
+      result[field] = String(result[field]);
+    }
+  }
+  return result;
+}
 
 router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -57,9 +70,10 @@ router.post("/", requireAuthWithRole, async (req: AuthRequest, res: Response): P
     }
     const isManager = req.userRole === "gestor" || req.userRole === "admin";
     const targetUserId = isManager && parsed.data.userId ? parsed.data.userId : req.userId;
+    const values = normalizeNumericFields({ ...parsed.data, userId: targetUserId });
     const [deal] = await db
       .insert(dealsTable)
-      .values({ ...parsed.data, userId: targetUserId })
+      .values(values as Parameters<typeof db.insert>[0] extends { values: (infer V)[] } ? V : never)
       .returning();
     res.status(201).json(deal);
   } catch (err) {
@@ -102,9 +116,10 @@ router.patch("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
+    const values = normalizeNumericFields(parsed.data as Record<string, unknown>);
     const [deal] = await db
       .update(dealsTable)
-      .set(parsed.data)
+      .set(values as Parameters<typeof db.update>[0] extends { set: (v: infer V) => unknown } ? V : never)
       .where(eq(dealsTable.id, req.params["id"] as string))
       .returning();
     res.json(deal);

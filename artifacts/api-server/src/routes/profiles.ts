@@ -23,6 +23,13 @@ const selfUpdateSchema = z.object({
   avatarUrl: z.string().url().optional().nullable(),
   position: z.string().nullable().optional(),
   jobTitle: z.string().nullable().optional(),
+}).strict();
+
+const onboardingSchema = z.object({
+  fullName: z.string().optional(),
+  displayName: z.string().optional(),
+  position: z.string().nullable().optional(),
+  jobTitle: z.string().nullable().optional(),
   commissionPercent: z.string().optional().nullable(),
   fixedSalary: z.string().optional().nullable(),
 }).strict();
@@ -60,6 +67,39 @@ router.get("/me", requireAuthWithRole, async (req: AuthRequest, res: Response): 
     res.json(profile);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch profile" });
+  }
+});
+
+router.patch("/me/onboarding", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const parsed = onboardingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
+    const safeData = stripProtectedFields(parsed.data as Record<string, unknown>);
+    const existing = await db
+      .select()
+      .from(profilesTable)
+      .where(eq(profilesTable.userId, req.userId));
+
+    if (existing.length === 0) {
+      const [profile] = await db
+        .insert(profilesTable)
+        .values({ userId: req.userId, role: "user", ...safeData })
+        .returning();
+      res.json(profile);
+      return;
+    }
+
+    const [profile] = await db
+      .update(profilesTable)
+      .set(safeData)
+      .where(eq(profilesTable.userId, req.userId))
+      .returning();
+    res.json(profile);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to save onboarding profile" });
   }
 });
 
