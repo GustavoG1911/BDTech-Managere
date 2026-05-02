@@ -46,11 +46,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRole((normalizedRole as UserRole) ?? "user");
         setPosition(profilePosition);
       } else if (res.status === 404) {
-        await fetch("/api/profiles/me", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ role: "user" }),
-        });
         setRole("user");
         setPosition("");
       } else {
