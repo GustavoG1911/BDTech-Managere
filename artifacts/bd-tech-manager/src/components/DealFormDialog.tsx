@@ -161,7 +161,7 @@ export function DealFormDialog({
       : editDeal?.userId || currentUserId;
 
     const deal: Deal = {
-      id: editDeal?.id || genId(),
+      id: editDeal?.id || "",
       closingDate: closingDate.toISOString(),
       operation,
       clientName: clientName.trim(),
