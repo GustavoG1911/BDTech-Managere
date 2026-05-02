@@ -211,8 +211,10 @@ export async function fetchPresentations(role: UserRole, userId?: string, positi
     // date = "YYYY-MM-DD" → monthKey = "YYYY-MM"
     const key = (p.date as string).slice(0, 7);
     if (!result[key]) result[key] = { bluepex: 0, opus: 0 };
-    if (p.operation === "BluePex") result[key].bluepex += p.count ?? 0;
-    else result[key].opus += p.count ?? 0;
+    // Deve existir apenas uma linha por mes/operacao. Se houver duplicatas antigas,
+    // nao somamos, porque isso infla o contador na UI.
+    if (p.operation === "BluePex") result[key].bluepex = p.count ?? 0;
+    else result[key].opus = p.count ?? 0;
   });
 
   return result;
@@ -228,23 +230,22 @@ export async function savePresentationToDb(monthKey: string, operation: "bluepex
   const dateStr = monthKey + "-01";
 
   // Busca linha canônica do mês+operação (global, ignora user_id)
-  const { data: existing, error: readErr } = await (supabase as any)
+  const { data: existingRows, error: readErr } = await (supabase as any)
     .from("presentations")
     .select("id")
     .eq("date", dateStr)
     .eq("operation", dbOperation)
-    .eq("is_test_data", isTestEnv)
-    .limit(1)
-    .maybeSingle();
+    .eq("is_test_data", isTestEnv);
 
   if (readErr) throw readErr;
 
-  if (existing?.id) {
+  if (existingRows?.length) {
+    const ids = existingRows.map((row: any) => row.id);
     // Atualiza a linha existente pelo id
     const { error: updateErr } = await (supabase as any)
       .from("presentations")
       .update({ count })
-      .eq("id", existing.id);
+      .in("id", ids);
     if (updateErr) throw updateErr;
   } else {
     // Insere nova linha para este mês+operação
