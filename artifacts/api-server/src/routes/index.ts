@@ -6,6 +6,8 @@ import presentationsRouter from "./presentations";
 import notificationsRouter from "./notifications";
 import commissionPaymentsRouter from "./commissionPayments";
 import salaryPaymentsRouter from "./salaryPayments";
+import invitationsRouter from "./invitations";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -16,5 +18,7 @@ router.use("/presentations", presentationsRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/commission-payments", commissionPaymentsRouter);
 router.use("/salary-payments", salaryPaymentsRouter);
+router.use("/invitations", invitationsRouter);
+router.use("/admin", adminRouter);
 
 export default router;

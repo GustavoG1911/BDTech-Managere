@@ -23,8 +23,14 @@ import {
 import { toast } from "sonner";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useAppData } from "@/hooks/useAppData";
-const seedHistoricalData = async () => { throw new Error("Seed funcionalidade desativada"); };
-const clearTestData = async () => { throw new Error("Clear funcionalidade desativada"); };
+const seedHistoricalData = async () => {
+  const res = await fetch("/api/admin/seed", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || "Erro ao popular banco"); }
+};
+const clearTestData = async () => {
+  const res = await fetch("/api/admin/clear", { method: "POST" });
+  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || "Erro ao limpar dados"); }
+};
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 
 const POSITION_OPTIONS = ["SDR", "Executivo de Negócios", "Diretor"] as const;
@@ -343,7 +349,7 @@ function InvitesTab() {
   const loadInvites = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/profiles");
+      const res = await fetch("/api/invitations");
       if (res.ok) {
         const data = await res.json();
         setInvites(data || []);
@@ -371,9 +377,31 @@ function InvitesTab() {
     }
 
     setSending(true);
-    toast.info("Funcionalidade de convite por e-mail não disponível nesta versão. Adicione o usuário manualmente via gestão de equipe.");
-    setSending(false);
-    setForm({ ...form, email: "" });
+    try {
+      const res = await fetch("/api/invitations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          position: form.position,
+          role: "user",
+          fixedSalary: Number(form.fixed_salary || 0),
+          commissionPercent: Math.round(Number(form.commission_percent || 0)),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Erro" }));
+        toast.error("Erro ao salvar convite: " + (err.error || ""));
+        return;
+      }
+      setForm({ ...form, email: "" });
+      await loadInvites();
+      toast.success("Convite registrado! Compartilhe o link do sistema com o convidado para que ele acesse pelo Clerk.");
+    } catch {
+      toast.error("Erro ao enviar convite.");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
