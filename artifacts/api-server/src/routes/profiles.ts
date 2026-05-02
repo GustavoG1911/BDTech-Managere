@@ -21,7 +21,6 @@ const selfUpdateSchema = z.object({
   fullName: z.string().optional(),
   displayName: z.string().optional(),
   avatarUrl: z.string().url().optional().nullable(),
-  position: z.string().nullable().optional(),
   jobTitle: z.string().nullable().optional(),
 }).strict();
 
