@@ -1,10 +1,28 @@
 import { Router, Response } from "express";
+import { z } from "zod";
 import { db } from "@workspace/db";
 import { salaryPaymentsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
+
+const salaryPaymentWriteSchema = z.object({
+  userId: z.string(),
+  amount: z.string(),
+  referenceMonth: z.string(),
+  expectedPaymentDate: z.string().optional().nullable(),
+  paymentDate: z.string().optional().nullable(),
+  isPaidByGestor: z.boolean().optional(),
+});
+
+const salaryPaymentPatchSchema = z.object({
+  amount: z.string().optional(),
+  referenceMonth: z.string().optional(),
+  expectedPaymentDate: z.string().optional().nullable(),
+  paymentDate: z.string().optional().nullable(),
+  isPaidByGestor: z.boolean().optional(),
+});
 
 router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -13,11 +31,9 @@ router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Pr
 
     let rows;
     if (isManager) {
-      if (filterUserId) {
-        rows = await db.select().from(salaryPaymentsTable).where(eq(salaryPaymentsTable.userId, filterUserId));
-      } else {
-        rows = await db.select().from(salaryPaymentsTable);
-      }
+      rows = filterUserId
+        ? await db.select().from(salaryPaymentsTable).where(eq(salaryPaymentsTable.userId, filterUserId))
+        : await db.select().from(salaryPaymentsTable);
     } else {
       rows = await db.select().from(salaryPaymentsTable).where(eq(salaryPaymentsTable.userId, req.userId));
     }
@@ -29,9 +45,14 @@ router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Pr
 
 router.post("/", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const parsed = salaryPaymentWriteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
     const [row] = await db
       .insert(salaryPaymentsTable)
-      .values(req.body)
+      .values(parsed.data)
       .returning();
     res.status(201).json(row);
   } catch (err) {
@@ -58,7 +79,10 @@ router.patch("/:id/confirm", requireAuthWithRole, async (req: AuthRequest, res: 
     const [row] = await db
       .update(salaryPaymentsTable)
       .set({ confirmedByUserAt: now, rejectedByUserAt: null })
-      .where(and(eq(salaryPaymentsTable.id, req.params["id"] as string), eq(salaryPaymentsTable.userId, existing.userId)))
+      .where(and(
+        eq(salaryPaymentsTable.id, req.params["id"] as string),
+        eq(salaryPaymentsTable.userId, existing.userId)
+      ))
       .returning();
     res.json(row);
   } catch (err) {
@@ -68,9 +92,14 @@ router.patch("/:id/confirm", requireAuthWithRole, async (req: AuthRequest, res: 
 
 router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const parsed = salaryPaymentPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
     const [row] = await db
       .update(salaryPaymentsTable)
-      .set(req.body)
+      .set(parsed.data)
       .where(eq(salaryPaymentsTable.id, req.params["id"] as string))
       .returning();
     if (!row) {
