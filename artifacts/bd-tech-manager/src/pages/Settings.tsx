@@ -187,6 +187,7 @@ function ProfileTab() {
   const { user, role: currentUserRole, position: currentPosition, refreshProfile } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [profileId, setProfileId] = useState<string | null>(null);
   const [form, setForm] = useState({
     full_name: "",
     job_title: "",
@@ -201,6 +202,7 @@ function ProfileTab() {
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (data) {
+          setProfileId(data.id || null);
           setForm({
             full_name: data.fullName || "",
             job_title: data.jobTitle || (pureAdmin ? "Administrador do Sistema" : ""),
@@ -222,28 +224,35 @@ function ProfileTab() {
 
     const normalizedPosition = form.position === "none" ? null : form.position;
     const normalizedRole = normalizeRoleForPosition(form.role, normalizedPosition);
-    const updateData: any = {
-      fullName: form.full_name.trim(),
-      jobTitle: form.job_title.trim() || (normalizedPosition || "Administrador do Sistema"),
-      position: normalizedPosition,
-    };
-
-    if (currentUserRole === "admin") {
-      updateData.role = normalizedRole;
-    }
 
     setSaving(true);
     try {
       const res = await fetch("/api/profiles/me", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updateData),
+        body: JSON.stringify({
+          fullName: form.full_name.trim(),
+          jobTitle: form.job_title.trim() || (normalizedPosition || "Administrador do Sistema"),
+          position: normalizedPosition,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Erro" }));
         toast.error("Erro ao salvar: " + (err.error || ""));
         return;
       }
+
+      if (currentUserRole === "admin" && profileId) {
+        const roleRes = await fetch(`/api/profiles/${profileId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: normalizedRole }),
+        });
+        if (!roleRes.ok) {
+          toast.error("Perfil salvo, mas falha ao atualizar nível de acesso.");
+        }
+      }
+
       await refreshProfile();
       toast.success("Perfil atualizado!");
     } catch {

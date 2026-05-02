@@ -7,7 +7,7 @@ import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/
 
 const router = Router();
 
-const PROTECTED_FIELDS = ["userId", "isTestData", "isSandbox", "id", "createdAt", "updatedAt"] as const;
+const PROTECTED_FIELDS = ["role", "userId", "isTestData", "isSandbox", "id", "createdAt", "updatedAt"] as const;
 
 function stripProtectedFields(body: Record<string, unknown>): Record<string, unknown> {
   const safe = { ...body };
@@ -23,7 +23,6 @@ const selfUpdateSchema = z.object({
   avatarUrl: z.string().url().optional().nullable(),
   position: z.string().nullable().optional(),
   jobTitle: z.string().nullable().optional(),
-  role: z.enum(["user", "gestor", "admin"]).optional(),
   commissionPercent: z.string().optional().nullable(),
   fixedSalary: z.string().optional().nullable(),
 }).strict();
@@ -71,6 +70,7 @@ router.patch("/me", requireAuthWithRole, async (req: AuthRequest, res: Response)
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
+    const safeData = stripProtectedFields(parsed.data as Record<string, unknown>);
     const existing = await db
       .select()
       .from(profilesTable)
@@ -79,19 +79,15 @@ router.patch("/me", requireAuthWithRole, async (req: AuthRequest, res: Response)
     if (existing.length === 0) {
       const [profile] = await db
         .insert(profilesTable)
-        .values({ userId: req.userId, ...parsed.data })
+        .values({ userId: req.userId, role: "user", ...safeData })
         .returning();
       res.json(profile);
       return;
     }
 
-    const updateData: Record<string, unknown> = { ...parsed.data };
-    if (req.userRole !== "admin") {
-      delete updateData["role"];
-    }
     const [profile] = await db
       .update(profilesTable)
-      .set(updateData)
+      .set(safeData)
       .where(eq(profilesTable.userId, req.userId))
       .returning();
     res.json(profile);
@@ -107,7 +103,7 @@ router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
-    const safeBody = stripProtectedFields(parsed.data as Record<string, unknown>);
+    const safeBody = { ...parsed.data };
     const [profile] = await db
       .update(profilesTable)
       .set(safeBody)
