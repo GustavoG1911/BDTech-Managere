@@ -2,7 +2,7 @@ import { Router, Response } from "express";
 import { z } from "zod";
 import { db } from "@workspace/db";
 import { commissionPaymentsTable } from "@workspace/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { requireAuthWithRole, requireGestor, isManagerLevel, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
@@ -67,11 +67,15 @@ router.post("/upsert", requireAuthWithRole, requireGestor, async (req: AuthReque
     }
     const { dealId, component, competenceMonth, amount, recipientUserId, installmentIndex } = parsed.data;
 
+    const recipientCondition = recipientUserId != null
+      ? eq(commissionPaymentsTable.recipientUserId, recipientUserId)
+      : isNull(commissionPaymentsTable.recipientUserId);
+
     const whereConditions = [
       eq(commissionPaymentsTable.dealId, dealId),
       eq(commissionPaymentsTable.component, component),
       eq(commissionPaymentsTable.competenceMonth, competenceMonth),
-      eq(commissionPaymentsTable.recipientUserId, recipientUserId ?? ""),
+      recipientCondition,
     ];
     if (installmentIndex != null) {
       whereConditions.push(eq(commissionPaymentsTable.installmentIndex, installmentIndex));
