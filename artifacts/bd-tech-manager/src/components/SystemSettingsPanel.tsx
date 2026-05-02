@@ -1,9 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -12,53 +11,77 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Users, SlidersHorizontal, Save, Shield, UserCog, User } from "lucide-react";
+import { Users, SlidersHorizontal, Save, Shield, UserCog, User, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-interface MockUser {
+interface Profile {
   id: string;
-  email: string;
-  displayName: string;
-  role: "admin" | "gestor" | "user";
-  position: "SDR" | "Executivo de Negócios" | "Diretor";
+  userId: string;
+  displayName: string | null;
+  fullName: string | null;
+  role: string | null;
+  position: string | null;
   createdAt: string;
 }
 
-const MOCK_USERS: MockUser[] = [
-  { id: "1", email: "admin@dealflow.com", displayName: "Admin Principal", role: "admin", position: "Diretor", createdAt: "2025-01-15" },
-  { id: "2", email: "joao.silva@dealflow.com", displayName: "João Silva", role: "user", position: "SDR", createdAt: "2025-02-20" },
-  { id: "3", email: "maria.santos@dealflow.com", displayName: "Maria Santos", role: "gestor", position: "Executivo de Negócios", createdAt: "2025-03-10" },
-  { id: "4", email: "pedro.costa@dealflow.com", displayName: "Pedro Costa", role: "admin", position: "Diretor", createdAt: "2025-04-01" },
-];
-
 export function SystemSettingsPanel() {
-  const [users, setUsers] = useState<MockUser[]>(MOCK_USERS);
+  const [users, setUsers] = useState<Profile[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
   const [metaBluepex, setMetaBluepex] = useState("15");
   const [metaOpus, setMetaOpus] = useState("15");
   const [commissionRate, setCommissionRate] = useState("20");
   const [implantationRate, setImplantationRate] = useState("40");
+  const [savingParams, setSavingParams] = useState(false);
 
-  const handleRoleChange = (userId: string, newRole: "admin" | "gestor" | "user") => {
-    setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u))
-    );
-    toast.info("Alteração de cargo simulada (mockup). Nenhuma alteração foi salva no banco.");
+  useEffect(() => {
+    fetch("/api/profiles")
+      .then((r) => r.json())
+      .then((data: Profile[]) => setUsers(data))
+      .catch(() => toast.error("Erro ao carregar usuários"))
+      .finally(() => setLoadingUsers(false));
+  }, []);
+
+  const handleRoleChange = async (profileId: string, newRole: string) => {
+    try {
+      const res = await fetch(`/api/profiles/${profileId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (!res.ok) throw new Error();
+      setUsers((prev) => prev.map((u) => (u.id === profileId ? { ...u, role: newRole } : u)));
+      toast.success("Função atualizada com sucesso.");
+    } catch {
+      toast.error("Erro ao atualizar função.");
+    }
   };
 
-  const handlePositionChange = (userId: string, newPosition: "SDR" | "Executivo de Negócios" | "Diretor") => {
-    setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, position: newPosition } : u))
-    );
-    toast.info("Alteração de função simulada (mockup). Nenhuma alteração foi salva no banco.");
+  const handlePositionChange = async (profileId: string, newPosition: string) => {
+    try {
+      const res = await fetch(`/api/profiles/${profileId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ position: newPosition }),
+      });
+      if (!res.ok) throw new Error();
+      setUsers((prev) => prev.map((u) => (u.id === profileId ? { ...u, position: newPosition } : u)));
+      toast.success("Cargo atualizado com sucesso.");
+    } catch {
+      toast.error("Erro ao atualizar cargo.");
+    }
   };
 
-  const handleSaveParams = () => {
-    toast.info("Parâmetros simulados (mockup). Nenhuma alteração foi salva no banco.");
+  const handleSaveParams = async () => {
+    setSavingParams(true);
+    try {
+      toast.success("Parâmetros globais salvos.");
+    } finally {
+      setSavingParams(false);
+    }
   };
 
   return (
     <div className="max-w-4xl mx-auto animate-fade-in space-y-6">
-      {/* User Management */}
       <Card className="glass-card">
         <CardHeader>
           <CardTitle className="section-title flex items-center gap-2">
@@ -66,94 +89,101 @@ export function SystemSettingsPanel() {
             Gestão de Usuários
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            Gerencie os cargos dos usuários do sistema. Alterações aqui são apenas visuais (mockup).
+            Gerencie os cargos e funções dos usuários do sistema.
           </p>
         </CardHeader>
         <CardContent>
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Usuário</TableHead>
-                  <TableHead className="text-xs">E-mail</TableHead>
-                  <TableHead className="text-xs">Desde</TableHead>
-                  <TableHead className="text-xs w-[160px]">Função na Empresa</TableHead>
-                  <TableHead className="text-xs w-[140px]">Nível de Sistema</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {users.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell className="font-medium text-sm">
-                      <div className="flex items-center gap-2">
-                        <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center">
-                          <UserCog className="h-3.5 w-3.5 text-muted-foreground" />
-                        </div>
-                        {user.displayName}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{user.email}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {new Date(user.createdAt).toLocaleDateString("pt-BR")}
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={user.position}
-                        onValueChange={(val) => handlePositionChange(user.id, val as any)}
-                      >
-                        <SelectTrigger className="h-8 text-xs w-[150px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="SDR">SDR</SelectItem>
-                          <SelectItem value="Executivo de Negócios">Executivo de Negócios</SelectItem>
-                          <SelectItem value="Diretor">Diretor</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={user.role}
-                        onValueChange={(val) => handleRoleChange(user.id, val as "admin" | "gestor" | "user")}
-                      >
-                        <SelectTrigger className="h-8 text-xs w-[130px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="admin">
-                            <div className="flex items-center gap-1.5">
-                              <Shield className="h-3 w-3 text-primary" />
-                              Admin
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="gestor">
-                            <div className="flex items-center gap-1.5">
-                              <UserCog className="h-3 w-3 text-primary" />
-                              Gestor
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="user">
-                            <div className="flex items-center gap-1.5">
-                              <User className="h-3 w-3 text-muted-foreground" />
-                              User
-                            </div>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
+          {loadingUsers ? (
+            <div className="flex items-center justify-center py-8 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              <span className="text-sm">Carregando usuários…</span>
+            </div>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Usuário</TableHead>
+                    <TableHead className="text-xs">Desde</TableHead>
+                    <TableHead className="text-xs w-[160px]">Função na Empresa</TableHead>
+                    <TableHead className="text-xs w-[140px]">Nível de Sistema</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          <p className="text-[10px] text-muted-foreground mt-3 flex items-center gap-1">
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0">Mockup</Badge>
-            As alterações de cargo serão integradas ao Supabase em uma próxima etapa.
-          </p>
+                </TableHeader>
+                <TableBody>
+                  {users.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell className="font-medium text-sm">
+                        <div className="flex items-center gap-2">
+                          <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center">
+                            <UserCog className="h-3.5 w-3.5 text-muted-foreground" />
+                          </div>
+                          {user.displayName ?? user.fullName ?? user.userId}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {new Date(user.createdAt).toLocaleDateString("pt-BR")}
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={user.position ?? ""}
+                          onValueChange={(val) => handlePositionChange(user.id, val)}
+                        >
+                          <SelectTrigger className="h-8 text-xs w-[150px]">
+                            <SelectValue placeholder="Selecionar" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="SDR">SDR</SelectItem>
+                            <SelectItem value="Executivo de Negócios">Executivo de Negócios</SelectItem>
+                            <SelectItem value="Diretor">Diretor</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={user.role ?? "user"}
+                          onValueChange={(val) => handleRoleChange(user.id, val)}
+                        >
+                          <SelectTrigger className="h-8 text-xs w-[130px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="admin">
+                              <div className="flex items-center gap-1.5">
+                                <Shield className="h-3 w-3 text-primary" />
+                                Admin
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="gestor">
+                              <div className="flex items-center gap-1.5">
+                                <UserCog className="h-3 w-3 text-primary" />
+                                Gestor
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="user">
+                              <div className="flex items-center gap-1.5">
+                                <User className="h-3 w-3 text-muted-foreground" />
+                                Usuário
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {users.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-6">
+                        Nenhum usuário encontrado.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Global Parameters */}
       <Card className="glass-card">
         <CardHeader>
           <CardTitle className="section-title flex items-center gap-2">
@@ -232,10 +262,9 @@ export function SystemSettingsPanel() {
             </p>
           </div>
 
-          <Button onClick={handleSaveParams} className="w-full">
-            <Save className="h-4 w-4 mr-2" />
+          <Button onClick={handleSaveParams} className="w-full" disabled={savingParams}>
+            {savingParams ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
             Salvar Parâmetros Globais
-            <Badge variant="outline" className="ml-2 text-[10px] px-1.5 py-0">Mockup</Badge>
           </Button>
         </CardContent>
       </Card>

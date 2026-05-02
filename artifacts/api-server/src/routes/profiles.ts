@@ -21,8 +21,10 @@ const selfUpdateSchema = z.object({
   fullName: z.string().optional(),
   displayName: z.string().optional(),
   avatarUrl: z.string().url().optional().nullable(),
-  position: z.string().optional(),
-  jobTitle: z.string().optional(),
+  position: z.string().optional().nullable(),
+  jobTitle: z.string().optional().nullable(),
+  commissionPercent: z.string().optional().nullable(),
+  fixedSalary: z.string().optional().nullable(),
 }).strict();
 
 const gestorUpdateSchema = z.object({
