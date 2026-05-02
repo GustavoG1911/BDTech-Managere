@@ -13,7 +13,6 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
   const [superMeta, setSuperMeta] = useState<MonthlySuperMeta>(getSuperMeta);
   const [adjustments, setAdjustments] = useState<ReceivableAdjustments>(getAdjustments);
 
-  // ─── Carga inicial completa (mostra loading) ──────────────────────────────
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
@@ -25,7 +24,6 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
       ]);
       setDeals(dealsData);
       setPresentations(presData);
-      // DB always wins over localStorage for both commissionRate and fixedSalary
       setSettings((prev) => {
         const next = { ...prev };
         if (commRate !== null) next.commissionRate = commRate;
@@ -47,7 +45,6 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
     loadData();
   }, [loadData]);
 
-  // ─── Refresh silencioso (sem spinner) — usado pelo Realtime ──────────────
   const silentRefreshDeals = useCallback(async () => {
     try {
       const data = await fetchDeals(role, userId, position);
@@ -66,11 +63,9 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
     }
   }, [role, userId, position]);
 
-  // ─── Timers de debounce para não refazer fetch a cada evento ─────────────
   const dealsTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const presTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // ─── Polling — sincronização multi-usuário ────────────────────────────────
   useEffect(() => {
     if (!userId) return;
 
@@ -86,7 +81,6 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
     };
   }, [userId, silentRefreshDeals, silentRefreshPresentations]);
 
-  // ─── Mutações ─────────────────────────────────────────────────────────────
   const addOrUpdateDeal = useCallback(async (deal: Deal) => {
     try {
       await upsertDeal(deal);
@@ -115,9 +109,6 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
     }
     try {
       await savePresentationToDb(monthKey, operation, count, userId);
-      // Atualiza o estado local imediatamente após o save (o Realtime vai
-      // notificar os demais usuários; o optimisticPresentations em Index.tsx
-      // já garantiu a UI local sem flickering)
       const updatedData = await fetchPresentations(role, userId, position);
       setPresentations(updatedData);
     } catch (err: unknown) {
@@ -129,7 +120,6 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
   const updateSettings = useCallback(async (newSettings: AppSettings) => {
     saveSettings(newSettings);
     setSettings(newSettings);
-    // SDR não pode auto-editar comissão e salário — apenas o gestor define via Team tab
     if (userId && position !== "SDR") {
       try {
         await Promise.all([
