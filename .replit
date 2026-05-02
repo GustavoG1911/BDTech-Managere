@@ -6,3 +6,7 @@ runButton = "Project"
 [[ports]]
 localPort = 20963
 externalPort = 80
+
+[[ports]]
+localPort = 23636
+externalPort = 3000
