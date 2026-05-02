@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, UserRole } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Save, User } from "lucide-react";
 import { InfoHint } from "@/components/InfoHint";
@@ -16,11 +16,11 @@ const CARGO_OPTIONS = [
   { value: "SDR", label: "SDR" },
 ] as const;
 
-interface ProfileData {
-  full_name: string;
+interface ProfileFormData {
+  fullName: string;
   cargo: string;
-  fixed_salary: number;
-  commission_percent: number;
+  fixedSalary: number;
+  commissionPercent: number;
 }
 
 interface OnboardingModalProps {
@@ -28,9 +28,18 @@ interface OnboardingModalProps {
   onClose?: () => void;
 }
 
-function isProfileComplete(profile: any, role: string) {
+interface ApiProfile {
+  role?: string;
+  position?: string | null;
+  fullName?: string | null;
+  displayName?: string | null;
+  fixedSalary?: string | number | null;
+  commissionPercent?: string | number | null;
+}
+
+function isProfileComplete(profile: ApiProfile | null, role: string) {
   if (isPureSystemAdmin(role, profile?.position)) return true;
-  if (!profile?.full_name?.trim()) return false;
+  if (!profile?.fullName?.trim()) return false;
   return isOperationalPosition(profile?.position);
 }
 
@@ -40,11 +49,11 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
   const [isForced, setIsForced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [profileRole, setProfileRole] = useState(role);
-  const [form, setForm] = useState<ProfileData>({
-    full_name: "",
+  const [form, setForm] = useState<ProfileFormData>({
+    fullName: "",
     cargo: "",
-    fixed_salary: 0,
-    commission_percent: 20,
+    fixedSalary: 0,
+    commissionPercent: 20,
   });
 
   const pureAdmin = isPureSystemAdmin(profileRole || role, form.cargo || position);
@@ -70,13 +79,13 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
     }
   }, [forceOpen]);
 
-  const hydrateForm = (profile: any) => {
-    setProfileRole(profile?.role || role);
+  const hydrateForm = (profile: ApiProfile) => {
+    setProfileRole((profile?.role as UserRole) || role);
     setForm({
-      full_name: profile?.full_name || profile?.display_name || "",
+      fullName: profile?.fullName || profile?.displayName || "",
       cargo: profile?.position || "",
-      fixed_salary: Number(profile?.fixed_salary || 0),
-      commission_percent: Number(profile?.commission_percent ?? 20),
+      fixedSalary: Number(profile?.fixedSalary || 0),
+      commissionPercent: Number(profile?.commissionPercent ?? 20),
     });
   };
 
@@ -84,7 +93,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
     try {
       const res = await fetch("/api/profiles/me");
       if (res.ok) {
-        const data = await res.json();
+        const data: ApiProfile = await res.json();
         hydrateForm(data);
         if (!isProfileComplete(data, data.role || role)) {
           setIsForced(true);
@@ -105,7 +114,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
     try {
       const res = await fetch("/api/profiles/me");
       if (res.ok) {
-        const data = await res.json();
+        const data: ApiProfile = await res.json();
         hydrateForm(data);
       }
     } catch { /* ignore */ }
@@ -115,22 +124,22 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
     if (!user) return;
 
     const selectedCargo = availableCargoOptions.find((cargo) => cargo.value === form.cargo);
-    if (!form.full_name.trim() || (!pureAdmin && !selectedCargo)) {
+    if (!form.fullName.trim() || (!pureAdmin && !selectedCargo)) {
       toast.error(pureAdmin ? "Preencha seu nome completo para continuar." : "Preencha nome completo e cargo para continuar.");
       return;
     }
 
-    if (form.fixed_salary < 0) {
+    if (form.fixedSalary < 0) {
       toast.error("O salário fixo não pode ser negativo.");
       return;
     }
 
-    if (form.commission_percent < 0 || form.commission_percent > 100) {
+    if (form.commissionPercent < 0 || form.commissionPercent > 100) {
       toast.error("A comissão deve ficar entre 0% e 100%.");
       return;
     }
 
-    const displayName = form.full_name.trim().split(/\s+/).slice(0, 2).join(" ");
+    const displayName = form.fullName.trim().split(/\s+/).slice(0, 2).join(" ");
 
     setSaving(true);
     try {
@@ -138,12 +147,12 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fullName: form.full_name.trim(),
+          fullName: form.fullName.trim(),
           displayName,
           position: selectedCargo?.value ?? null,
           jobTitle: selectedCargo?.label ?? "Administrador do Sistema",
-          fixedSalary: String(form.fixed_salary),
-          commissionPercent: String(Math.round(form.commission_percent)),
+          fixedSalary: String(form.fixedSalary),
+          commissionPercent: String(Math.round(form.commissionPercent)),
         }),
       });
 
@@ -200,8 +209,8 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
               <InfoHint text="Esse nome aparece em filtros, pagamentos, notificações e relatórios." />
             </div>
             <Input
-              value={form.full_name}
-              onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+              value={form.fullName}
+              onChange={(e) => setForm({ ...form, fullName: e.target.value })}
               placeholder="Seu nome completo"
               autoComplete="name"
             />
@@ -238,8 +247,8 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
                 <Input
                   type="number"
                   min="0"
-                  value={form.fixed_salary}
-                  onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
+                  value={form.fixedSalary}
+                  onChange={(e) => setForm({ ...form, fixedSalary: Number(e.target.value) })}
                   className="font-mono"
                 />
               </div>
@@ -252,8 +261,8 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
                   type="number"
                   min="0"
                   max="100"
-                  value={form.commission_percent}
-                  onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
+                  value={form.commissionPercent}
+                  onChange={(e) => setForm({ ...form, commissionPercent: Number(e.target.value) })}
                   className="font-mono"
                 />
               </div>
