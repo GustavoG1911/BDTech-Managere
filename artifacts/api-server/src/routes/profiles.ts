@@ -17,10 +17,6 @@ function stripProtectedFields(body: Record<string, unknown>): Record<string, unk
   return safe;
 }
 
-function normalizedRoleForPosition(position: string | null | undefined): "gestor" | "user" {
-  return position === "Diretor" ? "gestor" : "user";
-}
-
 const selfUpdateSchema = z.object({
   fullName: z.string().optional(),
   displayName: z.string().optional(),
@@ -81,7 +77,6 @@ router.patch("/me/onboarding", requireAuthWithRole, async (req: AuthRequest, res
       return;
     }
     const safeData = stripProtectedFields(parsed.data as Record<string, unknown>);
-    const derivedRole = normalizedRoleForPosition(parsed.data.position);
 
     const existing = await db
       .select()
@@ -91,19 +86,15 @@ router.patch("/me/onboarding", requireAuthWithRole, async (req: AuthRequest, res
     if (existing.length === 0) {
       const [profile] = await db
         .insert(profilesTable)
-        .values({ userId: req.userId, role: derivedRole, ...safeData })
+        .values({ userId: req.userId, role: "user", ...safeData })
         .returning();
       res.json(profile);
       return;
     }
 
-    const updateData: Record<string, unknown> = { ...safeData };
-    if (parsed.data.position !== undefined) {
-      updateData.role = derivedRole;
-    }
     const [profile] = await db
       .update(profilesTable)
-      .set(updateData)
+      .set(safeData)
       .where(eq(profilesTable.userId, req.userId))
       .returning();
     res.json(profile);
@@ -152,13 +143,10 @@ router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
-    const safeBody: Record<string, unknown> = { ...parsed.data };
+    const safeBody = { ...parsed.data };
     if (safeBody.role === "admin" && req.userRole !== "admin") {
       res.status(403).json({ error: "Only admins can elevate accounts to admin role" });
       return;
-    }
-    if (parsed.data.position !== undefined && parsed.data.role === undefined) {
-      safeBody.role = normalizedRoleForPosition(parsed.data.position);
     }
     const [profile] = await db
       .update(profilesTable)

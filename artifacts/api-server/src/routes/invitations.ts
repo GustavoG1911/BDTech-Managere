@@ -35,6 +35,10 @@ router.post("/", requireAuthWithRole, requireGestor, async (req: AuthRequest, re
       return;
     }
     const { email, position, role, fixedSalary, commissionPercent } = parsed.data;
+    if (role === "admin" && req.userRole !== "admin") {
+      res.status(403).json({ error: "Only admins can invite with admin role" });
+      return;
+    }
     const [row] = await db
       .insert(userInvitationsTable)
       .values({
