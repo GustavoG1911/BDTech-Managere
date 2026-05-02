@@ -78,16 +78,15 @@ router.patch("/me/onboarding", requireAuthWithRole, async (req: AuthRequest, res
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
-    const safeData = stripProtectedFields(parsed.data as Record<string, unknown>);
 
     const existing = await db
       .select()
       .from(profilesTable)
       .where(eq(profilesTable.userId, req.userId));
 
-    const bootstrapRole = parsed.data.position === "Diretor" ? "gestor" : "user";
-
     if (existing.length === 0) {
+      const safeData = stripProtectedFields(parsed.data as Record<string, unknown>);
+      const bootstrapRole = parsed.data.position === "Diretor" ? "gestor" : "user";
       const [profile] = await db
         .insert(profilesTable)
         .values({ userId: req.userId, role: bootstrapRole, ...safeData })
@@ -96,6 +95,8 @@ router.patch("/me/onboarding", requireAuthWithRole, async (req: AuthRequest, res
       return;
     }
 
+    const { position: _position, ...nonPositionData } = parsed.data;
+    const safeData = stripProtectedFields(nonPositionData as Record<string, unknown>);
     const [profile] = await db
       .update(profilesTable)
       .set(safeData)
