@@ -57,13 +57,12 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
   });
 
   const pureAdmin = isPureSystemAdmin(profileRole || role, form.cargo || position);
-  const canChooseDirector = role === "admin" || role === "gestor" || position === "Diretor";
   const lockedOperationalCargo = isOperationalPosition(position) || isOperationalPosition(form.cargo);
   const availableCargoOptions = useMemo(
     () => lockedOperationalCargo && form.cargo
       ? CARGO_OPTIONS.filter((cargo) => cargo.value === form.cargo)
-      : CARGO_OPTIONS.filter((cargo) => canChooseDirector || cargo.value !== "Diretor"),
-    [canChooseDirector, lockedOperationalCargo, form.cargo]
+      : CARGO_OPTIONS,
+    [lockedOperationalCargo, form.cargo]
   );
 
   useEffect(() => {
@@ -237,7 +236,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
             </div>
           )}
 
-          {canChooseDirector && !pureAdmin && (
+          {!pureAdmin && (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1.5">
