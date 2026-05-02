@@ -47,8 +47,9 @@ app.use(cors({
       return;
     }
     const replitDomain = process.env["REPLIT_DEV_DOMAIN"];
+    const originHost = (() => { try { return new URL(origin).hostname; } catch { return ""; } })();
     if (
-      (replitDomain && origin.includes(replitDomain)) ||
+      (replitDomain && (originHost === replitDomain || originHost.endsWith(`.${replitDomain}`))) ||
       allowedOrigins.includes(origin)
     ) {
       callback(null, true);

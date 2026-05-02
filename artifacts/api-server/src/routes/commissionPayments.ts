@@ -228,14 +228,22 @@ router.patch("/:id/reject", requireAuthWithRole, async (req: AuthRequest, res: R
 
 router.post("/", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const parsed = upsertSchema.omit({ dealId: true, component: true, competenceMonth: true, amount: true }).safeParse(req.body);
+    const parsed = upsertSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
+    const { dealId, component, competenceMonth, amount, recipientUserId, installmentIndex } = parsed.data;
     const [row] = await db
       .insert(commissionPaymentsTable)
-      .values(req.body)
+      .values({
+        dealId,
+        component,
+        competenceMonth,
+        amount: String(amount),
+        recipientUserId: recipientUserId ?? null,
+        installmentIndex: installmentIndex ?? null,
+      })
       .returning();
     res.status(201).json(row);
   } catch (err) {
