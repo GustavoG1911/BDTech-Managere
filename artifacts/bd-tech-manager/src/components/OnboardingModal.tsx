@@ -134,7 +134,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
 
     setSaving(true);
     try {
-      const res = await fetch("/api/profiles/me", {
+      const res = await fetch("/api/profiles/me/onboarding", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
