@@ -143,6 +143,10 @@ router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest
       return;
     }
     const safeBody = { ...parsed.data };
+    if (safeBody.role === "admin" && req.userRole !== "admin") {
+      res.status(403).json({ error: "Only admins can elevate accounts to admin role" });
+      return;
+    }
     const [profile] = await db
       .update(profilesTable)
       .set(safeBody)

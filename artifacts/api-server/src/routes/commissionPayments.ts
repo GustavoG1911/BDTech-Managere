@@ -85,10 +85,11 @@ router.post("/upsert", requireAuthWithRole, requireGestor, async (req: AuthReque
       .from(commissionPaymentsTable)
       .where(and(...whereConditions));
 
+    const now = new Date();
     if (existing.length > 0) {
       const [row] = await db
         .update(commissionPaymentsTable)
-        .set({ amount: String(amount), installmentIndex: installmentIndex ?? null })
+        .set({ amount: String(amount), installmentIndex: installmentIndex ?? null, paidByDirectorAt: now })
         .where(eq(commissionPaymentsTable.id, existing[0].id))
         .returning();
       res.json(row);
@@ -104,6 +105,7 @@ router.post("/upsert", requireAuthWithRole, requireGestor, async (req: AuthReque
         amount: String(amount),
         recipientUserId: recipientUserId ?? null,
         installmentIndex: installmentIndex ?? null,
+        paidByDirectorAt: now,
       })
       .returning();
     res.status(201).json(row);
