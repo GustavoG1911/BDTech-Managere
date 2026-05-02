@@ -1,13 +1,10 @@
-kind = "web"
-previewPath = "/api-server/"
+kind = "api"
 title = "API Server"
 version = "1.0.0"
 id = "artifacts/api-server"
-router = "path"
 
 [[services]]
 name = "api"
-paths = [ "/" ]
 localPort = 3001
 
 [services.development]
