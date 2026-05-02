@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@workspace/db";
 import { commissionPaymentsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
-import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
+import { requireAuthWithRole, requireGestor, isManagerLevel, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
@@ -46,7 +46,7 @@ router.get("/all", requireAuthWithRole, requireGestor, async (_req: AuthRequest,
 
 router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const isManager = isManagerLevel(req);
     const rows = isManager
       ? await db.select().from(commissionPaymentsTable).orderBy(commissionPaymentsTable.createdAt)
       : await db.select().from(commissionPaymentsTable)
@@ -67,15 +67,19 @@ router.post("/upsert", requireAuthWithRole, requireGestor, async (req: AuthReque
     }
     const { dealId, component, competenceMonth, amount, recipientUserId, installmentIndex } = parsed.data;
 
+    const whereConditions = [
+      eq(commissionPaymentsTable.dealId, dealId),
+      eq(commissionPaymentsTable.component, component),
+      eq(commissionPaymentsTable.competenceMonth, competenceMonth),
+      eq(commissionPaymentsTable.recipientUserId, recipientUserId ?? ""),
+    ];
+    if (installmentIndex != null) {
+      whereConditions.push(eq(commissionPaymentsTable.installmentIndex, installmentIndex));
+    }
     const existing = await db
       .select()
       .from(commissionPaymentsTable)
-      .where(and(
-        eq(commissionPaymentsTable.dealId, dealId),
-        eq(commissionPaymentsTable.component, component),
-        eq(commissionPaymentsTable.competenceMonth, competenceMonth),
-        eq(commissionPaymentsTable.recipientUserId, recipientUserId ?? "")
-      ));
+      .where(and(...whereConditions));
 
     if (existing.length > 0) {
       const [row] = await db
@@ -139,7 +143,7 @@ router.post("/confirm-by-recipient", requireAuthWithRole, async (req: AuthReques
       return;
     }
     const { dealId, recipientUserId } = parsed.data;
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const isManager = isManagerLevel(req);
     if (!isManager && recipientUserId !== req.userId) {
       res.status(403).json({ error: "Forbidden" });
       return;
@@ -172,7 +176,7 @@ router.patch("/:id/confirm", requireAuthWithRole, async (req: AuthRequest, res: 
       res.status(404).json({ error: "Commission payment not found" });
       return;
     }
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const isManager = isManagerLevel(req);
     if (!isManager && existing.recipientUserId !== req.userId) {
       res.status(403).json({ error: "Forbidden" });
       return;
@@ -200,7 +204,7 @@ router.patch("/:id/reject", requireAuthWithRole, async (req: AuthRequest, res: R
       res.status(404).json({ error: "Commission payment not found" });
       return;
     }
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const isManager = isManagerLevel(req);
     if (!isManager && existing.recipientUserId !== req.userId) {
       res.status(403).json({ error: "Forbidden" });
       return;

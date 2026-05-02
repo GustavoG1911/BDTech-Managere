@@ -2,8 +2,8 @@ import { Router, Response } from "express";
 import { z } from "zod";
 import { db } from "@workspace/db";
 import { dealsTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
-import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
+import { eq, or } from "drizzle-orm";
+import { requireAuthWithRole, isManagerLevel, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
@@ -51,10 +51,18 @@ function normalizeNumericFields(data: Record<string, unknown>): Record<string, u
 
 router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
-    const deals = isManager
-      ? await db.select().from(dealsTable).orderBy(dealsTable.createdAt)
-      : await db.select().from(dealsTable).where(eq(dealsTable.userId, req.userId)).orderBy(dealsTable.createdAt);
+    const isManager = isManagerLevel(req);
+    let deals;
+    if (isManager) {
+      deals = await db.select().from(dealsTable).orderBy(dealsTable.createdAt);
+    } else {
+      deals = await db.select().from(dealsTable)
+        .where(or(
+          eq(dealsTable.userId, req.userId),
+          eq(dealsTable.sdrUserId, req.userId)
+        ))
+        .orderBy(dealsTable.createdAt);
+    }
     res.json(deals);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch deals" });
@@ -68,12 +76,12 @@ router.post("/", requireAuthWithRole, async (req: AuthRequest, res: Response): P
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const isManager = isManagerLevel(req);
     const targetUserId = isManager && parsed.data.userId ? parsed.data.userId : req.userId;
     const values = normalizeNumericFields({ ...parsed.data, userId: targetUserId });
     const [deal] = await db
       .insert(dealsTable)
-      .values(values as Parameters<typeof db.insert>[0] extends { values: (infer V)[] } ? V : never)
+      .values(values as any)
       .returning();
     res.status(201).json(deal);
   } catch (err) {
@@ -88,8 +96,8 @@ router.get("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response):
       res.status(404).json({ error: "Deal not found" });
       return;
     }
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
-    if (!isManager && deal.userId !== req.userId) {
+    const isManager = isManagerLevel(req);
+    if (!isManager && deal.userId !== req.userId && deal.sdrUserId !== req.userId) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
@@ -106,7 +114,7 @@ router.patch("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response
       res.status(404).json({ error: "Deal not found" });
       return;
     }
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const isManager = isManagerLevel(req);
     if (!isManager && existing.userId !== req.userId) {
       res.status(403).json({ error: "Forbidden" });
       return;
@@ -119,7 +127,7 @@ router.patch("/:id", requireAuthWithRole, async (req: AuthRequest, res: Response
     const values = normalizeNumericFields(parsed.data as Record<string, unknown>);
     const [deal] = await db
       .update(dealsTable)
-      .set(values as Parameters<typeof db.update>[0] extends { set: (v: infer V) => unknown } ? V : never)
+      .set(values as any)
       .where(eq(dealsTable.id, req.params["id"] as string))
       .returning();
     res.json(deal);
@@ -135,7 +143,7 @@ router.delete("/:id", requireAuthWithRole, async (req: AuthRequest, res: Respons
       res.status(404).json({ error: "Deal not found" });
       return;
     }
-    const isManager = req.userRole === "gestor" || req.userRole === "admin";
+    const isManager = isManagerLevel(req);
     if (!isManager && existing.userId !== req.userId) {
       res.status(403).json({ error: "Forbidden" });
       return;

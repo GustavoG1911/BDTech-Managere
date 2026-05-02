@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@workspace/db";
 import { profilesTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
-import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
+import { requireAuthWithRole, requireGestor, isManagerLevel, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
 
