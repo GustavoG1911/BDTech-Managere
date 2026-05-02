@@ -53,7 +53,7 @@ router.post("/", requireAuthWithRole, requireGestor, async (req: AuthRequest, re
   }
 });
 
-router.patch("/:id/accept", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
+router.patch("/:id/accept", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const [existing] = await db
       .select()
