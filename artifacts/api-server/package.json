@@ -1,0 +1,10 @@
+{
+  "name": "@workspace/api-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo 'No API server needed - app uses Supabase directly'",
+    "build": "echo 'No API server needed - app uses Supabase directly'"
+  }
+}

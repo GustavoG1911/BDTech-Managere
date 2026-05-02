@@ -1,0 +1,10 @@
+{
+  "name": "@workspace/mockup-sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo 'No mockup sandbox active'",
+    "build": "echo 'No mockup sandbox active'"
+  }
+}
