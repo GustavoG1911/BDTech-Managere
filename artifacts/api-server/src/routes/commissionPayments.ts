@@ -1,10 +1,36 @@
 import { Router, Response } from "express";
+import { z } from "zod";
 import { db } from "@workspace/db";
 import { commissionPaymentsTable } from "@workspace/db/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
+
+const upsertSchema = z.object({
+  dealId: z.string(),
+  component: z.string(),
+  competenceMonth: z.string(),
+  amount: z.union([z.string(), z.number()]),
+  recipientUserId: z.string().optional().nullable(),
+  installmentIndex: z.number().int().optional().nullable(),
+});
+
+const clearSchema = z.object({
+  dealId: z.string(),
+  component: z.string(),
+  competenceMonth: z.string(),
+  recipientUserId: z.string().optional().nullable(),
+});
+
+const confirmByRecipientSchema = z.object({
+  dealId: z.string(),
+  recipientUserId: z.string(),
+});
+
+const patchSchema = z.object({
+  amount: z.string().optional(),
+});
 
 router.get("/all", requireAuthWithRole, requireGestor, async (_req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -21,14 +47,11 @@ router.get("/all", requireAuthWithRole, requireGestor, async (_req: AuthRequest,
 router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const isManager = req.userRole === "gestor" || req.userRole === "admin";
-    let rows;
-    if (isManager) {
-      rows = await db.select().from(commissionPaymentsTable).orderBy(commissionPaymentsTable.createdAt);
-    } else {
-      rows = await db.select().from(commissionPaymentsTable)
-        .where(eq(commissionPaymentsTable.recipientUserId, req.userId))
-        .orderBy(commissionPaymentsTable.createdAt);
-    }
+    const rows = isManager
+      ? await db.select().from(commissionPaymentsTable).orderBy(commissionPaymentsTable.createdAt)
+      : await db.select().from(commissionPaymentsTable)
+          .where(eq(commissionPaymentsTable.recipientUserId, req.userId))
+          .orderBy(commissionPaymentsTable.createdAt);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch commission payments" });
@@ -37,23 +60,22 @@ router.get("/", requireAuthWithRole, async (req: AuthRequest, res: Response): Pr
 
 router.post("/upsert", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { dealId, component, competenceMonth, amount, recipientUserId, installmentIndex } = req.body;
-    if (!dealId || !component || !competenceMonth || amount == null) {
-      res.status(400).json({ error: "Missing required fields" });
+    const parsed = upsertSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
+    const { dealId, component, competenceMonth, amount, recipientUserId, installmentIndex } = parsed.data;
 
     const existing = await db
       .select()
       .from(commissionPaymentsTable)
-      .where(
-        and(
-          eq(commissionPaymentsTable.dealId, dealId),
-          eq(commissionPaymentsTable.component, component),
-          eq(commissionPaymentsTable.competenceMonth, competenceMonth),
-          eq(commissionPaymentsTable.recipientUserId, recipientUserId ?? "")
-        )
-      );
+      .where(and(
+        eq(commissionPaymentsTable.dealId, dealId),
+        eq(commissionPaymentsTable.component, component),
+        eq(commissionPaymentsTable.competenceMonth, competenceMonth),
+        eq(commissionPaymentsTable.recipientUserId, recipientUserId ?? "")
+      ));
 
     if (existing.length > 0) {
       const [row] = await db
@@ -85,7 +107,12 @@ router.post("/upsert", requireAuthWithRole, requireGestor, async (req: AuthReque
 
 router.post("/clear", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { dealId, component, competenceMonth, recipientUserId } = req.body;
+    const parsed = clearSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
+    const { dealId, component, competenceMonth, recipientUserId } = parsed.data;
 
     const conditions: ReturnType<typeof eq>[] = [
       eq(commissionPaymentsTable.dealId, dealId),
@@ -106,18 +133,21 @@ router.post("/clear", requireAuthWithRole, requireGestor, async (req: AuthReques
 
 router.post("/confirm-by-recipient", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { dealId, recipientUserId } = req.body;
+    const parsed = confirmByRecipientSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
+    const { dealId, recipientUserId } = parsed.data;
     const now = new Date();
 
     const rows = await db
       .update(commissionPaymentsTable)
       .set({ confirmedByUserAt: now, rejectedByUserAt: null })
-      .where(
-        and(
-          eq(commissionPaymentsTable.dealId, dealId),
-          eq(commissionPaymentsTable.recipientUserId, recipientUserId)
-        )
-      )
+      .where(and(
+        eq(commissionPaymentsTable.dealId, dealId),
+        eq(commissionPaymentsTable.recipientUserId, recipientUserId)
+      ))
       .returning();
 
     res.json({ count: rows.length });
@@ -185,6 +215,11 @@ router.patch("/:id/reject", requireAuthWithRole, async (req: AuthRequest, res: R
 
 router.post("/", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const parsed = upsertSchema.omit({ dealId: true, component: true, competenceMonth: true, amount: true }).safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
     const [row] = await db
       .insert(commissionPaymentsTable)
       .values(req.body)
@@ -197,9 +232,14 @@ router.post("/", requireAuthWithRole, requireGestor, async (req: AuthRequest, re
 
 router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const parsed = patchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
     const [row] = await db
       .update(commissionPaymentsTable)
-      .set(req.body)
+      .set(parsed.data)
       .where(eq(commissionPaymentsTable.id, req.params["id"] as string))
       .returning();
     if (!row) {

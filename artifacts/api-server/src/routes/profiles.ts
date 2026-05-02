@@ -1,4 +1,5 @@
 import { Router, Response } from "express";
+import { z } from "zod";
 import { db } from "@workspace/db";
 import { profilesTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
@@ -6,7 +7,7 @@ import { requireAuthWithRole, requireGestor, AuthRequest } from "../middlewares/
 
 const router = Router();
 
-const PROTECTED_FIELDS = ["role", "isTestData", "isSandbox"] as const;
+const PROTECTED_FIELDS = ["role", "userId", "isTestData", "isSandbox", "id", "createdAt", "updatedAt"] as const;
 
 function stripProtectedFields(body: Record<string, unknown>): Record<string, unknown> {
   const safe = { ...body };
@@ -15,6 +16,24 @@ function stripProtectedFields(body: Record<string, unknown>): Record<string, unk
   }
   return safe;
 }
+
+const selfUpdateSchema = z.object({
+  fullName: z.string().optional(),
+  displayName: z.string().optional(),
+  avatarUrl: z.string().url().optional().nullable(),
+  position: z.string().optional(),
+  jobTitle: z.string().optional(),
+}).strict();
+
+const gestorUpdateSchema = z.object({
+  fullName: z.string().optional(),
+  displayName: z.string().optional(),
+  avatarUrl: z.string().url().optional().nullable(),
+  position: z.string().optional(),
+  jobTitle: z.string().optional(),
+  commissionPercent: z.string().optional().nullable(),
+  fixedSalary: z.string().optional().nullable(),
+}).strict();
 
 router.get("/", requireAuthWithRole, requireGestor, async (_req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -43,7 +62,11 @@ router.get("/me", requireAuthWithRole, async (req: AuthRequest, res: Response): 
 
 router.patch("/me", requireAuthWithRole, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const safeBody = stripProtectedFields(req.body);
+    const parsed = selfUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
     const existing = await db
       .select()
       .from(profilesTable)
@@ -52,7 +75,7 @@ router.patch("/me", requireAuthWithRole, async (req: AuthRequest, res: Response)
     if (existing.length === 0) {
       const [profile] = await db
         .insert(profilesTable)
-        .values({ userId: req.userId, ...safeBody })
+        .values({ userId: req.userId, ...parsed.data })
         .returning();
       res.json(profile);
       return;
@@ -60,7 +83,7 @@ router.patch("/me", requireAuthWithRole, async (req: AuthRequest, res: Response)
 
     const [profile] = await db
       .update(profilesTable)
-      .set(safeBody)
+      .set(parsed.data)
       .where(eq(profilesTable.userId, req.userId))
       .returning();
     res.json(profile);
@@ -71,9 +94,15 @@ router.patch("/me", requireAuthWithRole, async (req: AuthRequest, res: Response)
 
 router.patch("/:id", requireAuthWithRole, requireGestor, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const parsed = gestorUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
+    const safeBody = stripProtectedFields(parsed.data as Record<string, unknown>);
     const [profile] = await db
       .update(profilesTable)
-      .set(req.body)
+      .set(safeBody)
       .where(eq(profilesTable.id, req.params["id"] as string))
       .returning();
     if (!profile) {

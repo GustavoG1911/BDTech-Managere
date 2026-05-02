@@ -1,10 +1,18 @@
 import { Router, Response } from "express";
+import { z } from "zod";
 import { db } from "@workspace/db";
 import { notificationsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
+
+const notificationWriteSchema = z.object({
+  dealId: z.string().optional().nullable(),
+  title: z.string(),
+  message: z.string(),
+  isRead: z.boolean().optional(),
+});
 
 router.get("/", requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -21,9 +29,14 @@ router.get("/", requireAuth, async (req: AuthRequest, res: Response): Promise<vo
 
 router.post("/", requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const parsed = notificationWriteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
+      return;
+    }
     const [row] = await db
       .insert(notificationsTable)
-      .values({ userId: req.userId, ...req.body })
+      .values({ userId: req.userId, ...parsed.data })
       .returning();
     res.status(201).json(row);
   } catch (err) {
