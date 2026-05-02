@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { AppNotification, fetchNotifications, markAllNotificationsRead, markNotificationRead } from "@/lib/supabase-deals";
 
 export function useNotifications(userId?: string) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const debounceTimer = useRef<ReturnType<typeof setTimeout>>();
+  const pollTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const load = useCallback(async () => {
     if (!userId) return;
@@ -16,34 +15,11 @@ export function useNotifications(userId?: string) {
     load();
   }, [load]);
 
-  // Realtime: escuta inserções na tabela notifications
+  // Polling a cada 30s em vez de Realtime
   useEffect(() => {
     if (!userId) return;
-
-    const channel = supabase
-      .channel(`notifications-${userId.slice(0, 8)}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "notifications" },
-        () => {
-          clearTimeout(debounceTimer.current);
-          debounceTimer.current = setTimeout(load, 400);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "notifications" },
-        () => {
-          clearTimeout(debounceTimer.current);
-          debounceTimer.current = setTimeout(load, 400);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      clearTimeout(debounceTimer.current);
-      supabase.removeChannel(channel);
-    };
+    pollTimer.current = setInterval(load, 30_000);
+    return () => clearInterval(pollTimer.current);
   }, [userId, load]);
 
   const markRead = useCallback(async (id: string) => {

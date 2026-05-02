@@ -18,7 +18,6 @@ import { downloadReportPDF, printReport } from "@/lib/report";
 import { Deal, PaymentStatus } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Plus, DollarSign, TrendingUp, BadgeDollarSign, CalendarDays, FileDown, Printer, BarChart3, HelpCircle } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -76,32 +75,27 @@ export default function Index() {
 
   useEffect(() => {
     if (!position || position === "SDR") return;
-    supabase.auth.getUser().then(({ data: authData }) => {
-      const isTestEnv = authData.user?.email?.endsWith("@teste.com") || false;
-      (supabase as any)
-        .from("profiles")
-        .select("user_id, full_name, display_name, position")
-        .eq("is_test_data", isTestEnv)
-        .then(({ data }: { data: any[] | null }) => {
-          if (data) {
-            const map: any = {};
-            data.forEach(p => map[p.user_id] = p.full_name || p.display_name || "-");
-            setProfiles(map);
-            setSdrs(
+    fetch("/api/profiles")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: any[]) => {
+        if (data) {
+          const map: any = {};
+          data.forEach(p => map[p.userId] = p.fullName || p.displayName || "-");
+          setProfiles(map);
+          setSdrs(
+            data
+              .filter(p => p.position === "SDR")
+              .map(p => ({ id: p.userId, name: p.fullName || p.displayName || "SDR" }))
+          );
+          if (position === "Diretor") {
+            setExecutivos(
               data
-                .filter(p => p.position === "SDR")
-                .map(p => ({ id: p.user_id, name: p.full_name || p.display_name || "SDR" }))
+                .filter(p => p.position === "Executivo de Negócios")
+                .map(p => ({ id: p.userId, name: p.fullName || p.displayName || "Executivo" }))
             );
-            if (position === "Diretor") {
-              setExecutivos(
-                data
-                  .filter(p => p.position === "Executivo de Negócios")
-                  .map(p => ({ id: p.user_id, name: p.full_name || p.display_name || "Executivo" }))
-              );
-            }
           }
-        });
-    });
+        }
+      });
   }, [position]);
 
   useEffect(() => {

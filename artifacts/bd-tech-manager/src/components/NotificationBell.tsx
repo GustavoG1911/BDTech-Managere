@@ -1,6 +1,6 @@
 import { Bell, CheckCheck, BellDot, ExternalLink } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation } from "wouter";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -12,7 +12,7 @@ export function NotificationBell() {
   const { user } = useAuth();
   const { notifications, unreadCount, markAllRead, markRead } = useNotifications(user?.id);
   const [open, setOpen] = useState(false);
-  const navigate = useNavigate();
+  const [, navigate] = useLocation();
 
   const handleOpenChange = (isOpen: boolean) => {
     setOpen(isOpen);
@@ -21,10 +21,10 @@ export function NotificationBell() {
     }
   };
 
-  const handleViewDetails = (notifId: string, dealId?: string) => {
+  const handleViewDetails = (notifId: string, _dealId?: string) => {
     markRead(notifId);
     setOpen(false);
-    navigate("/financeiro", { state: { scrollToPending: true, dealId } });
+    navigate("/financeiro");
   };
 
   const formatTime = (createdAt: string) => {

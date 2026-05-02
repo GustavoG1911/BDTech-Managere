@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Deal, MonthlyPresentations, MonthlySuperMeta, AppSettings, ReceivableAdjustments, ReceivableAdjustment } from "@/lib/types";
 import { getSettings, saveSettings, getSuperMeta, saveSuperMeta, getAdjustments, saveAdjustments } from "@/lib/store";
 import { fetchDeals, upsertDeal, deleteDealFromDb, fetchPresentations, savePresentationToDb, fetchUserCommissionRate, saveUserCommissionRate, fetchUserFixedSalary, saveUserFixedSalary } from "@/lib/supabase-deals";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { UserRole } from "./useAuth";
 
@@ -68,57 +67,22 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
   }, [role, userId, position]);
 
   // ─── Timers de debounce para não refazer fetch a cada evento ─────────────
-  const dealsTimer = useRef<ReturnType<typeof setTimeout>>();
-  const presTimer = useRef<ReturnType<typeof setTimeout>>();
+  const dealsTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const presTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // ─── Supabase Realtime — sincronização multi-usuário ─────────────────────
+  // ─── Polling — sincronização multi-usuário ────────────────────────────────
   useEffect(() => {
     if (!userId) return;
 
-    const channelName = `sync-${userId.slice(0, 8)}`;
-    let isRealtimeActive = false;
-
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "deals" },
-        () => {
-          clearTimeout(dealsTimer.current);
-          dealsTimer.current = setTimeout(silentRefreshDeals, 400);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "presentations" },
-        () => {
-          clearTimeout(presTimer.current);
-          presTimer.current = setTimeout(silentRefreshPresentations, 400);
-        }
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          isRealtimeActive = true;
-          console.log("[Realtime] ✅ Sincronização ativa para", channelName);
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          isRealtimeActive = false;
-          console.warn("[Realtime] ⚠️ Falha na sincronização:", status, "— usando polling");
-        }
-      });
-
-    // Polling de fallback a cada 30 s — só executa se Realtime não estiver ativo
     const pollInterval = setInterval(() => {
-      if (!isRealtimeActive) {
-        silentRefreshDeals();
-        silentRefreshPresentations();
-      }
+      silentRefreshDeals();
+      silentRefreshPresentations();
     }, 30_000);
 
     return () => {
       clearTimeout(dealsTimer.current);
       clearTimeout(presTimer.current);
       clearInterval(pollInterval);
-      supabase.removeChannel(channel);
     };
   }, [userId, silentRefreshDeals, silentRefreshPresentations]);
 

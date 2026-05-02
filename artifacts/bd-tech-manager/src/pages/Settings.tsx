@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -24,7 +23,8 @@ import {
 import { toast } from "sonner";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useAppData } from "@/hooks/useAppData";
-import { seedHistoricalData, clearTestData } from "@/lib/seed-test-data";
+const seedHistoricalData = async () => { throw new Error("Seed funcionalidade desativada"); };
+const clearTestData = async () => { throw new Error("Clear funcionalidade desativada"); };
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 
 const POSITION_OPTIONS = ["SDR", "Executivo de Negócios", "Diretor"] as const;
@@ -191,22 +191,20 @@ function ProfileTab() {
 
   useEffect(() => {
     if (!user) return;
-    (supabase as any)
-      .from("profiles")
-      .select("full_name, job_title, position, role")
-      .eq("user_id", user.id)
-      .maybeSingle()
-      .then(({ data }: any) => {
+    fetch("/api/profiles/me")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
         if (data) {
           setForm({
-            full_name: data.full_name || "",
-            job_title: data.job_title || (pureAdmin ? "Administrador do Sistema" : ""),
+            full_name: data.fullName || "",
+            job_title: data.jobTitle || (pureAdmin ? "Administrador do Sistema" : ""),
             position: data.position || "none",
             role: data.role || "user",
           });
         }
         setLoading(false);
-      });
+      })
+      .catch(() => setLoading(false));
   }, [user, pureAdmin]);
 
   const handleSave = async () => {
@@ -219,8 +217,8 @@ function ProfileTab() {
     const normalizedPosition = form.position === "none" ? null : form.position;
     const normalizedRole = normalizeRoleForPosition(form.role, normalizedPosition);
     const updateData: any = {
-      full_name: form.full_name.trim(),
-      job_title: form.job_title.trim() || (normalizedPosition || "Administrador do Sistema"),
+      fullName: form.full_name.trim(),
+      jobTitle: form.job_title.trim() || (normalizedPosition || "Administrador do Sistema"),
       position: normalizedPosition,
     };
 
@@ -229,19 +227,24 @@ function ProfileTab() {
     }
 
     setSaving(true);
-    const { error } = await (supabase as any)
-      .from("profiles")
-      .update(updateData)
-      .eq("user_id", user.id);
-    setSaving(false);
-
-    if (error) {
-      toast.error("Erro ao salvar: " + error.message);
-      return;
+    try {
+      const res = await fetch("/api/profiles/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updateData),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Erro" }));
+        toast.error("Erro ao salvar: " + (err.error || ""));
+        return;
+      }
+      await refreshProfile();
+      toast.success("Perfil atualizado!");
+    } catch {
+      toast.error("Erro ao salvar perfil.");
+    } finally {
+      setSaving(false);
     }
-
-    await refreshProfile();
-    toast.success("Perfil atualizado!");
   };
 
   if (loading) {
@@ -339,19 +342,17 @@ function InvitesTab() {
 
   const loadInvites = async () => {
     setLoading(true);
-    const { data, error } = await (supabase as any)
-      .from("user_invitations")
-      .select("id, email, position, role, fixed_salary, commission_percent, status, created_at, accepted_at")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      toast.error("Erro ao carregar convites: " + error.message);
+    try {
+      const res = await fetch("/api/profiles");
+      if (res.ok) {
+        const data = await res.json();
+        setInvites(data || []);
+      }
+    } catch {
+      toast.error("Erro ao carregar convites.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setInvites(data || []);
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -370,44 +371,9 @@ function InvitesTab() {
     }
 
     setSending(true);
-    const { data: authData } = await supabase.auth.getUser();
-    const isTestEnv = authData.user?.email?.endsWith("@teste.com") || false;
-
-    const { error } = await (supabase as any)
-      .from("user_invitations")
-      .insert({
-        email,
-        position: form.position,
-        role: "user",
-        fixed_salary: Number(form.fixed_salary || 0),
-        commission_percent: Math.round(Number(form.commission_percent || 0)),
-        invited_by: authData.user?.id,
-        is_test_data: isTestEnv,
-      });
-
-    if (error) {
-      setSending(false);
-      toast.error("Erro ao salvar convite: " + error.message);
-      return;
-    }
-
-    const { error: functionError } = await supabase.functions.invoke("invite-user", {
-      body: {
-        email,
-        redirectTo: window.location.origin,
-      },
-    });
-
+    toast.info("Funcionalidade de convite por e-mail não disponível nesta versão. Adicione o usuário manualmente via gestão de equipe.");
     setSending(false);
     setForm({ ...form, email: "" });
-    await loadInvites();
-
-    if (functionError) {
-      toast.warning("Convite salvo. Falta publicar a função invite-user para o e-mail sair automaticamente.");
-      return;
-    }
-
-    toast.success("Convite enviado com sucesso!");
   };
 
   return (
@@ -545,30 +511,19 @@ function TeamTab() {
 
   useEffect(() => {
     const loadTeam = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      const isTestEnv = user?.email?.endsWith("@teste.com") || false;
-
-      let query = (supabase as any)
-        .from("profiles")
-        .select("id, user_id, display_name, full_name, role, job_title, position, created_at")
-        .eq("is_test_data", isTestEnv)
-        .order("created_at", { ascending: true });
-
-      let { data, error } = await query;
-
-      if (error && (error.message?.includes("is_test_data") || error.message?.includes("column"))) {
-        console.warn("[Settings] Coluna is_test_data não encontrada, buscando tudo.");
-        const fallback = await supabase
-          .from("profiles")
-          .select("id, user_id, display_name, full_name, role, job_title, position, created_at")
-          .order("created_at", { ascending: true });
-        data = fallback.data;
-        error = fallback.error;
+      try {
+        const res = await fetch("/api/profiles");
+        if (res.ok) {
+          const data = await res.json();
+          setProfiles(data || []);
+        } else {
+          toast.error("Erro ao carregar usuários.");
+        }
+      } catch {
+        toast.error("Erro ao carregar usuários.");
+      } finally {
+        setLoading(false);
       }
-
-      if (data) setProfiles(data);
-      if (error) toast.error("Erro ao carregar usuários: " + error.message);
-      setLoading(false);
     };
 
     loadTeam();
@@ -591,18 +546,24 @@ function TeamTab() {
     if (field === "role" && isOperationalPosition(currentProfile?.position)) {
       updatePayload.role = "user";
     }
-    const { error } = await (supabase as any)
-      .from("profiles")
-      .update(updatePayload)
-      .eq("user_id", userId);
+    const profile = profiles.find((p) => p.userId === userId || p.user_id === userId);
+    if (!profile) return;
 
-    if (error) {
-      toast.error(`Erro ao alterar ${field}: ` + error.message);
-      return;
+    try {
+      const res = await fetch(`/api/profiles/${profile.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatePayload),
+      });
+      if (!res.ok) {
+        toast.error(`Erro ao alterar ${field}`);
+        return;
+      }
+      toast.success("Perfil atualizado!");
+      setProfiles((prev) => prev.map((p) => (p.userId === userId || p.user_id === userId ? { ...p, ...updatePayload } : p)));
+    } catch {
+      toast.error(`Erro ao alterar ${field}`);
     }
-
-    toast.success("Perfil atualizado!");
-    setProfiles((prev) => prev.map((p) => (p.user_id === userId ? { ...p, ...updatePayload } : p)));
   };
 
   if (loading) {

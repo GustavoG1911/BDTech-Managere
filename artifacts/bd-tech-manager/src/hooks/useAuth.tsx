@@ -1,13 +1,11 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { Session, User } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
+import { createContext, useContext, useEffect, useState, useRef, ReactNode } from "react";
+import { useUser, useClerk } from "@clerk/react";
 import { isOperationalPosition } from "@/lib/roles";
 
 export type UserRole = "admin" | "gestor" | "user";
 
 interface AuthContextType {
-  session: Session | null;
-  user: User | null;
+  user: { id: string; email?: string } | null;
   loading: boolean;
   role: UserRole;
   position: string;
@@ -16,7 +14,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType>({
-  session: null,
   user: null,
   loading: true,
   role: "user",
@@ -28,89 +25,79 @@ const AuthContext = createContext<AuthContextType>({
 export const useAuth = () => useContext(AuthContext);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user: clerkUser, isLoaded } = useUser();
+  const { signOut: clerkSignOut } = useClerk();
   const [role, setRole] = useState<UserRole>("user");
   const [position, setPosition] = useState<string>("");
+  const [profileLoading, setProfileLoading] = useState(true);
+  const prevUserIdRef = useRef<string | null | undefined>(undefined);
 
-  const fetchRole = async (userId: string) => {
+  const fetchProfile = async (_userId: string) => {
     try {
-      // Tenta buscar o perfil do usuário
-      const { data: profile, error } = await supabase
-        .from("profiles")
-        .select("role, position")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (profile && !error) {
+      setProfileLoading(true);
+      const res = await fetch("/api/profiles/me");
+      if (res.ok) {
+        const profile = await res.json();
         const profilePosition = profile.position ?? "";
-        const normalizedRole = profile.role === "admin" && isOperationalPosition(profilePosition)
-          ? "user"
-          : profile.role;
-        setRole(normalizedRole as UserRole);
+        const normalizedRole =
+          profile.role === "admin" && isOperationalPosition(profilePosition)
+            ? "user"
+            : profile.role;
+        setRole((normalizedRole as UserRole) ?? "user");
         setPosition(profilePosition);
+      } else if (res.status === 404) {
+        await fetch("/api/profiles/me", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "user" }),
+        });
+        setRole("user");
+        setPosition("");
       } else {
         setRole("user");
         setPosition("");
       }
-    } catch (err) {
-      console.warn("[useAuth] Erro ao carregar role, usando padrão 'user'");
+    } catch {
       setRole("user");
       setPosition("");
     } finally {
-      setLoading(false);
+      setProfileLoading(false);
     }
   };
 
   useEffect(() => {
-    // Safety Force - Libera em no máximo 4 segundos
-    const safety = setTimeout(() => {
-      setLoading(false);
-    }, 4000);
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session?.user) {
-        fetchRole(session.user.id);
+    if (!isLoaded) return;
+    const userId = clerkUser?.id ?? null;
+    if (userId !== prevUserIdRef.current) {
+      prevUserIdRef.current = userId;
+      if (userId) {
+        fetchProfile(userId);
       } else {
-        setLoading(false);
         setRole("user");
         setPosition("");
+        setProfileLoading(false);
       }
-    });
+    }
+  }, [isLoaded, clerkUser?.id]);
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session?.user) {
-        fetchRole(session.user.id);
-      } else {
-        setLoading(false);
-      }
-    });
+  const loading = !isLoaded || (!!clerkUser && profileLoading);
 
-    return () => {
-      subscription.unsubscribe();
-      clearTimeout(safety);
-    };
-  }, []);
+  const user = clerkUser
+    ? { id: clerkUser.id, email: clerkUser.emailAddresses[0]?.emailAddress }
+    : null;
 
   const signOut = async () => {
-    setLoading(true);
-    await supabase.auth.signOut();
-    setSession(null);
+    await clerkSignOut();
     setRole("user");
     setPosition("");
-    setLoading(false);
   };
 
   const refreshProfile = async () => {
-    if (session?.user) {
-      await fetchRole(session.user.id);
-    }
+    if (clerkUser?.id) await fetchProfile(clerkUser.id);
   };
 
   return (
-    <AuthContext.Provider value={{ session, user: session?.user ?? null, loading, role, position, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ user, loading, role, position, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
