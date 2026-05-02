@@ -2,7 +2,7 @@ import { Router, Response } from "express";
 import { z } from "zod";
 import { db } from "@workspace/db";
 import { commissionPaymentsTable } from "@workspace/db/schema";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import { requireAuthWithRole, requireGestor, isManagerLevel, AuthRequest } from "../middlewares/auth";
 
 const router = Router();
@@ -21,6 +21,7 @@ const clearSchema = z.object({
   component: z.string(),
   competenceMonth: z.string(),
   recipientUserId: z.string().optional().nullable(),
+  installmentIndex: z.number().int().optional().nullable(),
 });
 
 const confirmByRecipientSchema = z.object({
@@ -122,7 +123,7 @@ router.post("/clear", requireAuthWithRole, requireGestor, async (req: AuthReques
       res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten() });
       return;
     }
-    const { dealId, component, competenceMonth, recipientUserId } = parsed.data;
+    const { dealId, component, competenceMonth, recipientUserId, installmentIndex } = parsed.data;
 
     const conditions: ReturnType<typeof eq>[] = [
       eq(commissionPaymentsTable.dealId, dealId),
@@ -131,6 +132,9 @@ router.post("/clear", requireAuthWithRole, requireGestor, async (req: AuthReques
     ];
     if (recipientUserId) {
       conditions.push(eq(commissionPaymentsTable.recipientUserId, recipientUserId));
+    }
+    if (installmentIndex != null) {
+      conditions.push(eq(commissionPaymentsTable.installmentIndex, installmentIndex));
     }
 
     await db.delete(commissionPaymentsTable).where(and(...conditions));
@@ -161,7 +165,10 @@ router.post("/confirm-by-recipient", requireAuthWithRole, async (req: AuthReques
       .set({ confirmedByUserAt: now, rejectedByUserAt: null })
       .where(and(
         eq(commissionPaymentsTable.dealId, dealId),
-        eq(commissionPaymentsTable.recipientUserId, recipientUserId)
+        eq(commissionPaymentsTable.recipientUserId, recipientUserId),
+        isNotNull(commissionPaymentsTable.paidByDirectorAt),
+        isNull(commissionPaymentsTable.confirmedByUserAt),
+        isNull(commissionPaymentsTable.rejectedByUserAt)
       ))
       .returning();
 
@@ -185,6 +192,14 @@ router.patch("/:id/confirm", requireAuthWithRole, async (req: AuthRequest, res: 
     const isManager = isManagerLevel(req);
     if (!isManager && existing.recipientUserId !== req.userId) {
       res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    if (!existing.paidByDirectorAt) {
+      res.status(409).json({ error: "Payment has not been released by director yet" });
+      return;
+    }
+    if (existing.confirmedByUserAt || existing.rejectedByUserAt) {
+      res.status(409).json({ error: "Payment already finalized" });
       return;
     }
     const now = new Date();
@@ -213,6 +228,14 @@ router.patch("/:id/reject", requireAuthWithRole, async (req: AuthRequest, res: R
     const isManager = isManagerLevel(req);
     if (!isManager && existing.recipientUserId !== req.userId) {
       res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    if (!existing.paidByDirectorAt) {
+      res.status(409).json({ error: "Payment has not been released by director yet" });
+      return;
+    }
+    if (existing.confirmedByUserAt || existing.rejectedByUserAt) {
+      res.status(409).json({ error: "Payment already finalized" });
       return;
     }
     const now = new Date();
