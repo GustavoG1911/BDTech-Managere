@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Deal, MonthlyPresentations, MonthlySuperMeta, AppSettings, ReceivableAdjustments, ReceivableAdjustment } from "@/lib/types";
 import { getSettings, saveSettings, getSuperMeta, saveSuperMeta, getAdjustments, saveAdjustments } from "@/lib/store";
-import { fetchDeals, upsertDeal, deleteDealFromDb, fetchPresentations, savePresentationToDb, fetchUserCommissionRate, saveUserCommissionRate, fetchUserFixedSalary, saveUserFixedSalary } from "@/lib/supabase-deals";
+import { fetchDeals, upsertDeal, deleteDealFromDb, fetchPresentations, savePresentationToDb, fetchUserCommissionRate, saveUserCommissionRate, fetchUserFixedSalary, saveUserFixedSalary } from "@/lib/api-client";
 import { toast } from "sonner";
 import { UserRole } from "./useAuth";
 

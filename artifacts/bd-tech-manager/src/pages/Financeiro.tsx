@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, BadgeDollarSign, Calendar, ChevronDown, ChevronUp, Clock, FileText, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, Check, Loader2, Wallet, Plus, CalendarDays, FileDown, Printer, HelpCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
-import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, confirmCommissionPaymentById, rejectCommissionPaymentById, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, CommissionPayment } from "@/lib/supabase-deals";
+import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, confirmCommissionPaymentById, rejectCommissionPaymentById, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, CommissionPayment } from "@/lib/api-client";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
