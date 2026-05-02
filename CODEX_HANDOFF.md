@@ -1,589 +1,331 @@
-# Sales Navigator — Handoff Completo para Codex
+# BDTech Manager / Sales Navigator - Handoff Atualizado
 
-> Gerado em 2026-04-28. Este documento cobre o estado atual da aplicação, arquitetura, regras de negócio, bugs conhecidos e tudo o que um agente externo precisa para continuar o desenvolvimento.
+Atualizado em 2026-05-02.
 
----
+Este documento e o guia para qualquer agente continuar o projeto sem quebrar o que ja foi estabilizado. O objetivo agora e evoluir o produto, principalmente UI/UX, mantendo a arquitetura atual.
 
-## 1. Visão Geral do Projeto
+## Resumo Executivo
 
-**Sales Navigator** é uma plataforma de Business Intelligence e gestão de comissionamento para as operações comerciais **BluePex** (cibersegurança) e **Opus Tech** (cloud privada).
+O app e uma plataforma de BI comercial e controle financeiro para BluePex e Opus Tech. Ele gerencia fechamentos, apresentacoes, comissoes, implantacoes, salarios, convites e notificacoes.
 
-**O que faz:**
-- Registra e acompanha negócios (deals) fechados pelos Executivos de Vendas
-- Calcula comissões dinâmicas com aceleradores baseados em metas de apresentações
-- Controla o fluxo financeiro de pagamentos (mensalidades + implantações)
-- Aplica a **Regra do Dia 07** — transbordo temporal de receita entre meses
-- Gerencia notificações entre Gestor → SDR/Executivo (ex: "sua comissão foi paga")
-- Exibe dashboard individual por usuário e visão consolidada para o Diretor
+Stack atual da versao principal:
 
-**Usuários:**
-- **Diretor / Gestor** (`position = "Diretor"`) → vê tudo, marca pagamentos, gerencia equipe
-- **Executivo de Negócios** (`position = "Executivo de Negócios"`) → vê apenas os próprios deals
-- **SDR** (`position = "SDR"`) → vê deals de todos os Executivos de Negócios
+- React 18 + Vite + TypeScript
+- Tailwind, Shadcn UI, Radix UI, Lucide, Recharts
+- Supabase Auth, PostgreSQL, RLS, Realtime e Edge Functions
+- TanStack Query + hooks locais
 
----
+Importante: nao migrar para Express, Drizzle, Clerk ou backend proprio sem aprovacao explicita. A versao estavel atual usa Supabase direto no frontend com RLS e Edge Function para convite.
 
-## 2. Stack Tecnológica
+## Arquitetura Que Deve Ser Mantida
 
-| Camada | Tecnologia |
-|--------|-----------|
-| Frontend | React 18 + Vite + TypeScript |
-| UI | Tailwind CSS v3, Shadcn UI, Radix UI, Lucide React |
-| Gráficos | Recharts |
-| Estado/Cache | TanStack Query v5 (React Query) |
-| Backend/DB | Supabase (PostgreSQL + Auth + Realtime) |
-| Roteamento | React Router v6 |
-| Datas | date-fns + date-fns/locale ptBR |
-| Notificações UI | Sonner (toast) |
+Fluxo central de dados:
 
----
-
-## 3. Arquitetura — Fluxo de Dados
-
-```
+```text
 Supabase PostgreSQL (snake_case)
-  → dbToDeal() em src/lib/supabase-deals.ts   [tradução snake→camelCase]
-  → useAppData() em src/hooks/useAppData.ts    [única fonte de verdade global]
-  → Páginas e Componentes
+  -> src/lib/supabase-deals.ts (dbToDeal / dealToDb / helpers de DB)
+  -> src/hooks/useAppData.ts (fonte global de deals, presentations, settings)
+  -> paginas e componentes
 ```
 
-**Regra de ouro:** Nenhuma página pode fazer `supabase.from(...)` diretamente para buscar deals ou apresentações. Tudo passa por `useAppData`. Exceção: `Financeiro.tsx` busca `salary_payments` e `profiles` diretamente via `useQuery` do React Query (padrão estabelecido).
+Regras:
 
-### Arquivos Críticos (em ordem de importância)
+- Deals e apresentacoes devem passar por `useAppData`.
+- Traducoes snake_case <-> camelCase ficam em `src/lib/supabase-deals.ts`.
+- Calculo de comissao deve passar por `src/lib/commission.ts`.
+- Filtros operacionais usam `position`, nao `role`.
+- O ambiente de teste usa `is_test_data` e usuarios `@teste.com`.
+
+## Modelo de Permissoes
+
+`role` e `position` sao campos diferentes.
+
+| Campo | Valores | Uso |
+| --- | --- | --- |
+| `role` | `admin`, `gestor`, `user` | permissao de sistema |
+| `position` | `Diretor`, `Executivo de Negocios`, `SDR` | visibilidade operacional e fluxo de trabalho |
+
+Regras atuais:
+
+- Admin puro: `role=admin` e `position=null`. Deve acessar apenas configuracoes/convites/equipe. Nao deve ver dashboard operacional nem deals.
+- Diretor: `role=user` e `position=Diretor`. Ve todos os deals e financeiro consolidado.
+- Executivo: `role=user` e `position=Executivo de Negocios`. Ve os proprios deals.
+- SDR: `role=user` e `position=SDR`. Ve deals onde e SDR/beneficiario e participa do financeiro quando tem comissao.
+
+Nunca usar `role=admin` para representar Diretor.
+
+## Fluxos Financeiros Estabilizados
+
+### Comissoes
+
+Tabela principal: `commission_payments`.
+
+O fluxo correto e granular:
+
+- Separado por beneficiario: Executivo e SDR podem receber valores diferentes.
+- Separado por componente: mensalidade, implantacao unica, implantacao parcelada.
+- Separado por competencia financeira: `competence_month`.
+- Separado por parcela: `installment_index`.
+- Diretor da baixa primeiro.
+- Funcionario confirma recebimento depois.
+- A data confirmada deve prevalecer sobre a data prevista para KPIs de pago/recebido.
+- Pagamentos antecipados saem de lancamentos futuros.
+
+Arquivos importantes:
+
+- `src/lib/supabase-deals.ts`
+  - `upsertCommissionPaymentRow`
+  - `clearCommissionPaymentForComponent`
+  - `confirmCommissionPaymentById`
+  - `rejectCommissionPaymentById`
+  - `fetchCommissionPaymentsForRecipient`
+  - `fetchCommissionPaymentsForDirector`
+- `src/pages/Financeiro.tsx`
+
+### Salarios
+
+Tabela: `salary_payments`.
+
+Fluxo correto:
+
+- Diretor marca salario como transferido.
+- Funcionario confirma recebimento.
+- Se ja foi confirmado pelo funcionario, o diretor nao pode desfazer a baixa diretamente.
+- Deve existir no banco uma chave unica por `user_id`, `reference_month`, `is_test_data`.
+- Linhas duplicadas antigas devem ser deduplicadas dando prioridade a:
+  1. salario confirmado pelo funcionario
+  2. salario pago pelo diretor
+  3. salario rejeitado
+  4. linha mais recente
+
+Correcoes recentes aplicadas:
+
+- `Financeiro.tsx` normaliza `amount` de salarios para numero.
+- `Financeiro.tsx` bloqueia desfazer baixa de salario ja confirmado.
+- `Financeiro.tsx` bloqueia visualmente o checkbox de salario confirmado.
+- `Financeiro.tsx` evita sobrescrever salario confirmado ao criar baixa a partir de fallback.
+
+### Apresentacoes
+
+Tabela: `presentations`.
+
+Regra:
+
+- Um unico contador por `date`, `operation`, `is_test_data`.
+- `savePresentationToDb` usa `upsert` direto.
+- A migration `20260430000001_dedupe_presentations.sql` deve estar aplicada no Supabase.
+
+Correcoes recentes:
+
+- Removido fluxo `GET -> find -> PATCH/POST`, que tinha risco de corrida.
+- `fetchPresentations` nao soma duplicatas antigas; usa o valor canonico.
+
+## Regras de Negocio Criticas
+
+### Regra do Dia 07
+
+Pagamentos apos o dia 07 entram no mes financeiro seguinte.
+
+Usar sempre:
+
+- `getPaymentDateInfo(...)`
+- `getDealMonthKeys(...)`
+- helpers ja existentes em `src/lib/commission.ts`
+
+Nunca usar apenas `new Date(date).getMonth()` ou `getFullYear()` para definir competencia financeira.
+
+### Comissao Por Funcionario
+
+Cada funcionario tem percentual proprio em `profiles.commission_percent`.
+
+- Executivo usa percentual do Executivo.
+- SDR usa percentual do SDR.
+- O valor do SDR nao deve ser copia do valor do Executivo.
+
+### Implantacao Parcelada
+
+Implantacao parcelada deve gerar controle por parcela.
+
+- Cada parcela tem competencia propria.
+- Cada parcela pode ser baixada e confirmada separadamente.
+- Comissao de implantacao parcelada deve respeitar `installment_index`.
+
+## Onboarding e Convites
+
+Fluxo desejado:
+
+- Cadastro novo deve acontecer por convite.
+- Admin escolhe o cargo no convite.
+- Usuario convidado entra e completa nome/salario/comissao quando necessario.
+- Cargo operacional deve vir do convite e/ou perfil, nao de escolha livre insegura.
+- Admin puro nao deve receber onboarding operacional.
+
+Arquivos:
+
+- `src/components/OnboardingModal.tsx`
+- `src/pages/Settings.tsx`
+- `supabase/functions/invite-user/index.ts`
+- `supabase/migrations/20260429000006_user_invitations.sql`
+- `supabase/migrations/20260429000007_director_is_user_not_admin.sql`
+
+## Arquivos Mais Importantes
 
 | Arquivo | Responsabilidade |
-|---------|-----------------|
-| `src/hooks/useAppData.ts` | Estado global: deals, presentations, settings. Expõe `refreshDeals`, `addOrUpdateDeal`, `removeDeal`, `updateSettings`, etc. |
-| `src/lib/supabase-deals.ts` | `dbToDeal()` / `dealToDb()` — mapeamento snake↔camel. `fetchDeals`, `upsertDeal`, `deleteDealFromDb`. Toda coluna nova no banco DEVE ser mapeada aqui primeiro. |
-| `src/lib/commission.ts` | Motor matemático. `calculateCommission(deal, presCount, settings, superMetaActive)` → `CommissionBreakdown`. `getPaymentDateInfo()` → Regra do Dia 07. `getDealMonthKeys()` → meses financeiros por deal. |
-| `src/lib/types.ts` | Interfaces TypeScript: `Deal`, `AppSettings`, `CommissionBreakdown`, `OperationPresentations`. |
-| `src/pages/Index.tsx` | Dashboard principal. `useState` SEMPRE antes de `useMemo` (risco de Temporal Dead Zone). |
-| `src/pages/Financeiro.tsx` | Torre de Controle (Diretor) + Fluxo Individual (Executivo/SDR). ~1700 linhas. Dois componentes principais: `FinanceiroContent` e `UserFinanceiroContent`. |
-| `src/hooks/useAuth.tsx` | Contexto de autenticação. Expõe `{ user, role, position, session, loading, signOut }`. |
-| `src/hooks/useNotifications.ts` | `useNotifications(userId)` → `{ notifications, unreadCount, markRead, markAllRead }`. Realtime via `notifications` table. |
-| `src/components/NotificationBell.tsx` | Sino de notificações no header. Navega para `/financeiro` com `state: { scrollToPending: true }`. |
-| `src/components/DealFormDialog.tsx` | Formulário de criação/edição de deals. Recebe `sdrs` e `executivos` como props. |
-| `src/integrations/supabase/client.ts` | Instância Supabase. |
-| `src/integrations/supabase/types.ts` | Tipos gerados do schema do banco. Se adicionar coluna, atualizar aqui. |
+| --- | --- |
+| `src/hooks/useAppData.ts` | fonte global de deals, presentations e settings |
+| `src/lib/supabase-deals.ts` | camada de acesso Supabase, mappers, notifications, pagamentos |
+| `src/lib/commission.ts` | calculos de comissao e regra do dia 07 |
+| `src/pages/Financeiro.tsx` | torre financeira e fluxo individual |
+| `src/pages/Index.tsx` | dashboard principal |
+| `src/pages/Settings.tsx` | configuracoes, convites, equipe, seed |
+| `src/components/DealFormDialog.tsx` | criacao/edicao de fechamento |
+| `src/components/OnboardingModal.tsx` | primeira configuracao de perfil |
+| `src/components/InfoHint.tsx` | explicacoes contextuais |
+| `src/lib/roles.ts` | separacao entre admin puro e cargos operacionais |
 
----
+## Migrations Recentes Importantes
 
-## 4. Modelo de Permissões
+Aplicar/confirmar no Supabase real:
 
-**CRÍTICO:** `role` e `position` são conceitos SEPARADOS. NUNCA usar `role` para decisões de UI ou visibilidade de dados.
+- `20260428000003_add_recipient_and_rls_to_commission_payments.sql`
+- `20260429000000_fix_deals_rls_by_position.sql`
+- `20260429000003_repair_remaining_rls_policies.sql`
+- `20260429000004_payment_confirmation_granularity.sql`
+- `20260429000005_installment_commission_payments.sql`
+- `20260429000006_user_invitations.sql`
+- `20260429000007_director_is_user_not_admin.sql`
+- `20260430000001_dedupe_presentations.sql`
 
-| Campo | Tabela | Valores | Controla |
-|-------|--------|---------|---------|
-| `role` | `profiles` | `admin`, `gestor`, `user` | Permissões de sistema (aprovar usuários, configs globais) |
-| `position` | `profiles` | `Diretor`, `Executivo de Negócios`, `SDR` | Visibilidade de dados, layout de UI, cálculo de comissão |
+Observacao: o app atual depende especialmente dos indices unicos:
 
-### Filtros de Visibilidade em `fetchDeals`
+- `commission_payments` por deal/componente/mes/beneficiario/parcela
+- `salary_payments` por usuario/mes/ambiente
+- `presentations` por mes/operacao/ambiente
 
-```typescript
-// src/lib/supabase-deals.ts
-if (position === "Diretor")      // → sem filtro (vê tudo)
-if (position === "SDR")          // → .in("user_id", executivoIds) — busca todos Executivos
-else                             // → .eq("user_id", userId) — só o próprio
+## Correcoes Mais Recentes
+
+Commit de referencia: `488f153 Fix salary and presentation sync handling`.
+
+Mudancas:
+
+- `src/lib/supabase-deals.ts`
+  - `dbToCommissionPayment` converte `amount` com `Number(...)`.
+  - `savePresentationToDb` usa `upsert` por `date,operation,is_test_data`.
+
+- `src/pages/Financeiro.tsx`
+  - dedupe de salarios mais robusto.
+  - normalizacao numerica de salarios.
+  - bloqueio para nao desfazer salario confirmado.
+  - bloqueio do checkbox quando salario ja foi confirmado.
+  - protecao para fallback de salario nao sobrescrever linha confirmada.
+
+Validacao feita:
+
+- `npx tsc --noEmit` passou sem erros.
+- `npm run build` ficou bloqueado localmente por `spawn EPERM` do esbuild/Vite no Windows, nao por erro TypeScript.
+
+## Estado do Branch Replit
+
+Branch recomendado para experimentos:
+
+```text
+replit/auditoria-evolucao
 ```
 
----
+Usar esse branch para auditoria e refatoracao de UI.
 
-## 5. Regras de Negócio Inegociáveis
+Nao usar Replit para:
 
-### 5.1 Regra do Dia 07 (Transbordo)
+- migrar Supabase Auth para Clerk
+- criar Express/Drizzle como backend principal
+- trocar o modelo de permissoes
+- remover RLS
+- mudar a separacao `role`/`position`
 
-Pagamentos após o dia 07 do mês contam financeiramente para o mês **seguinte**. A função central é:
+Pode usar Replit para:
 
-```typescript
-// src/lib/commission.ts
-getPaymentDateInfo(dateString): { monthKey: string, ... }
-// monthKey já aplica a Regra do Dia 07
+- revisar UI/UX
+- criar proposta visual
+- refatorar componentes de interface
+- melhorar responsividade
+- reduzir duplicacao visual
+- melhorar informacoes contextuais
+- sugerir testes manuais
 
-getDealMonthKeys(deal): { mensalidadeMonthKey, implantacaoMonthKey }
-// usa actualPaymentDate || firstPaymentDate || closingDate para mensalidade
-// usa implantationPaymentDate || firstPaymentDate || closingDate para implantação
+## Pedido Recomendado Para O Replit
+
+Use este prompt:
+
+```text
+Revise e proponha uma refatoracao de UI/UX para o BDTech Manager no branch replit/auditoria-evolucao.
+
+Nao migre stack. Nao adicione Express, Drizzle, Clerk ou backend novo. Mantenha React + Vite + Supabase.
+
+Nao altere regras financeiras, permissoes, RLS, migrations ou calculos sem pedir aprovacao.
+
+Priorize:
+- clareza da dashboard
+- fluxo financeiro mais facil de entender
+- cards e tabelas mais consistentes
+- responsividade mobile/desktop
+- estados vazios, loading e erro
+- hints explicativos nos pontos de regra de negocio
+- melhor visual para status: previsto, baixado, aguardando confirmacao, confirmado, rejeitado
+
+Antes de implementar, gere um relatorio com:
+- problemas de UI encontrados
+- proposta de solucao
+- arquivos que pretende alterar
+- impacto esperado
+- riscos
+
+Depois aguarde aprovacao.
 ```
 
-**NUNCA usar** `new Date(date).getFullYear()` para filtros anuais. Usar `getPaymentDateInfo(date).monthKey.startsWith(year)`.
-
-### 5.2 Aceleradores de Comissão
-
-| Apresentações | Tier | Multiplicador |
-|--------------|------|--------------|
-| < 15 | Abaixo da Meta | 0.7x |
-| ≥ 15 | Meta (100%) | 1.0x |
-| ≥ 30 | Super Meta | 2.0x |
-
-`superMetaBonus = monthlyCommission` (dobra a comissão mensal quando tier = Super Meta).
-
-`implantationBase = deal.implantationValue * 0.4` (sempre 40%, sem acelerador de apresentações).
-
-### 5.3 commissionRate — Fonte de Verdade: Banco de Dados
-
-- Coluna: `profiles.commission_percent` (inteiro, ex: `20` = 20%)
-- Leitura: `fetchUserCommissionRate(userId)` → divide por 100 → retorna `0.20`
-- Gravação: `saveUserCommissionRate(userId, rate)` → multiplica por 100
-- `useAppData.loadData` busca em paralelo e injeta em `settings.commissionRate`
-- localStorage é fallback inicial; DB sempre sobrescreve
-
-### 5.4 Isolamento de Ambiente (Test vs Prod)
-
-Usuários com email `@teste.com` operam em banco isolado:
-- Deals: `is_test_data = true`
-- Profiles: `is_test_data = true`
-- Notificações: `is_test_data = true`
-
-**NUNCA remover** o filtro `.eq("is_test_data", isTestEnv)` de `fetchDeals` e outras queries.
-
-### 5.5 Fluxo de Confirmação de Pagamento (ciclo completo)
-
-```
-1. Cliente paga → Gestor marca "Mensalidade/Implantação Recebida" 
-   → deal.isMensalidadePaidByClient = true OU deal.isImplantacaoPaid = true
-   → Status: "Destravado"
-
-2. Gestor paga comissão ao executivo → "Pagar Comissão"
-   → deal.isPaidToUser = true
-   → Notificação criada para o executivo
-   → Status: "Aguardando Confirmação"
-
-3. Executivo confirma recebimento
-   → deal.isUserConfirmedPayment = true
-   → Status: "Recebido" (ciclo encerrado)
-```
-
----
-
-## 6. Schema do Banco de Dados
-
-### Tabela `deals`
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `id` | uuid | PK |
-| `client_name` | text | Nome do cliente |
-| `operation` | text | `"BluePex"` ou `"Opus Tech"` |
-| `closing_date` | date | Data de fechamento |
-| `monthly_value` | numeric | Valor da mensalidade |
-| `implantation_value` | numeric | Valor de implantação |
-| `first_payment_date` | date | Data do 1º pagamento |
-| `implantation_payment_date` | date | Data de pgto da implantação |
-| `actual_payment_date` | date | Data real do pagamento |
-| `is_installment` | boolean | É parcelado? |
-| `installment_count` | int | Qtd de parcelas |
-| `installment_dates` | jsonb | Array de `{date, paid}` |
-| `payment_status` | text | `"Pendente"`, `"Pago"`, `"Cancelado"` |
-| `user_id` | uuid | FK → auth.users (Executivo dono do deal) |
-| `sdr_user_id` | uuid | FK → auth.users (SDR vinculado) — **VER BUG #3** |
-| `is_mensalidade_paid_by_client` | boolean | Cliente pagou mensalidade? |
-| `is_implantacao_paid` | boolean | Implantação paga pelo cliente? |
-| `is_paid_to_user` | boolean | Gestor pagou comissão? |
-| `is_user_confirmed_payment` | boolean | Executivo confirmou recebimento? |
-| `commission_rate_snapshot` | numeric | Taxa no momento do fechamento |
-| `commission_amount_snapshot` | numeric | Valor calculado no fechamento |
-| `is_test_data` | boolean | Ambiente de teste |
-
-### Tabela `profiles`
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `user_id` | uuid | FK → auth.users |
-| `full_name` | text | |
-| `display_name` | text | |
-| `role` | text | `admin`, `gestor`, `user` |
-| `position` | text | `Diretor`, `Executivo de Negócios`, `SDR` |
-| `commission_percent` | int | Ex: 20 = 20% |
-| `fixed_salary` | numeric | Salário fixo mensal |
-| `is_test_data` | boolean | |
-
-### Tabela `notifications`
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `id` | uuid | PK |
-| `user_id` | uuid | FK → auth.users (destinatário) |
-| `title` | text | |
-| `message` | text | |
-| `is_read` | boolean | |
-| `is_test_data` | boolean | |
-| `created_at` | timestamptz | |
-| `deal_id` | uuid | FK → deals (nullable) |
-
-### Tabela `salary_payments`
-
-| Coluna | Tipo | Descrição |
-|--------|------|-----------|
-| `id` | uuid | PK |
-| `user_id` | uuid | FK → auth.users |
-| `amount` | numeric | Valor do salário pago |
-| `reference_month` | date | `YYYY-MM-01` |
-| `expected_payment_date` | date | Vencimento previsto |
-| `is_paid_by_gestor` | boolean | Gestor deu baixa? |
-| `payment_date` | timestamptz | Quando foi pago |
-| `user_confirmed_receipt` | boolean | |
-| **NOTA** | | **NÃO tem coluna `is_test_data`** — não incluir em inserts! |
-
-### Tabela `monthly_presentations`
-
-| Coluna | Tipo |
-|--------|------|
-| `month_key` | text (`YYYY-MM`) |
-| `user_id` | uuid |
-| `bluepex_count` | int |
-| `opus_count` | int |
-| `is_test_data` | boolean |
-
-### Outras tabelas (menos modificadas)
-- `global_parameters` — metas de apresentações globais
-- `kanban_columns` — colunas do kanban
-- `leads` — pipeline de leads
-- `calendar_events` — agenda
-
----
-
-## 7. Bugs Conhecidos — Estado Atual (2026-04-28)
-
-### Bug #1 — Scroll para "Pagamentos Aguardando Confirmação" não funciona após navegar da notificação
-
-**Sintoma:** Usuário clica "Ver Detalhes" na notificação → vai para `/financeiro` → a seção "Pagamentos Aguardando Confirmação" não aparece ou não recebe scroll.
-
-**Causa-raiz:** Duas possibilidades:
-1. `refreshDeals()` é async e `pendingConfirmations` pode ainda estar vazio quando o scroll é tentado
-2. O deal marcado como `isPaidToUser=true` pelo Gestor pode não ter chegado ao Realtime do usuário ainda (race condition entre Gestor marcar e SDR/Executivo abrir a tela)
-
-**O que já foi implementado (código está correto, pode ser timing):**
-```typescript
-// UserFinanceiroContent em Financeiro.tsx
-const location = useLocation();
-const [pendingScroll, setPendingScroll] = useState(false);
-
-useEffect(() => {
-  if ((location.state as any)?.scrollToPending) {
-    setPendingScroll(true);
-    refreshDeals(); // força reload dos dados
-  }
-}, [location.state]);
-
-const pendingConfirmations = useMemo(
-  () => activeDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment),
-  [activeDeals]
-);
-
-// ESTE useEffect está DEPOIS de pendingConfirmations (correto — sem Temporal Dead Zone)
-useEffect(() => {
-  if (pendingScroll && pendingConfirmations.length > 0) {
-    setTimeout(() => {
-      document.getElementById("pending-confirmations")?.scrollIntoView({ behavior: "smooth" });
-    }, 100);
-    setPendingScroll(false);
-  }
-}, [pendingScroll, pendingConfirmations.length]);
-```
-
-**Seção renderizada no JSX:**
-```tsx
-{pendingConfirmations.length > 0 && (
-  <div id="pending-confirmations" ...>
-    {/* tabela com deals pendentes de confirmação */}
-  </div>
-)}
-```
-
-**Possível fix adicional:** Aumentar o `setTimeout` de 100ms para 500ms, ou usar um `useEffect` de polling que tenta scroll a cada 200ms até `pendingConfirmations.length > 0`.
-
-**Alternativa robusta:** Usar `useRef` para rastrear se o scroll já foi feito, e colocar o elemento `id="pending-confirmations"` sempre no DOM (mas vazio/oculto), então o `scrollIntoView` sempre encontra o alvo.
-
----
-
-### Bug #2 — Diretor não consegue marcar salários como transferidos ("Dar Baixa")
-
-**Sintoma:** Ao clicar "Dar Baixa" em um salário que não tem registro explícito em `salary_payments`, o sistema tenta criar um novo registro e retorna erro.
-
-**Causa-raiz original:** A função `handleCreateAndToggleSalaryPayment` incluía `is_test_data: isTestEnv` no payload do insert, mas a tabela `salary_payments` **NÃO TEM essa coluna**.
-
-**Fix já aplicado no código (Financeiro.tsx linha ~994):**
-```typescript
-const handleCreateAndToggleSalaryPayment = async (userId: string, amount: number, referenceMonth: string) => {
-  const dateStr = referenceMonth.slice(0, 7) + "-20";
-  const { data, error } = await (supabase as any)
-    .from("salary_payments")
-    .insert({
-      user_id: userId,
-      amount,
-      reference_month: referenceMonth.slice(0, 7) + "-01",
-      expected_payment_date: dateStr,
-      is_paid_by_gestor: true,
-      payment_date: new Date().toISOString(),
-      // is_test_data REMOVIDO — coluna não existe em salary_payments
-    })
-    .select()
-    .single();
-  if (error) { toast.error("Erro ao registrar salário: " + error.message); return; }
-  // ...
-};
-```
-
-**Status:** Fix está no código. Se o bug persistir, verifique se há outro caminho de código que ainda inclui `is_test_data` no insert de `salary_payments`. Buscar por: `salary_payments` + `is_test_data` no código.
-
-**Verificação adicional:** Checar se o botão "Dar Baixa" nos fallback rows (rows que não existem em `salary_payments`) chama `handleCreateAndToggleSalaryPayment` ou `handleToggleSalaryPayment`. O primeiro cria, o segundo só atualiza. Se o botão chamar o errado, vai falhar.
-
-No JSX de `ExpandableReceivablesRow` (Diretor), o botão deve verificar se `salary.isFallback` para chamar `onCreate` vs `onToggle`.
-
----
-
-### Bug #3 — Erro ao editar SDR em um negócio fechado
-
-**Sintoma:** Diretor tenta editar o campo SDR em um deal existente → Supabase retorna erro de coluna inexistente.
-
-**Causa-raiz:** A coluna `sdr_user_id` NÃO EXISTE na tabela `deals` no banco Supabase. O código (`dealToDb` em `supabase-deals.ts`) já inclui `sdr_user_id` condicionalmente, mas o Supabase rejeita porque a coluna não foi criada via migration.
-
-**Migration criada mas NÃO EXECUTADA:**
-```
-Arquivo: sales-navigator/supabase/migrations/20260428000000_add_sdr_user_id_to_deals.sql
-```
-
-**Conteúdo da migration:**
-```sql
-ALTER TABLE public.deals
-  ADD COLUMN IF NOT EXISTS sdr_user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS idx_deals_sdr_user_id ON public.deals(sdr_user_id);
-```
-
-**AÇÃO NECESSÁRIA — Manual:** Executar esta SQL no Supabase SQL Editor:
-1. Acesse o projeto Supabase → SQL Editor
-2. Cole e execute o SQL acima
-3. Confirme que a coluna foi criada: `SELECT column_name FROM information_schema.columns WHERE table_name = 'deals' AND column_name = 'sdr_user_id';`
-
-Após executar, o tipo `src/integrations/supabase/types.ts` já foi atualizado para incluir `sdr_user_id: string | null` no tipo `deals`.
-
----
-
-## 8. Padrões e Convenções
-
-### Nomenclatura
-- Banco de dados: `snake_case` (`client_name`, `is_test_data`)
-- TypeScript/Frontend: `camelCase` (`clientName`, `isTestData`)
-- Tradução: **exclusivamente via** `dbToDeal()` e `dealToDb()` em `supabase-deals.ts`
-
-### Casting Supabase
-```typescript
-(supabase as any).from('table')
-// É intencional — necessário para colunas customizadas não tipadas no schema gerado
-```
-
-### Componentes Expandáveis (padrão do projeto)
-```tsx
-function ExpandableRow({ data }: Props) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <>
-      <TableRow onClick={() => setExpanded(!expanded)}>
-        <TableCell>{/* chevron */}</TableCell>
-        {/* colunas */}
-      </TableRow>
-      {expanded && (
-        <TableRow>
-          <TableCell colSpan={N} className="p-0">
-            {/* detalhes expandidos */}
-          </TableCell>
-        </TableRow>
-      )}
-    </>
-  );
-}
-```
-
-### React Query Keys
-```typescript
-["user-finance-data", userId]   // UserFinanceiroContent — salary_payments e profiles do usuário
-["finance-data", role, user?.id, filterType, selectedYear]  // FinanceiroContent (Diretor)
-```
-
-### Temporal Dead Zone — Regra de Ouro em Financeiro.tsx
-
-Em componentes React com muitos hooks, a ordem importa:
-1. Todos os `useState` primeiro
-2. `useEffect`s que NÃO dependem de `useMemo` values
-3. `useMemo` computations
-4. `useEffect`s que DEPENDEM de `useMemo` values
-
-**Nunca colocar um `useEffect` que referencia um `useMemo` antes da declaração do `useMemo`.**
-
----
-
-## 9. O que NUNCA Fazer (Guardrails)
-
-1. **NÃO** fazer `supabase.from('deals')` dentro de páginas (`Index.tsx`, `Financeiro.tsx`). Usar apenas `useAppData`.
-2. **NÃO** remover `.eq("is_test_data", isTestEnv)` em `supabase-deals.ts`.
-3. **NÃO** calcular comissões manualmente nas interfaces. Sempre invocar `calculateCommission()`.
-4. **NÃO** alterar nomes de colunas no banco sem atualizar `dbToDeal` e `dealToDb`.
-5. **NÃO** refatorar lógicas operacionais sem necessidade. Ser cirúrgico.
-6. **NÃO** colocar `useMemo` antes de `useState` em `Index.tsx` (Temporal Dead Zone).
-7. **NÃO** usar `role` para decisões de visibilidade de dados ou UI. Usar sempre `position`.
-8. **NÃO** gravar `role` a partir do cargo. `OnboardingModal` salva cargo em `position`, nunca em `role`.
-9. **NÃO** usar `new Date(date).getFullYear()` para filtros de ano. Usar `getPaymentDateInfo(date).monthKey.startsWith(year)`.
-10. **NÃO** passar `user?.email` para `useAppData` ou `fetchAvailableYears`. Ambos resolvem internamente.
-11. **NÃO** incluir `is_test_data` em inserts na tabela `salary_payments` — a coluna não existe lá.
-
----
-
-## 10. Ambiente de Teste
-
-### Credenciais de Teste
-
-| Email | Senha | Position | UUID |
-|-------|-------|----------|------|
-| `diretor@teste.com` | (verificar com Gustavo) | Diretor | `231bc367-5a92-4ca6-83c2-f102f018b2df` |
-| `executivo@teste.com` | (verificar com Gustavo) | Executivo de Negócios | `c2408175-543a-4d43-a417-5f36d98dd7f6` |
-| `sdr@teste.com` | (verificar com Gustavo) | SDR | `c5342fdf-c6fd-444f-9ad8-9019c5a774f5` |
-
-### Seed de Dados
-- Botão "POPULAR BANCO (TESTE)" em Settings → visível apenas para Diretor
-- Limpa e reinserere deals com `is_test_data = true`
-- Deals são criados para `EXECUTIVO_ID`, apresentações para `SDR_ID`
-
-### Comandos
-
-```bash
-cd sales-navigator
-npm run dev          # Dev server (http://localhost:5173)
-npm run build        # Build de produção
-npx tsc --noEmit     # Verificar erros TypeScript (rodar antes de qualquer commit)
-```
-
----
-
-## 11. Variáveis de Ambiente
-
-```
-VITE_SUPABASE_URL=       # Endpoint do projeto Supabase
-VITE_SUPABASE_ANON_KEY=  # Chave pública de acesso
-```
-
-Arquivo: `sales-navigator/.env` (não commitado no git)
-
----
-
-## 12. Migrations Existentes
-
-Todas em `sales-navigator/supabase/migrations/`:
-
-| Arquivo | O que faz |
-|---------|-----------|
-| `20260401143827_*.sql` | Schema inicial (deals, profiles, etc.) |
-| `20260401144357_*.sql` | Complemento inicial |
-| `20260407124212_*.sql` | monthly_presentations |
-| `20260407124257_*.sql` | notifications |
-| `20260407124337_*.sql` | salary_payments |
-| `20260409003749_*.sql` | global_parameters, kanban, leads, calendar |
-| `20260409012445_adds_snapshots.sql` | Colunas snapshot de comissão em deals |
-| `20260409014500_seed_test_data.sql` | Dados de seed para teste |
-| `20260427000000_add_user_id_to_notifications.sql` | user_id em notifications |
-| `20260427000001_add_deal_id_to_notifications.sql` | deal_id em notifications |
-
-**Migration pendente (NÃO executada):**
-```sql
--- Executar manualmente no Supabase SQL Editor:
-ALTER TABLE public.deals
-  ADD COLUMN IF NOT EXISTS sdr_user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS idx_deals_sdr_user_id ON public.deals(sdr_user_id);
-```
-
----
-
-## 13. Componentes Críticos em `Financeiro.tsx`
-
-O arquivo tem ~1700 linhas. Estrutura de top-level:
-
-```
-imports
-FutureProjectionsAccumulatedCard (componente)
-SalaryRow interface
-ProfileMap interface
-formatSafeDate helper
-getDealMonthKeys helper
-buildMonthOptions helper
-Financeiro() — export default, roteador por position
-ExpandableUserCommissionRow() — linha expandível da tabela de comissões (view do usuário)
-ExpandableUserSalaryRow() — linha expandível da tabela de salário (view do usuário)
-UserFinanceiroContent() — view para Executivo/SDR
-FinanceiroContent() — view para Diretor
-  ExpandableReceivablesRow() — linha expandível de contas a receber (Diretor)
-  ExpandableCommissionRow() — linha expandível de comissões (Diretor)
-```
-
-### `ExpandableUserCommissionRow` — Props
-
-```typescript
-{ deal, selectedMonth, presentations, settings, onConfirm, inPendingSection? }
-```
-
-- `inPendingSection=true` → troca colunas 3 e 4 para "Mês" e "Comissão Total" (view cross-mês)
-- `inPendingSection=false` (default) → mostra "Com. Mensalidade" e "Com. Implantação"
-- `isPendingAction = deal.isPaidToUser && !deal.isUserConfirmedPayment` → visual warning
-
-### `UserFinanceiroContent` — Seção "Pagamentos Aguardando Confirmação"
-
-```tsx
-{pendingConfirmations.length > 0 && (
-  <div id="pending-confirmations" ...>
-    {pendingConfirmations.map((deal) => (
-      <ExpandableUserCommissionRow
-        key={deal.id}
-        deal={deal}
-        selectedMonth={dealMonth || selectedMonth}
-        inPendingSection
-        onConfirm={handleSDRConfirm}
-      />
-    ))}
-  </div>
-)}
-```
-
-`pendingConfirmations = activeDeals.filter(d => d.isPaidToUser && !d.isUserConfirmedPayment)`
-
-Esta seção aparece **independente do mês selecionado** — mostra todos os deals pendentes de qualquer mês.
-
----
-
-## 14. Fluxo de Notificações
-
-1. Gestor marca `isPaidToUser = true` em `handleToggleCommissionPayment` (Financeiro.tsx)
-2. `createNotification(deal.userId, "Comissão disponível 💰", "...", deal.id)` é chamado
-3. `createNotification` em `supabase-deals.ts` insere em `notifications` com `is_test_data` detectado via `supabase.auth.getUser()`
-4. `useNotifications(userId)` no cliente do Executivo recebe via Realtime (INSERT na tabela `notifications`)
-5. `NotificationBell` exibe badge com contagem
-6. Usuário clica "Ver Detalhes" → `navigate("/financeiro", { state: { scrollToPending: true } })`
-7. `UserFinanceiroContent` detecta `location.state.scrollToPending` → chama `refreshDeals()` → scroll para `#pending-confirmations`
-
----
-
-## 15. Contexto de Negócio
-
-- **Gustavo Silvaston** é o gestor das operações. **Não é desenvolvedor** — prefere comunicação clara e não técnica.
-- **Karen** é a SDR. Principal usuária final do sistema.
-- Projeto migrado de Lovable/Antigravity/Gemini para Claude Code em 2026.
-- Duas operações distintas no mesmo sistema: **BluePex** e **Opus Tech**.
-
----
-
-## 16. Roteiro de Verificação para Cada Tarefa
-
-Antes de qualquer commit:
-
-```bash
-cd sales-navigator
-npx tsc --noEmit   # ZERO erros TypeScript obrigatório
-npm run build      # Deve compilar sem erro
-```
-
-Testar manualmente:
-1. Logar como `diretor@teste.com` → verificar Torre de Controle
-2. Logar como `executivo@teste.com` → verificar Meu Fluxo Individual
-3. Logar como `sdr@teste.com` → verificar visibilidade de deals dos Executivos
-4. Trocar mês no seletor → verificar que dados mudam corretamente
-5. Verificar filtro anual (Regra do Dia 07 deve ser respeitada)
-
----
-
-*Fim do documento de handoff — gerado para Codex em 2026-04-28.*
+## Guardrails Para Qualquer Agente
+
+1. Nao trocar a arquitetura atual sem aprovacao.
+2. Nao usar `role` para visibilidade operacional.
+3. Nao permitir Diretor como `role=admin`.
+4. Nao remover `is_test_data`.
+5. Nao calcular comissao manualmente fora de `commission.ts`.
+6. Nao misturar mensalidade, implantacao e parcelas no mesmo status financeiro.
+7. Nao permitir confirmar recebimento antes de baixa do Diretor.
+8. Nao permitir desfazer baixa ja confirmada sem fluxo administrativo explicito.
+9. Nao refatorar tudo de uma vez. Fazer por telas ou componentes.
+10. Antes de finalizar, rodar `npx tsc --noEmit`.
+
+## Checklist De QA Manual
+
+Testar com estes papeis:
+
+- Admin puro real
+- Diretor teste
+- Executivo teste
+- SDR teste
+
+Fluxos:
+
+- Admin cria convite para Diretor/Executivo/SDR.
+- Usuario convidado completa perfil.
+- Diretor cria fechamento com Executivo e SDR.
+- Datas padrao: mensalidade 30 dias, implantacao 10 dias.
+- Diretor altera SDR do contrato.
+- Diretor baixa recebimento de mensalidade.
+- Diretor baixa recebimento de implantacao unica e parcelada.
+- Diretor paga comissao do Executivo.
+- Diretor paga comissao do SDR.
+- Executivo confirma comissao.
+- SDR confirma comissao.
+- Diretor marca salario transferido.
+- Funcionario confirma salario.
+- Confirmar que salario confirmado nao duplica e nao pode ser desfeito pelo checkbox.
+- Confirmar que pagamentos antecipados saem de lancamentos futuros.
+- Confirmar que KPI pago usa data confirmada quando diferente da prevista.
+- Confirmar que contador de apresentacoes BluePex/Opus nao salta para valores aleatorios.
+
+## Estado Atual Da Decisao
+
+A versao principal para uso real deve continuar em Lovable/Supabase.
+
+O Replit deve ser usado como acelerador de auditoria e UI, nao como nova base tecnica. Qualquer diff vindo do Replit deve ser revisado antes de merge.
