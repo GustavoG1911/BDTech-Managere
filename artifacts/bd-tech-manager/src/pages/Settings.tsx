@@ -34,7 +34,6 @@ const clearTestData = async () => {
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 
 const POSITION_OPTIONS = ["SDR", "Executivo de Negócios", "Diretor"] as const;
-const ROLE_OPTIONS = ["user", "gestor", "admin"] as const;
 
 function normalizeRoleForPosition(role: string, position: string | null) {
   return isOperationalPosition(position) ? "user" : role;
@@ -45,11 +44,22 @@ type InviteRow = {
   email: string;
   position: string;
   role: string;
-  fixed_salary: number | null;
-  commission_percent: number | null;
+  fixedSalary: number | null;
+  commissionPercent: number | null;
   status: string;
-  created_at: string;
-  accepted_at: string | null;
+  createdAt: string;
+  acceptedAt: string | null;
+};
+
+type ProfileRow = {
+  id: string;
+  userId: string;
+  fullName: string | null;
+  displayName: string | null;
+  jobTitle: string | null;
+  position: string | null;
+  role: string;
+  createdAt: string;
 };
 
 export default function Settings() {
@@ -189,8 +199,8 @@ function ProfileTab() {
   const [saving, setSaving] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [form, setForm] = useState({
-    full_name: "",
-    job_title: "",
+    fullName: "",
+    jobTitle: "",
     position: "none",
     role: "user",
   });
@@ -204,8 +214,8 @@ function ProfileTab() {
         if (data) {
           setProfileId(data.id || null);
           setForm({
-            full_name: data.fullName || "",
-            job_title: data.jobTitle || (pureAdmin ? "Administrador do Sistema" : ""),
+            fullName: data.fullName || "",
+            jobTitle: data.jobTitle || (pureAdmin ? "Administrador do Sistema" : ""),
             position: data.position || "none",
             role: data.role || "user",
           });
@@ -217,7 +227,7 @@ function ProfileTab() {
 
   const handleSave = async () => {
     if (!user) return;
-    if (!form.full_name.trim()) {
+    if (!form.fullName.trim()) {
       toast.error("Nome completo é obrigatório.");
       return;
     }
@@ -231,8 +241,8 @@ function ProfileTab() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fullName: form.full_name.trim(),
-          jobTitle: form.job_title.trim() || (normalizedPosition || "Administrador do Sistema"),
+          fullName: form.fullName.trim(),
+          jobTitle: form.jobTitle.trim() || (normalizedPosition || "Administrador do Sistema"),
           position: normalizedPosition,
         }),
       });
@@ -282,8 +292,8 @@ function ProfileTab() {
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground uppercase tracking-wide">Nome Completo *</Label>
         <Input
-          value={form.full_name}
-          onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+          value={form.fullName}
+          onChange={(e) => setForm({ ...form, fullName: e.target.value })}
           className="bg-muted/30 border-border/50"
         />
       </div>
@@ -291,8 +301,8 @@ function ProfileTab() {
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground uppercase tracking-wide">Cargo Descritivo</Label>
         <Input
-          value={form.job_title}
-          onChange={(e) => setForm({ ...form, job_title: e.target.value })}
+          value={form.jobTitle}
+          onChange={(e) => setForm({ ...form, jobTitle: e.target.value })}
           className="bg-muted/30 border-border/50"
         />
       </div>
@@ -351,8 +361,8 @@ function InvitesTab() {
     email: "",
     position: "Executivo de Negócios",
     role: "user",
-    fixed_salary: 0,
-    commission_percent: 20,
+    fixedSalary: 0,
+    commissionPercent: 20,
   });
 
   const loadInvites = async () => {
@@ -394,8 +404,8 @@ function InvitesTab() {
           email,
           position: form.position,
           role: "user",
-          fixedSalary: Number(form.fixed_salary || 0),
-          commissionPercent: Math.round(Number(form.commission_percent || 0)),
+          fixedSalary: Number(form.fixedSalary || 0),
+          commissionPercent: Math.round(Number(form.commissionPercent || 0)),
         }),
       });
       if (!res.ok) {
@@ -466,8 +476,8 @@ function InvitesTab() {
             <Input
               type="number"
               min="0"
-              value={form.fixed_salary}
-              onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
+              value={form.fixedSalary}
+              onChange={(e) => setForm({ ...form, fixedSalary: Number(e.target.value) })}
               className="bg-muted/30 border-border/50 font-mono"
             />
           </div>
@@ -478,8 +488,8 @@ function InvitesTab() {
               type="number"
               min="0"
               max="100"
-              value={form.commission_percent}
-              onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
+              value={form.commissionPercent}
+              onChange={(e) => setForm({ ...form, commissionPercent: Number(e.target.value) })}
               className="bg-muted/30 border-border/50 font-mono"
             />
           </div>
@@ -519,7 +529,7 @@ function InvitesTab() {
                   <TableCell className="px-4 py-3 text-sm font-medium">{invite.email}</TableCell>
                   <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.position}</TableCell>
                   <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.role}</TableCell>
-                  <TableCell className="px-4 py-3 text-xs font-mono">{Number(invite.commission_percent || 0)}%</TableCell>
+                  <TableCell className="px-4 py-3 text-xs font-mono">{Number(invite.commissionPercent || 0)}%</TableCell>
                   <TableCell className="px-4 py-3">
                     <Badge variant={invite.status === "accepted" ? "default" : "secondary"}>
                       {invite.status === "accepted" ? "Aceito" : "Pendente"}
@@ -543,7 +553,7 @@ function InvitesTab() {
 }
 
 function TeamTab() {
-  const [profiles, setProfiles] = useState<any[]>([]);
+  const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -566,10 +576,10 @@ function TeamTab() {
     loadTeam();
   }, []);
 
-  const handleUpdateField = async (userId: string, field: "role" | "position", value: string) => {
+  const handleUpdateField = async (profileId: string, userId: string, field: "role" | "position", value: string) => {
     const normalizedValue = field === "position" && value === "none" ? null : value;
     const updatePayload: Record<string, string | null> = { [field]: normalizedValue };
-    const currentProfile = profiles.find((profile) => profile.user_id === userId);
+    const currentProfile = profiles.find((p) => p.id === profileId);
 
     if (field === "position" && isOperationalPosition(normalizedValue)) {
       updatePayload.role = "user";
@@ -577,17 +587,15 @@ function TeamTab() {
 
     if (field === "role" && value === "admin") {
       updatePayload.position = null;
-      updatePayload.job_title = "Administrador do Sistema";
+      updatePayload.jobTitle = "Administrador do Sistema";
     }
 
     if (field === "role" && isOperationalPosition(currentProfile?.position)) {
       updatePayload.role = "user";
     }
-    const profile = profiles.find((p) => p.userId === userId || p.user_id === userId);
-    if (!profile) return;
 
     try {
-      const res = await fetch(`/api/profiles/${profile.id}`, {
+      const res = await fetch(`/api/profiles/${profileId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updatePayload),
@@ -597,7 +605,7 @@ function TeamTab() {
         return;
       }
       toast.success("Perfil atualizado!");
-      setProfiles((prev) => prev.map((p) => (p.userId === userId || p.user_id === userId ? { ...p, ...updatePayload } : p)));
+      setProfiles((prev) => prev.map((p) => (p.id === profileId ? { ...p, ...updatePayload, position: updatePayload.position !== undefined ? updatePayload.position : p.position } : p)));
     } catch {
       toast.error(`Erro ao alterar ${field}`);
     }
@@ -638,19 +646,19 @@ function TeamTab() {
                     <UserCog className="h-3.5 w-3.5 text-muted-foreground" />
                   </div>
                   <div>
-                    <p className="font-medium text-foreground">{p.full_name || p.display_name || "-"}</p>
-                    <p className="text-[11px] text-muted-foreground/60">{p.job_title || "-"}</p>
+                    <p className="font-medium text-foreground">{p.fullName || p.displayName || "-"}</p>
+                    <p className="text-[11px] text-muted-foreground/60">{p.jobTitle || "-"}</p>
                   </div>
                 </div>
               </TableCell>
-              <TableCell className="px-4 py-3 text-xs text-muted-foreground">{p.job_title || "-"}</TableCell>
+              <TableCell className="px-4 py-3 text-xs text-muted-foreground">{p.jobTitle || "-"}</TableCell>
               <TableCell className="px-4 py-3 text-xs text-muted-foreground tabular-nums font-mono">
-                {new Date(p.created_at).toLocaleDateString("pt-BR")}
+                {new Date(p.createdAt).toLocaleDateString("pt-BR")}
               </TableCell>
               <TableCell className="px-4 py-3">
                 <Select
-                  value={isOperationalPosition(p.position) ? p.position : "none"}
-                  onValueChange={(val) => handleUpdateField(p.user_id, "position", val)}
+                  value={isOperationalPosition(p.position) ? p.position ?? "none" : "none"}
+                  onValueChange={(val) => handleUpdateField(p.id, p.userId, "position", val)}
                 >
                   <SelectTrigger className="h-8 text-xs w-[160px] bg-muted/30 border-border/40">
                     <SelectValue />
@@ -666,7 +674,7 @@ function TeamTab() {
               <TableCell className="px-4 py-3">
                 <Select
                   value={isOperationalPosition(p.position) ? "user" : p.role || "user"}
-                  onValueChange={(val) => handleUpdateField(p.user_id, "role", val)}
+                  onValueChange={(val) => handleUpdateField(p.id, p.userId, "role", val)}
                   disabled={isOperationalPosition(p.position)}
                 >
                   <SelectTrigger className="h-8 text-xs w-[130px] bg-muted/30 border-border/40">
