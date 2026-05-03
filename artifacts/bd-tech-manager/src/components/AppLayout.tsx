@@ -4,6 +4,7 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { NotificationBell } from "@/components/NotificationBell";
 import { useAuth } from "@/hooks/useAuth";
+import { AvatarUpload } from "@/components/AvatarUpload";
 
 const PAGE_META: Record<string, { title: string; description: string }> = {
   "/":           { title: "Dashboard",      description: "Visão geral de performance e fechamentos" },
@@ -15,7 +16,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const { user } = useAuth();
   const meta = PAGE_META[pathname] ?? { title: "BD Tech", description: "" };
-  const initials = user?.email?.slice(0, 2).toUpperCase() ?? "BD";
+  const avatarUrl = user?.user_metadata?.avatar_url ?? null;
+  const fullName: string = user?.user_metadata?.full_name ?? user?.email ?? "";
+  const initials = fullName
+    ? fullName.split(" ").slice(0, 2).map((w: string) => w[0]).join("").toUpperCase()
+    : (user?.email?.slice(0, 2).toUpperCase() ?? "BD");
 
   return (
     <SidebarProvider>
@@ -47,11 +52,15 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
             <div className="ml-auto flex items-center gap-2">
               <NotificationBell />
-              <div className="h-7 w-7 rounded-full bg-primary/15 border border-primary/25
-                              flex items-center justify-center shrink-0
-                              text-[10px] font-bold text-primary">
-                {initials}
-              </div>
+              {user && (
+                <AvatarUpload
+                  userId={user.id}
+                  currentUrl={avatarUrl}
+                  initials={initials}
+                  size="sm"
+                  readOnly
+                />
+              )}
             </div>
           </header>
 

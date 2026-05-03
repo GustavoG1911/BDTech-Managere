@@ -2,6 +2,7 @@ import { Home, Settings, LogOut, TrendingUp, Landmark, Target, CalendarDays, Zap
 import { NavLink } from "@/components/NavLink";
 import { useAuth, UserRole } from "@/hooks/useAuth";
 import { isPureSystemAdmin } from "@/lib/roles";
+import { useAppLogo } from "@/hooks/useAppLogo";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem,
@@ -38,6 +39,7 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const { signOut, role, position } = useAuth();
   const isAdmin = isPureSystemAdmin(role, position);
+  const { logoUrl } = useAppLogo();
 
   const visible = navItems.filter((item) => {
     if (isAdmin) return item.url === "/settings";
@@ -52,11 +54,16 @@ export function AppSidebar() {
       {/* ── Brand ── */}
       <SidebarHeader className="border-b border-sidebar-border px-3 py-3">
         <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-xl
+          {/* Logo: custom image or default icon */}
+          <div className="h-8 w-8 rounded-xl overflow-hidden shrink-0
                           bg-gradient-to-br from-primary to-primary/60
-                          flex items-center justify-center shrink-0
+                          flex items-center justify-center
                           shadow-md shadow-primary/30">
-            <TrendingUp className="h-4 w-4 text-white" />
+            {logoUrl ? (
+              <img src={logoUrl} alt="Logo" className="h-full w-full object-cover" />
+            ) : (
+              <TrendingUp className="h-4 w-4 text-white" />
+            )}
           </div>
           {!collapsed && (
             <div>
