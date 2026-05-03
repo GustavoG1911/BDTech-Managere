@@ -21,7 +21,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Deal } from "@/lib/types";
-import { isCompensatedPosition } from "@/lib/roles";
 
 function FutureProjectionsAccumulatedCard({ projections, position, onSelectMonth }: { projections: any[], position: string, onSelectMonth: (m: string) => void }) {
   const [expanded, setExpanded] = useState(false);
@@ -314,9 +313,6 @@ function getCommissionPeriodParts(deal: Deal, presentations: any, settings: any,
 }
 
 function getSettingsForRecipient(settings: any, profiles: ProfileMap, recipientUserId?: string) {
-  if (recipientUserId && !isCompensatedPosition(profiles[recipientUserId]?.position)) {
-    return { ...settings, commissionRate: 0 };
-  }
   const commissionPercent = recipientUserId ? profiles[recipientUserId]?.commission_percent : undefined;
   if (typeof commissionPercent === "number" && commissionPercent > 0) {
     return { ...settings, commissionRate: commissionPercent / 100 };
@@ -677,12 +673,11 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
       const map: ProfileMap = {};
       (profilesRes.data as any[]).forEach((p) => {
-        const isCompensated = isCompensatedPosition(p.position);
         map[p.user_id] = {
           full_name: p.full_name || p.display_name || "-",
           display_name: p.display_name || "",
-          commission_percent: isCompensated ? (p.commission_percent || 0) : 0,
-          fixed_salary: isCompensated ? (p.fixed_salary || 0) : 0,
+          commission_percent: p.commission_percent || 0,
+          fixed_salary: p.fixed_salary || 0,
           position: p.position || "",
         };
       });
@@ -710,7 +705,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   }, [deals, position, userId, userCommissionDealIds]);
 
   const activeDeals = deals; // fetchDeals já filtra por position (SDR vê Executivos, Executivo vê próprios)
-  const activeSalaries = querySalaries.filter((salary) => isCompensatedPosition(profiles[salary.user_id]?.position));
+  const activeSalaries = querySalaries.length > 0 ? querySalaries : [];
 
   // Deals onde mensalidade OU implantação têm competência financeira no mês selecionado
   const filteredDeals = useMemo(() => {
@@ -887,16 +882,11 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       }
     });
 
-    const userHasCompensation = isCompensatedPosition(profiles[userId]?.position);
-    const totalFixo = !userHasCompensation
-      ? 0
-      : filteredSalaries.length > 0
-        ? filteredSalaries.reduce((acc, s) => acc + s.amount, 0)
-        : (profiles[userId]?.fixed_salary || 0);
+    const totalFixo = filteredSalaries.length > 0 ? filteredSalaries.reduce((acc, s) => acc + s.amount, 0) : (profiles[userId]?.fixed_salary || 0);
     const fixedConfirmed = filteredSalaries.some((s: any) => !!s.confirmed_by_user_at);
 
     return { projected, paid, volume, fixed: totalFixo, fixedConfirmed };
-  }, [filteredDeals, filteredSalaries, userId, selectedMonth, presentations, settings, commissionPayments, profiles]);
+  }, [filteredDeals, filteredSalaries, userId, selectedMonth, presentations, settings, commissionPayments]);
 
   if (loading) {
     return (
@@ -1281,12 +1271,11 @@ function FinanceiroContent() {
 
       const map: ProfileMap = {};
       (profilesRes.data as any[]).forEach((p) => {
-        const isCompensated = isCompensatedPosition(p.position);
         map[p.user_id] = {
           full_name: p.full_name || p.display_name || "-",
           display_name: p.display_name || "",
-          commission_percent: isCompensated ? (p.commission_percent || 0) : 0,
-          fixed_salary: isCompensated ? (p.fixed_salary || 0) : 0,
+          commission_percent: p.commission_percent || 0,
+          fixed_salary: p.fixed_salary || 0,
           position: p.position || "",
         };
       });
@@ -1305,7 +1294,7 @@ function FinanceiroContent() {
 
 
   const activeDeals = deals;
-  const activeSalaries = querySalaries.filter((salary) => isCompensatedPosition(profiles[salary.user_id]?.position));
+  const activeSalaries = querySalaries.length > 0 ? querySalaries : [];
 
   const filteredDeals = useMemo(() => {
     return activeDeals.filter((d) => {
@@ -1343,13 +1332,12 @@ function FinanceiroContent() {
       }
 
       const passUser = filtroFuncionario === "Todos" || s.user_id === filtroFuncionario;
-      if (!isCompensatedPosition(profiles[s.user_id]?.position)) return false;
       let passStatus = true;
       if (filtroStatus === "Finalizados") passStatus = s.is_paid_by_gestor === true;
       if (filtroStatus === "Pendentes") passStatus = !s.is_paid_by_gestor;
       return passTime && passUser && passStatus;
     });
-  }, [activeSalaries, selectedMonth, filterType, selectedYear, filtroFuncionario, filtroStatus, profiles]);
+  }, [activeSalaries, selectedMonth, filterType, selectedYear, filtroFuncionario, filtroStatus]);
 
   const kpis = useMemo(() => {
     // Soma pagamentos explícitos de salary_payments
@@ -1358,7 +1346,6 @@ function FinanceiroContent() {
     // Fallback: para usuários sem registro de pagamento no período, usa fixed_salary do perfil
     let fallbackFixo = 0;
     Object.entries(profiles).forEach(([uid, profile]) => {
-      if (!isCompensatedPosition(profile.position)) return;
       if (usersWithPayments.has(uid)) return;
       const fixedSal = (profile as any).fixed_salary || 0;
       if (fixedSal <= 0) return;
@@ -1373,10 +1360,7 @@ function FinanceiroContent() {
     const period = { filterType, selectedMonth, selectedYear };
 
     commissionPayments
-      .filter((cp) =>
-        isCompensatedPosition(profiles[cp.recipientUserId || ""]?.position)
-        && (filtroFuncionario === "Todos" || cp.recipientUserId === filtroFuncionario)
-      )
+      .filter((cp) => filtroFuncionario === "Todos" || cp.recipientUserId === filtroFuncionario)
       .forEach((cp) => {
         if (cp.confirmedByUserAt && dateInFinancePeriod(cp.confirmedByUserAt, period)) {
           totalPago += cp.amount;
@@ -1412,7 +1396,7 @@ function FinanceiroContent() {
       const recipients = [
         deal.userId && (filtroFuncionario === "Todos" || filtroFuncionario === deal.userId) ? deal.userId : null,
         deal.sdrUserId && deal.sdrUserId !== deal.userId && (filtroFuncionario === "Todos" || filtroFuncionario === deal.sdrUserId) ? deal.sdrUserId : null,
-      ].filter(Boolean).filter((recipientUserId) => isCompensatedPosition(profiles[recipientUserId as string]?.position)) as string[];
+      ].filter(Boolean) as string[];
 
       recipients.forEach((recipientUserId) => {
         const recipientParts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, { filterType, selectedMonth, selectedYear }, profiles, recipientUserId);
@@ -1457,7 +1441,6 @@ function FinanceiroContent() {
     const rows: Array<SalaryRow & { isFallback?: boolean }> = [...filteredSalaries];
     const usersWithPayments = new Set(filteredSalaries.map((s: any) => s.user_id));
     Object.entries(profiles).forEach(([uid, profile]) => {
-      if (!isCompensatedPosition(profile.position)) return;
       if (usersWithPayments.has(uid)) return;
       const fixedSal = (profile as any).fixed_salary || 0;
       if (fixedSal <= 0) return;
@@ -1811,13 +1794,11 @@ function FinanceiroContent() {
             <SelectTrigger className="w-[140px] md:w-[160px] h-8 text-xs">
               <SelectValue placeholder="Funcionário" />
             </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Todos">Todos Funcionários</SelectItem>
-              {Object.entries(profiles)
-                .filter(([, p]) => isCompensatedPosition(p.position))
-                .map(([id, p]) => (
-                  <SelectItem key={id} value={id}>{p.full_name}</SelectItem>
-                ))}
+            <SelectContent>
+              <SelectItem value="Todos">Todos Funcionários</SelectItem>
+              {Object.entries(profiles).map(([id, p]) => (
+                <SelectItem key={id} value={id}>{p.full_name}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
@@ -2469,7 +2450,6 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
                   deal.userId,
                   deal.sdrUserId && deal.sdrUserId !== deal.userId ? deal.sdrUserId : null,
                 ].filter(Boolean).filter((recipientUserId) => {
-                  if (!isCompensatedPosition(profiles?.[recipientUserId as string]?.position)) return false;
                   const parts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, recipientUserId as string);
                   return parts.total > 0;
                 }) as string[];

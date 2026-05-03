@@ -9,7 +9,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Deal, Operation, PaymentStatus } from "@/lib/types";
 import { format } from "date-fns";
-import { CalendarIcon } from "lucide-react";
+import { CalendarIcon, Building2, User2, Users2, Banknote, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { InfoHint } from "@/components/InfoHint";
@@ -41,10 +41,20 @@ function addMonths(date: Date, months: number) {
   return next;
 }
 
+function SectionLabel({ icon: Icon, children }: { icon: React.ElementType; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 pt-1 pb-0.5">
+      <Icon className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+      <span className="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground/60">{children}</span>
+      <div className="flex-1 h-px bg-border/40" />
+    </div>
+  );
+}
+
 function FieldLabel({ children, info }: { children: string; info: string }) {
   return (
     <div className="flex items-center gap-1.5">
-      <Label>{children}</Label>
+      <Label className="text-xs text-muted-foreground">{children}</Label>
       <InfoHint text={info} />
     </div>
   );
@@ -183,122 +193,213 @@ export function DealFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[92dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{editDeal ? "Editar Fechamento" : "Novo Fechamento"}</DialogTitle>
+          <DialogTitle className="text-base">
+            {editDeal ? "Editar Fechamento" : "Novo Fechamento"}
+          </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <FieldLabel info="Data em que o contrato foi assinado. Ela alimenta os KPIs de fechamento do Dashboard.">Data do Fechamento</FieldLabel>
-            <DatePicker date={closingDate} onSelect={handleClosingDateSelect} />
-          </div>
+        <div className="space-y-5 pb-1">
 
-          <div className="space-y-1.5">
-            <FieldLabel info="Define se o fechamento entra nos totais da BluePex ou da Opus Tech.">Operação</FieldLabel>
-            <Select value={operation} onValueChange={(v) => setOperation(v as Operation)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="BluePex">BluePex</SelectItem>
-                <SelectItem value="Opus Tech">Opus Tech</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Contrato */}
+          <div className="space-y-3">
+            <SectionLabel icon={Building2}>Contrato</SectionLabel>
 
-          {currentPosition === "Diretor" && !editDeal && executivos && executivos.length > 0 && (
-            <div className="space-y-1.5">
-              <FieldLabel info="O executivo selecionado será o dono comercial do contrato e receberá a comissão dele.">Executivo Responsável</FieldLabel>
-              <Select value={selectedExecutivoId} onValueChange={setSelectedExecutivoId}>
-                <SelectTrigger><SelectValue placeholder="Selecione o executivo" /></SelectTrigger>
-                <SelectContent>
-                  {executivos.map((executivo) => (
-                    <SelectItem key={executivo.id} value={executivo.id}>{executivo.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          {currentPosition !== "SDR" && sdrs && sdrs.length > 0 && (
-            <div className="space-y-1.5">
-              <FieldLabel info="Quando houver SDR no contrato, a comissão dele é separada da comissão do executivo.">SDR Responsável</FieldLabel>
-              <Select value={selectedSdrId} onValueChange={setSelectedSdrId}>
-                <SelectTrigger><SelectValue placeholder="Selecione o SDR" /></SelectTrigger>
-                <SelectContent>
-                  {sdrs.map((sdr) => (
-                    <SelectItem key={sdr.id} value={sdr.id}>{sdr.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <FieldLabel info="Nome que aparecerá no Dashboard, Financeiro, notificações e relatórios.">Empresa Cliente</FieldLabel>
-            <Input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nome da empresa" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <FieldLabel info="Valor recorrente mensal do contrato. A comissão segue a data do primeiro pagamento.">Valor Mensalidade (R$)</FieldLabel>
-              <Input type="number" min="0" step="0.01" value={monthlyValue} onChange={(e) => setMonthlyValue(e.target.value)} placeholder="0,00" />
-            </div>
-            <div className="space-y-1.5">
-              <FieldLabel info="Valor único ou parcelado da implantação. Se parcelar, cada parcela entra separada no Financeiro.">Valor Implantação (R$)</FieldLabel>
-              <Input type="number" min="0" step="0.01" value={implantationValue} onChange={(e) => setImplantationValue(e.target.value)} placeholder="0,00" />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <FieldLabel info="Por padrão fica 30 dias após o fechamento. Se cair depois do dia 07, a comissão transborda para o mês seguinte.">Data Pgto. 1ª Mensalidade</FieldLabel>
-            <DatePicker date={firstPaymentDate} onSelect={setFirstPaymentDate} />
-          </div>
-
-          <div className="space-y-1.5">
-            <FieldLabel info="Por padrão fica 10 dias após o fechamento. Para implantação parcelada, use as datas de cada parcela.">Data Pgto. Implantação</FieldLabel>
-            <DatePicker date={implantationPaymentDate} onSelect={setImplantationPaymentDate} />
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Switch checked={isInstallment} onCheckedChange={handleInstallmentChange} />
-            <div className="flex items-center gap-1.5">
-              <Label>Implantação Parcelada?</Label>
-              <InfoHint text="Ative quando a implantação será recebida em mais de uma parcela. Cada parcela terá vencimento, baixa e comissão próprios." />
-            </div>
-          </div>
-
-          {isInstallment && (
-            <div className="space-y-3 pl-4 border-l-2 border-primary/20">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <FieldLabel info="Cada parcela divide proporcionalmente o valor e a comissão de implantação.">Número de Parcelas</FieldLabel>
-                <Input type="number" min="2" max="24" value={installmentCount} onChange={(e) => setInstallmentCount(e.target.value)} />
+                <FieldLabel info="Data em que o contrato foi assinado. Ela alimenta os KPIs de fechamento do Dashboard.">
+                  Data do Fechamento
+                </FieldLabel>
+                <DatePicker date={closingDate} onSelect={handleClosingDateSelect} />
               </div>
-              {installmentDates.map((date, index) => (
-                <div key={index} className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Parcela {index + 1}</Label>
-                  <DatePicker date={date} onSelect={(selectedDate) => {
-                    const updated = [...installmentDates];
-                    updated[index] = selectedDate;
-                    setInstallmentDates(updated);
-                  }} />
+
+              <div className="space-y-1.5">
+                <FieldLabel info="Define se o fechamento entra nos totais da BluePex ou da Opus Tech.">
+                  Operação
+                </FieldLabel>
+                <Select value={operation} onValueChange={(v) => setOperation(v as Operation)}>
+                  <SelectTrigger className="bg-muted/30 border-border/50">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="BluePex">BluePex</SelectItem>
+                    <SelectItem value="Opus Tech">Opus Tech</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <FieldLabel info="Nome que aparecerá no Dashboard, Financeiro, notificações e relatórios.">
+                Empresa Cliente
+              </FieldLabel>
+              <Input
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                placeholder="Nome da empresa"
+                className="bg-muted/30 border-border/50"
+              />
+            </div>
+          </div>
+
+          {/* Equipe */}
+          {((currentPosition === "Diretor" && !editDeal && executivos && executivos.length > 0) ||
+            (currentPosition !== "SDR" && sdrs && sdrs.length > 0)) && (
+            <div className="space-y-3">
+              <SectionLabel icon={Users2}>Equipe</SectionLabel>
+
+              {currentPosition === "Diretor" && !editDeal && executivos && executivos.length > 0 && (
+                <div className="space-y-1.5">
+                  <FieldLabel info="O executivo selecionado será o dono comercial do contrato e receberá a comissão dele.">
+                    Executivo Responsável
+                  </FieldLabel>
+                  <Select value={selectedExecutivoId} onValueChange={setSelectedExecutivoId}>
+                    <SelectTrigger className="bg-muted/30 border-border/50">
+                      <SelectValue placeholder="Selecione o executivo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {executivos.map((executivo) => (
+                        <SelectItem key={executivo.id} value={executivo.id}>{executivo.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-              ))}
+              )}
+
+              {currentPosition !== "SDR" && sdrs && sdrs.length > 0 && (
+                <div className="space-y-1.5">
+                  <FieldLabel info="Quando houver SDR no contrato, a comissão dele é separada da comissão do executivo.">
+                    SDR Responsável
+                  </FieldLabel>
+                  <Select value={selectedSdrId} onValueChange={setSelectedSdrId}>
+                    <SelectTrigger className="bg-muted/30 border-border/50">
+                      <SelectValue placeholder="Selecione o SDR" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sdrs.map((sdr) => (
+                        <SelectItem key={sdr.id} value={sdr.id}>{sdr.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <FieldLabel info="Status geral do contrato. As baixas reais de mensalidade, implantação, comissão e salário acontecem no Financeiro.">Status do Pagamento</FieldLabel>
-            <Select value={paymentStatus} onValueChange={(v) => setPaymentStatus(v as PaymentStatus)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Pendente">Pendente</SelectItem>
-                <SelectItem value="Pago">Pago</SelectItem>
-                <SelectItem value="Cancelado">Cancelado</SelectItem>
-              </SelectContent>
-            </Select>
+          {/* Valores */}
+          <div className="space-y-3">
+            <SectionLabel icon={Banknote}>Valores</SectionLabel>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <FieldLabel info="Valor recorrente mensal do contrato. A comissão segue a data do primeiro pagamento.">
+                  Mensalidade (R$)
+                </FieldLabel>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={monthlyValue}
+                  onChange={(e) => setMonthlyValue(e.target.value)}
+                  placeholder="0,00"
+                  className="bg-muted/30 border-border/50 font-mono"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <FieldLabel info="Valor único ou parcelado da implantação. Se parcelar, cada parcela entra separada no Financeiro.">
+                  Implantação (R$)
+                </FieldLabel>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={implantationValue}
+                  onChange={(e) => setImplantationValue(e.target.value)}
+                  placeholder="0,00"
+                  className="bg-muted/30 border-border/50 font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <FieldLabel info="Status geral do contrato. As baixas reais de mensalidade, implantação, comissão e salário acontecem no Financeiro.">
+                Status do Pagamento
+              </FieldLabel>
+              <Select value={paymentStatus} onValueChange={(v) => setPaymentStatus(v as PaymentStatus)}>
+                <SelectTrigger className="bg-muted/30 border-border/50">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Pendente">Pendente</SelectItem>
+                  <SelectItem value="Pago">Pago</SelectItem>
+                  <SelectItem value="Cancelado">Cancelado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
-          <Button onClick={handleSave} className="w-full">
+          {/* Datas */}
+          <div className="space-y-3">
+            <SectionLabel icon={CalendarDays}>Datas de Pagamento</SectionLabel>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <FieldLabel info="Por padrão fica 30 dias após o fechamento. Se cair depois do dia 07, a comissão transborda para o mês seguinte.">
+                  1ª Mensalidade
+                </FieldLabel>
+                <DatePicker date={firstPaymentDate} onSelect={setFirstPaymentDate} />
+              </div>
+
+              <div className="space-y-1.5">
+                <FieldLabel info="Por padrão fica 10 dias após o fechamento. Para implantação parcelada, use as datas de cada parcela.">
+                  Implantação
+                </FieldLabel>
+                <DatePicker date={implantationPaymentDate} onSelect={setImplantationPaymentDate} />
+              </div>
+            </div>
+
+            {/* Parcelamento */}
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/20 border border-border/40">
+              <Switch checked={isInstallment} onCheckedChange={handleInstallmentChange} />
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <Label className="text-sm cursor-pointer">Implantação Parcelada?</Label>
+                <InfoHint text="Ative quando a implantação será recebida em mais de uma parcela. Cada parcela terá vencimento, baixa e comissão próprios." />
+              </div>
+            </div>
+
+            {isInstallment && (
+              <div className="space-y-3 pl-3 border-l-2 border-primary/25 ml-1">
+                <div className="space-y-1.5">
+                  <FieldLabel info="Cada parcela divide proporcionalmente o valor e a comissão de implantação.">
+                    Número de Parcelas
+                  </FieldLabel>
+                  <Input
+                    type="number"
+                    min="2"
+                    max="24"
+                    value={installmentCount}
+                    onChange={(e) => setInstallmentCount(e.target.value)}
+                    className="w-28 bg-muted/30 border-border/50"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {installmentDates.map((date, index) => (
+                    <div key={index} className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Parcela {index + 1}</Label>
+                      <DatePicker date={date} onSelect={(selectedDate) => {
+                        const updated = [...installmentDates];
+                        updated[index] = selectedDate;
+                        setInstallmentDates(updated);
+                      }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <Button onClick={handleSave} className="w-full mt-1">
             {editDeal ? "Salvar Alterações" : "Registrar Fechamento"}
           </Button>
         </div>
@@ -311,13 +412,31 @@ function DatePicker({ date, onSelect }: { date?: Date; onSelect: (d: Date | unde
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !date && "text-muted-foreground")}>
-          <CalendarIcon className="mr-2 h-4 w-4" />
+        <Button
+          variant="outline"
+          className={cn(
+            "w-full justify-start text-left font-normal text-sm bg-muted/30 border-border/50 hover:bg-muted/50",
+            !date && "text-muted-foreground"
+          )}
+        >
+          <CalendarIcon className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           {date ? format(date, "dd/MM/yyyy") : "Selecionar data"}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
-        <Calendar mode="single" selected={date} onSelect={onSelect} initialFocus className="p-3 pointer-events-auto" />
+      <PopoverContent
+        className="w-auto p-0"
+        align="start"
+        sideOffset={4}
+        collisionPadding={16}
+        avoidCollisions
+      >
+        <Calendar
+          mode="single"
+          selected={date}
+          onSelect={onSelect}
+          initialFocus
+          className="p-3 pointer-events-auto"
+        />
       </PopoverContent>
     </Popover>
   );

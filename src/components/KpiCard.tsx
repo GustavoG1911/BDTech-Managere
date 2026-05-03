@@ -1,5 +1,6 @@
-import { LucideIcon, HelpCircle } from "lucide-react";
+import { LucideIcon, HelpCircle, TrendingUp, TrendingDown } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 interface KpiCardProps {
   title: string;
@@ -12,84 +13,110 @@ interface KpiCardProps {
   onClick?: () => void;
 }
 
-const variantConfig = {
+const styles = {
   default: {
-    border: "border-border/60",
-    iconBg: "bg-muted/60",
-    iconColor: "text-muted-foreground",
-    valueColor: "text-foreground",
-    glow: "",
-    accent: "bg-muted/40",
+    card:      "border-border/70",
+    icon:      "bg-muted/60 text-muted-foreground ring-1 ring-border/50",
+    value:     "text-foreground",
+    bar:       "",
+    glow:      "",
   },
   primary: {
-    border: "border-primary/30",
-    iconBg: "bg-primary/15",
-    iconColor: "text-primary",
-    valueColor: "text-primary",
-    glow: "glow-blue",
-    accent: "bg-primary/8",
+    card:      "border-primary/20",
+    icon:      "bg-primary/15 text-primary ring-1 ring-primary/20",
+    value:     "text-primary",
+    bar:       "bg-primary",
+    glow:      "glow-blue",
   },
   success: {
-    border: "border-success/30",
-    iconBg: "bg-success/15",
-    iconColor: "text-success",
-    valueColor: "text-success",
-    glow: "glow-green",
-    accent: "bg-success/8",
+    card:      "border-success/20",
+    icon:      "bg-success/15 text-success ring-1 ring-success/20",
+    value:     "text-success",
+    bar:       "bg-success",
+    glow:      "glow-green",
   },
   warning: {
-    border: "border-warning/30",
-    iconBg: "bg-warning/15",
-    iconColor: "text-warning",
-    valueColor: "text-warning",
-    glow: "glow-yellow",
-    accent: "bg-warning/8",
+    card:      "border-warning/20",
+    icon:      "bg-warning/15 text-warning ring-1 ring-warning/20",
+    value:     "text-warning",
+    bar:       "bg-warning",
+    glow:      "glow-yellow",
   },
 } as const;
 
-export function KpiCard({ title, value, icon: Icon, trend, subtitle, variant = "default", tooltip, onClick }: KpiCardProps) {
-  const cfg = variantConfig[variant];
+export function KpiCard({
+  title, value, icon: Icon, trend, subtitle, variant = "default", tooltip, onClick,
+}: KpiCardProps) {
+  const s = styles[variant];
 
   return (
     <div
-      className={`relative bg-card rounded-xl border ${cfg.border} ${cfg.glow} p-5 flex flex-col gap-3 transition-all duration-200 ${onClick ? "cursor-pointer hover:scale-[1.02] hover:shadow-lg" : ""}`}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
+      onKeyDown={(e) => e.key === "Enter" && onClick?.()}
+      className={cn(
+        "relative bg-card rounded-xl border p-5 flex flex-col gap-4 overflow-hidden select-none",
+        s.card, s.glow,
+        onClick && "cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-xl active:scale-[0.99]",
+        !onClick && "cursor-default",
+      )}
     >
-      {/* Top row: title + icon */}
+      {/* Left accent stripe */}
+      {s.bar && (
+        <div className={cn(
+          "absolute inset-y-0 left-0 w-[3px] rounded-r-full opacity-70",
+          s.bar,
+        )} />
+      )}
+
+      {/* Top: label + icon */}
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">{title}</span>
+        <div className="flex flex-wrap items-start gap-x-1.5 gap-y-0.5 min-w-0 flex-1">
+          <p className="section-label leading-tight">{title}</p>
           {tooltip && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span onClick={(e) => e.stopPropagation()} className="cursor-help">
-                    <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/40" />
+                  <span
+                    className="cursor-help shrink-0 mt-px"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <HelpCircle className="h-3 w-3 text-muted-foreground/35 hover:text-muted-foreground transition-colors" />
                   </span>
                 </TooltipTrigger>
-                <TooltipContent side="top" className="max-w-[240px] text-xs" onClick={(e) => e.stopPropagation()}>
+                <TooltipContent
+                  side="top"
+                  className="max-w-[240px] text-xs"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {tooltip}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
           )}
         </div>
-        <div className={`h-9 w-9 rounded-lg ${cfg.iconBg} flex items-center justify-center shrink-0`}>
-          <Icon className={`h-4.5 w-4.5 ${cfg.iconColor}`} style={{ width: 18, height: 18 }} />
+
+        <div className={cn(
+          "h-8 w-8 rounded-xl flex items-center justify-center shrink-0",
+          s.icon,
+        )}>
+          <Icon style={{ width: 15, height: 15 }} />
         </div>
       </div>
 
-      {/* Value */}
-      <div>
-        <p className={`text-2xl font-bold tracking-tight ${cfg.valueColor}`}>{value}</p>
-        {trend && <p className="text-xs text-muted-foreground mt-1 leading-snug">{trend}</p>}
-        {subtitle && <p className="text-[10px] text-muted-foreground/55 mt-0.5 leading-snug">{subtitle}</p>}
+      {/* Bottom: value + trend */}
+      <div className="space-y-1">
+        <p className={cn("text-2xl font-bold tracking-tight tabular-nums", s.value)}>
+          {value}
+        </p>
+        {trend && (
+          <p className="text-xs text-muted-foreground leading-snug">{trend}</p>
+        )}
+        {subtitle && (
+          <p className="text-[11px] text-muted-foreground/50 leading-snug">{subtitle}</p>
+        )}
       </div>
-
-      {/* Bottom accent bar */}
-      {variant !== "default" && (
-        <div className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-b-xl ${cfg.iconBg}`} />
-      )}
     </div>
   );
 }

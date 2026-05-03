@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
@@ -20,12 +20,17 @@ import {
   Trash2,
   MailPlus,
   Send,
+  ImageIcon,
+  Upload,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsPanel } from "@/components/SettingsPanel";
+import { AvatarUpload } from "@/components/AvatarUpload";
 import { useAppData } from "@/hooks/useAppData";
+import { useAppLogo } from "@/hooks/useAppLogo";
 import { seedHistoricalData, clearTestData } from "@/lib/seed-test-data";
-import { isCompensatedPosition, isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
+import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 
 const POSITION_OPTIONS = ["SDR", "Executivo de Negócios", "Diretor"] as const;
 const ROLE_OPTIONS = ["user", "gestor", "admin"] as const;
@@ -116,6 +121,12 @@ export default function Settings() {
               Gestão de Equipe
             </TabsTrigger>
           )}
+          {role === "admin" && (
+            <TabsTrigger value="appearance" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
+              <ImageIcon className="h-3.5 w-3.5" />
+              Aparência
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="profile">
@@ -132,6 +143,11 @@ export default function Settings() {
         {role === "admin" && (
           <TabsContent value="team">
             <TeamTab />
+          </TabsContent>
+        )}
+        {role === "admin" && (
+          <TabsContent value="appearance">
+            <AppearanceTab />
           </TabsContent>
         )}
       </Tabs>
@@ -252,6 +268,11 @@ function ProfileTab() {
     );
   }
 
+  const avatarUrl: string | null = user?.user_metadata?.avatar_url ?? null;
+  const initials = form.full_name
+    ? form.full_name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase()
+    : (user?.email?.slice(0, 2).toUpperCase() ?? "BD");
+
   return (
     <div className="max-w-lg bg-card rounded-xl border border-border/60 p-5 space-y-5">
       <div className="flex items-center gap-2 pb-3 border-b border-border/40">
@@ -260,6 +281,24 @@ function ProfileTab() {
         </div>
         <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Meu Perfil</span>
       </div>
+
+      {/* ── Avatar ── */}
+      {user && (
+        <div className="flex items-center gap-4 py-1">
+          <AvatarUpload
+            userId={user.id}
+            currentUrl={avatarUrl}
+            initials={initials}
+            size="lg"
+          />
+          <div>
+            <p className="text-sm font-medium text-foreground">{form.full_name || user.email}</p>
+            <p className="text-xs text-muted-foreground/60 mt-0.5">
+              Clique na foto para alterar &middot; JPG, PNG ou WebP &middot; máx. 2 MB
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground uppercase tracking-wide">Nome Completo *</Label>
@@ -336,7 +375,6 @@ function InvitesTab() {
     fixed_salary: 0,
     commission_percent: 20,
   });
-  const inviteHasCompensation = isCompensatedPosition(form.position);
 
   const loadInvites = async () => {
     setLoading(true);
@@ -373,17 +411,16 @@ function InvitesTab() {
     setSending(true);
     const { data: authData } = await supabase.auth.getUser();
     const isTestEnv = authData.user?.email?.endsWith("@teste.com") || false;
-    const fixedSalary = inviteHasCompensation ? Number(form.fixed_salary || 0) : 0;
-    const commissionPercent = inviteHasCompensation ? Math.round(Number(form.commission_percent || 0)) : 0;
 
+    const isDiretor = form.position === "Diretor";
     const { error } = await (supabase as any)
       .from("user_invitations")
       .insert({
         email,
         position: form.position,
         role: "user",
-        fixed_salary: fixedSalary,
-        commission_percent: commissionPercent,
+        fixed_salary: isDiretor ? 0 : Number(form.fixed_salary || 0),
+        commission_percent: isDiretor ? 0 : Math.round(Number(form.commission_percent || 0)),
         invited_by: authData.user?.id,
         is_test_data: isTestEnv,
       });
@@ -442,16 +479,7 @@ function InvitesTab() {
 
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground uppercase tracking-wide">Cargo</Label>
-            <Select
-              value={form.position}
-              onValueChange={(val) => setForm({
-                ...form,
-                position: val,
-                role: "user",
-                fixed_salary: isCompensatedPosition(val) ? form.fixed_salary : 0,
-                commission_percent: isCompensatedPosition(val) ? form.commission_percent : 0,
-              })}
-            >
+            <Select value={form.position} onValueChange={(val) => setForm({ ...form, position: val, role: "user" })}>
               <SelectTrigger className="bg-muted/30 border-border/50">
                 <SelectValue />
               </SelectTrigger>
@@ -470,36 +498,40 @@ function InvitesTab() {
             </div>
           </div>
 
-          {inviteHasCompensation ? (
-            <>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground uppercase tracking-wide">Salário</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  value={form.fixed_salary}
-                  onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
-                  className="bg-muted/30 border-border/50 font-mono"
-                />
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Salário</Label>
+            {form.position === "Diretor" ? (
+              <div className="h-10 rounded-md border border-border/50 bg-muted/30 px-3 flex items-center text-sm text-muted-foreground/50 font-mono">
+                R$ 0 (Diretor)
               </div>
+            ) : (
+            <Input
+              type="number"
+              min="0"
+              value={form.fixed_salary}
+              onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
+              className="bg-muted/30 border-border/50 font-mono"
+            />
+            )}
+          </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground uppercase tracking-wide">Comissão %</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={form.commission_percent}
-                  onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
-                  className="bg-muted/30 border-border/50 font-mono"
-                />
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Comissão %</Label>
+            {form.position === "Diretor" ? (
+              <div className="h-10 rounded-md border border-border/50 bg-muted/30 px-3 flex items-center text-sm text-muted-foreground/50 font-mono">
+                0% (Diretor)
               </div>
-            </>
-          ) : (
-            <div className="md:col-span-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-              Diretor não recebe salário ou comissão no sistema. Ele apenas visualiza e baixa pagamentos dos funcionários.
-            </div>
-          )}
+            ) : (
+            <Input
+              type="number"
+              min="0"
+              max="100"
+              value={form.commission_percent}
+              onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
+              className="bg-muted/30 border-border/50 font-mono"
+            />
+            )}
+          </div>
 
           <div className="flex items-end">
             <Button onClick={handleInvite} disabled={sending} className="w-full gap-2">
@@ -536,9 +568,7 @@ function InvitesTab() {
                   <TableCell className="px-4 py-3 text-sm font-medium">{invite.email}</TableCell>
                   <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.position}</TableCell>
                   <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.role}</TableCell>
-                  <TableCell className="px-4 py-3 text-xs font-mono">
-                    {isCompensatedPosition(invite.position) ? `${Number(invite.commission_percent || 0)}%` : "N/A"}
-                  </TableCell>
+                  <TableCell className="px-4 py-3 text-xs font-mono">{Number(invite.commission_percent || 0)}%</TableCell>
                   <TableCell className="px-4 py-3">
                     <Badge variant={invite.status === "accepted" ? "default" : "secondary"}>
                       {invite.status === "accepted" ? "Aceito" : "Pendente"}
@@ -598,22 +628,16 @@ function TeamTab() {
 
   const handleUpdateField = async (userId: string, field: "role" | "position", value: string) => {
     const normalizedValue = field === "position" && value === "none" ? null : value;
-    const updatePayload: Record<string, string | number | null> = { [field]: normalizedValue };
+    const updatePayload: Record<string, string | null> = { [field]: normalizedValue };
     const currentProfile = profiles.find((profile) => profile.user_id === userId);
 
     if (field === "position" && isOperationalPosition(normalizedValue)) {
       updatePayload.role = "user";
     }
-    if (field === "position" && !isCompensatedPosition(normalizedValue)) {
-      updatePayload.fixed_salary = 0;
-      updatePayload.commission_percent = 0;
-    }
 
     if (field === "role" && value === "admin") {
       updatePayload.position = null;
       updatePayload.job_title = "Administrador do Sistema";
-      updatePayload.fixed_salary = 0;
-      updatePayload.commission_percent = 0;
     }
 
     if (field === "role" && isOperationalPosition(currentProfile?.position)) {
@@ -726,6 +750,165 @@ function TeamTab() {
           )}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Appearance Tab — admin only
+   Manages the system logo stored in Supabase Storage (app-assets bucket)
+───────────────────────────────────────────────────────────────────*/
+function AppearanceTab() {
+  const { logoUrl, loading, uploadLogo, removeLogo } = useAppLogo();
+  const [uploading, setUploading] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Selecione uma imagem (JPG, PNG, SVG ou WebP).");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Imagem muito grande. Máximo 2 MB.");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      await uploadLogo(file);
+      toast.success("Logo atualizada com sucesso!");
+    } catch (err: any) {
+      const msg: string = err?.message ?? "";
+      if (msg.toLowerCase().includes("bucket")) {
+        toast.error("Bucket 'app-assets' não existe. Crie-o em Supabase → Storage → Buckets (público).");
+      } else {
+        toast.error("Erro ao enviar logo: " + (msg || "Tente novamente."));
+      }
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  };
+
+  const handleRemove = async () => {
+    setRemoving(true);
+    try {
+      await removeLogo();
+      toast.success("Logo removida. O ícone padrão será exibido.");
+    } catch {
+      toast.error("Erro ao remover logo.");
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <div className="max-w-lg space-y-4">
+      {/* ── Logo do sistema ── */}
+      <div className="bg-card rounded-xl border border-border/70 p-5 space-y-5">
+        <div className="flex items-center gap-2 pb-3 border-b border-border/40">
+          <div className="h-8 w-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
+            <ImageIcon className="h-4 w-4 text-primary" />
+          </div>
+          <div>
+            <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">
+              Logo do Sistema
+            </span>
+            <p className="text-xs text-muted-foreground/50 mt-0.5">
+              Aparece no canto superior esquerdo da sidebar
+            </p>
+          </div>
+        </div>
+
+        {/* Preview */}
+        <div className="flex items-center gap-5">
+          <div className="h-20 w-20 rounded-2xl border-2 border-border/50 bg-muted/30
+                          flex items-center justify-center overflow-hidden shrink-0">
+            {loading ? (
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/40" />
+            ) : logoUrl ? (
+              <img src={logoUrl} alt="Logo atual" className="h-full w-full object-contain p-1.5" />
+            ) : (
+              <ImageIcon className="h-8 w-8 text-muted-foreground/25" />
+            )}
+          </div>
+
+          <div className="space-y-2 flex-1">
+            <p className="text-sm text-muted-foreground/70">
+              {logoUrl ? "Logo personalizada ativa" : "Usando ícone padrão do sistema"}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 border-border/60"
+                onClick={() => inputRef.current?.click()}
+                disabled={uploading}
+              >
+                {uploading
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <Upload className="h-3.5 w-3.5" />}
+                {uploading ? "Enviando..." : logoUrl ? "Trocar logo" : "Enviar logo"}
+              </Button>
+
+              {logoUrl && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={handleRemove}
+                  disabled={removing}
+                >
+                  {removing
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <X className="h-3.5 w-3.5" />}
+                  {removing ? "Removendo..." : "Remover"}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Format hints */}
+        <div className="rounded-lg bg-muted/20 border border-border/30 px-4 py-3 space-y-1">
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+            Requisitos
+          </p>
+          <ul className="text-xs text-muted-foreground/60 space-y-0.5">
+            <li>• Formatos: JPG, PNG, SVG ou WebP</li>
+            <li>• Tamanho máximo: 2 MB</li>
+            <li>• Recomendado: imagem quadrada ou logo com fundo transparente (PNG/SVG)</li>
+            <li>• A logo é armazenada no bucket <code className="text-primary/80">app-assets</code> do Supabase</li>
+          </ul>
+        </div>
+
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/svg+xml"
+          className="hidden"
+          onChange={handleFile}
+        />
+      </div>
+
+      {/* ── Bucket setup hint ── */}
+      <div className="rounded-xl border border-warning/20 bg-warning/5 p-4">
+        <p className="text-[11px] font-semibold text-warning uppercase tracking-wide mb-1.5">
+          Pré-requisito — Buckets no Supabase
+        </p>
+        <p className="text-xs text-muted-foreground/70 leading-relaxed">
+          Para ativar uploads, crie dois buckets públicos em{" "}
+          <span className="text-foreground font-medium">Supabase → Storage → Buckets</span>:
+          <br />
+          <span className="text-primary/80 font-mono">avatars</span> — fotos de perfil dos usuários
+          <br />
+          <span className="text-primary/80 font-mono">app-assets</span> — logo do sistema
+        </p>
+      </div>
     </div>
   );
 }
