@@ -5,7 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { fetchAvailableYears } from "@/lib/supabase-deals";
 import { KpiCard } from "@/components/KpiCard";
 import { PresentationsCard } from "@/components/PresentationsCard";
-import { OperationsChart } from "@/components/OperationsChart";
+import { DashboardCharts } from "@/components/DashboardCharts";
 import { DealsTable } from "@/components/DealsTable";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -17,22 +17,11 @@ import { calculateCommission, formatCurrency, getMonthKey, formatMonthLabel, get
 import { downloadReportPDF, printReport } from "@/lib/report";
 import { Deal, PaymentStatus } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent } from "@/components/ui/card";
-import { Plus, DollarSign, TrendingUp, BadgeDollarSign, CalendarDays, FileDown, Printer, BarChart3, HelpCircle, AlertTriangle } from "lucide-react";
+import { Plus, DollarSign, TrendingUp, BadgeDollarSign, FileDown, Printer, BarChart3, AlertTriangle } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
 import { InfoHint } from "@/components/InfoHint";
-
-/* ─── Palette constants that match the new CSS tokens ─── */
-const CHT_BG     = "#0D1320";   /* --card  hsl(218 35% 8%)  */
-const CHT_BORDER = "#192035";   /* --border hsl(218 22% 14%) */
-const CHT_FG     = "#E4EAF5";   /* --foreground */
-const CHT_MUTED  = "#728BAE";   /* --muted-foreground */
-const CHT_BLUE   = "#4F8EF7";   /* --primary */
-const CHT_GREEN  = "#10b981";   /* --success */
 
 export default function Index() {
   const queryClient = useQueryClient();
@@ -172,28 +161,6 @@ export default function Index() {
     return data;
   }, [dateRange, closedDeals, presentations]);
 
-  const volumeChartData = useMemo((): any[] => {
-    if (isSingleMonth && chartTimeline.length > 0) {
-      const d = chartTimeline[0];
-      return [
-        { name: "BluePex",   value: d.bluepexVolume, fill: CHT_BLUE  },
-        { name: "Opus Tech", value: d.opusVolume,    fill: CHT_GREEN },
-      ];
-    }
-    return chartTimeline.map(d => ({ name: d.name, "BluePex": d.bluepexVolume, "Opus Tech": d.opusVolume }));
-  }, [isSingleMonth, chartTimeline]);
-
-  const presChartData = useMemo((): any[] => {
-    if (isSingleMonth && chartTimeline.length > 0) {
-      const d = chartTimeline[0];
-      return [
-        { name: "BluePex",   value: d.bluepexPres, fill: CHT_BLUE  },
-        { name: "Opus Tech", value: d.opusPres,    fill: CHT_GREEN },
-      ];
-    }
-    return chartTimeline.map(d => ({ name: d.name, "BluePex": d.bluepexPres, "Opus Tech": d.opusPres }));
-  }, [isSingleMonth, chartTimeline]);
-
   const kpis = useMemo(() => {
     let comissaoFechamentos = 0;
     let volumeFechamentos = 0;
@@ -306,20 +273,6 @@ export default function Index() {
     printReport({ deals: filteredDeals, presentations: optimisticPresentations, salary: settings.fixedSalary, periodLabel, settings, superMeta });
   };
 
-  /* ── Recharts shared tooltip style ── */
-  const tooltipStyle = {
-    contentStyle: {
-      backgroundColor: CHT_BG,
-      border: `1px solid ${CHT_BORDER}`,
-      borderRadius: "10px",
-      color: CHT_FG,
-      fontSize: "11px",
-      boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
-      padding: "8px 12px",
-    },
-    labelStyle: { color: CHT_FG, fontWeight: 600, marginBottom: 4 },
-    cursor:       { fill: "rgba(255,255,255,0.03)" },
-  };
 
   return (
     <TooltipProvider>
@@ -473,88 +426,11 @@ export default function Index() {
         )}
 
         {/* ── Charts ── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Volume Chart */}
-          <div className="bg-card rounded-xl border border-border/60 p-5 h-[280px] flex flex-col">
-            <span className="section-label mb-4">
-              Volume Bruto por Operação {!isSingleMonth ? "" : periodSuffix}
-            </span>
-            <div className="flex-1 min-h-0">
-              <ResponsiveContainer width="100%" height="100%" debounce={80}>
-                <BarChart data={volumeChartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: CHT_MUTED }} />
-                  <YAxis
-                    axisLine={false} tickLine={false}
-                    tick={{ fontSize: 10, fill: CHT_MUTED }}
-                    tickFormatter={(v) => v >= 1000 ? `R$${(v / 1000).toFixed(0)}k` : `R$${v}`}
-                    width={44}
-                  />
-                  <RechartsTooltip
-                    formatter={(value: number, name: string) => [formatCurrency(value), name]}
-                    {...tooltipStyle}
-                    itemStyle={{ color: CHT_BLUE }}
-                  />
-                  {isSingleMonth ? (
-                    <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                      <LabelList
-                        dataKey="value" position="top"
-                        formatter={(v: number) => v > 0 ? formatCurrency(v) : ""}
-                        style={{ fill: CHT_MUTED, fontSize: 9 }}
-                      />
-                      {volumeChartData.map((entry: any, index: number) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Bar>
-                  ) : (
-                    <>
-                      <Bar dataKey="BluePex"   fill={CHT_BLUE}  radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="Opus Tech" fill={CHT_GREEN} radius={[4, 4, 0, 0]} />
-                    </>
-                  )}
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Presentations Chart */}
-          <div className="bg-card rounded-xl border border-border/60 p-5 h-[280px] flex flex-col">
-            <span className="section-label mb-4">
-              Apresentações Realizadas {!isSingleMonth ? "" : periodSuffix}
-            </span>
-            <div className="flex-1 min-h-0">
-              <ResponsiveContainer width="100%" height="100%" debounce={80}>
-                <BarChart data={presChartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: CHT_MUTED }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: CHT_MUTED }} width={24} />
-                  <RechartsTooltip
-                    formatter={(value: number) => [`${value} APs`, "Apresentações"]}
-                    {...tooltipStyle}
-                    itemStyle={{ color: CHT_GREEN }}
-                  />
-                  {isSingleMonth ? (
-                    <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                      <LabelList
-                        dataKey="value" position="top"
-                        formatter={(v: number) => v > 0 ? `${v} APs` : ""}
-                        style={{ fill: CHT_MUTED, fontSize: 10 }}
-                      />
-                      {presChartData.map((entry: any, index: number) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Bar>
-                  ) : (
-                    <>
-                      <Bar dataKey="BluePex"   fill={CHT_BLUE}  radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="Opus Tech" fill={CHT_GREEN} radius={[4, 4, 0, 0]} />
-                    </>
-                  )}
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
+        <DashboardCharts
+          chartTimeline={chartTimeline}
+          isSingleMonth={isSingleMonth}
+          superMetaThreshold={settings.superMetaThreshold ?? 30}
+        />
 
         {/* ── Deals Table ── */}
         <DealsTable
