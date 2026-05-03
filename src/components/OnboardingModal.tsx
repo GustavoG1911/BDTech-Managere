@@ -9,7 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { Save, User } from "lucide-react";
 import { InfoHint } from "@/components/InfoHint";
-import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
+import { isCompensatedPosition, isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 
 const CARGO_OPTIONS = [
   { value: "Diretor", label: "Diretor" },
@@ -57,6 +57,8 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
       : CARGO_OPTIONS.filter((cargo) => canChooseDirector || cargo.value !== "Diretor"),
     [canChooseDirector, lockedOperationalCargo, form.cargo]
   );
+  const selectedPosition = form.cargo || position || "";
+  const formHasCompensation = isCompensatedPosition(selectedPosition);
 
   useEffect(() => {
     if (!user) return;
@@ -125,12 +127,14 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
       return;
     }
 
-    if (form.fixed_salary < 0) {
+    const selectedHasCompensation = isCompensatedPosition(selectedCargo?.value);
+
+    if (selectedHasCompensation && form.fixed_salary < 0) {
       toast.error("O salário fixo não pode ser negativo.");
       return;
     }
 
-    if (form.commission_percent < 0 || form.commission_percent > 100) {
+    if (selectedHasCompensation && (form.commission_percent < 0 || form.commission_percent > 100)) {
       toast.error("A comissão deve ficar entre 0% e 100%.");
       return;
     }
@@ -148,8 +152,8 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
           display_name: displayName,
           position: selectedCargo?.value ?? null,
           job_title: selectedCargo?.label ?? "Administrador do Sistema",
-          fixed_salary: form.fixed_salary,
-          commission_percent: Math.round(form.commission_percent),
+          fixed_salary: selectedHasCompensation ? form.fixed_salary : 0,
+          commission_percent: selectedHasCompensation ? Math.round(form.commission_percent) : 0,
           is_test_data: isTestData,
         },
         { onConflict: "user_id" }
@@ -217,7 +221,16 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
                 <Label className="text-xs">Cargo no sistema *</Label>
                 <InfoHint text="O cargo controla a visão do sistema: Diretor vê a operação completa, Executivo vê seus fechamentos e SDR acompanha os executivos." />
               </div>
-              <Select value={form.cargo} onValueChange={(v) => setForm({ ...form, cargo: v })} disabled={lockedOperationalCargo}>
+              <Select
+                value={form.cargo}
+                onValueChange={(v) => setForm({
+                  ...form,
+                  cargo: v,
+                  fixed_salary: isCompensatedPosition(v) ? form.fixed_salary : 0,
+                  commission_percent: isCompensatedPosition(v) ? form.commission_percent : 0,
+                })}
+                disabled={lockedOperationalCargo}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Selecione seu cargo" />
                 </SelectTrigger>
@@ -232,7 +245,13 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
             </div>
           )}
 
-          {canChooseDirector && !pureAdmin && (
+          {!pureAdmin && selectedPosition === "Diretor" && (
+            <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              Diretor não recebe salário ou comissão no sistema. Ele apenas acompanha a operação e baixa pagamentos dos funcionários.
+            </div>
+          )}
+
+          {canChooseDirector && !pureAdmin && formHasCompensation && (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1.5">

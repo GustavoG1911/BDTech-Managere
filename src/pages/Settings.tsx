@@ -25,7 +25,7 @@ import { toast } from "sonner";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { useAppData } from "@/hooks/useAppData";
 import { seedHistoricalData, clearTestData } from "@/lib/seed-test-data";
-import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
+import { isCompensatedPosition, isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 
 const POSITION_OPTIONS = ["SDR", "Executivo de Negócios", "Diretor"] as const;
 const ROLE_OPTIONS = ["user", "gestor", "admin"] as const;
@@ -336,6 +336,7 @@ function InvitesTab() {
     fixed_salary: 0,
     commission_percent: 20,
   });
+  const inviteHasCompensation = isCompensatedPosition(form.position);
 
   const loadInvites = async () => {
     setLoading(true);
@@ -372,6 +373,8 @@ function InvitesTab() {
     setSending(true);
     const { data: authData } = await supabase.auth.getUser();
     const isTestEnv = authData.user?.email?.endsWith("@teste.com") || false;
+    const fixedSalary = inviteHasCompensation ? Number(form.fixed_salary || 0) : 0;
+    const commissionPercent = inviteHasCompensation ? Math.round(Number(form.commission_percent || 0)) : 0;
 
     const { error } = await (supabase as any)
       .from("user_invitations")
@@ -379,8 +382,8 @@ function InvitesTab() {
         email,
         position: form.position,
         role: "user",
-        fixed_salary: Number(form.fixed_salary || 0),
-        commission_percent: Math.round(Number(form.commission_percent || 0)),
+        fixed_salary: fixedSalary,
+        commission_percent: commissionPercent,
         invited_by: authData.user?.id,
         is_test_data: isTestEnv,
       });
@@ -439,7 +442,16 @@ function InvitesTab() {
 
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground uppercase tracking-wide">Cargo</Label>
-            <Select value={form.position} onValueChange={(val) => setForm({ ...form, position: val, role: "user" })}>
+            <Select
+              value={form.position}
+              onValueChange={(val) => setForm({
+                ...form,
+                position: val,
+                role: "user",
+                fixed_salary: isCompensatedPosition(val) ? form.fixed_salary : 0,
+                commission_percent: isCompensatedPosition(val) ? form.commission_percent : 0,
+              })}
+            >
               <SelectTrigger className="bg-muted/30 border-border/50">
                 <SelectValue />
               </SelectTrigger>
@@ -458,28 +470,36 @@ function InvitesTab() {
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Salário</Label>
-            <Input
-              type="number"
-              min="0"
-              value={form.fixed_salary}
-              onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
-              className="bg-muted/30 border-border/50 font-mono"
-            />
-          </div>
+          {inviteHasCompensation ? (
+            <>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground uppercase tracking-wide">Salário</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={form.fixed_salary}
+                  onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
+                  className="bg-muted/30 border-border/50 font-mono"
+                />
+              </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Comissão %</Label>
-            <Input
-              type="number"
-              min="0"
-              max="100"
-              value={form.commission_percent}
-              onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
-              className="bg-muted/30 border-border/50 font-mono"
-            />
-          </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground uppercase tracking-wide">Comissão %</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={form.commission_percent}
+                  onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
+                  className="bg-muted/30 border-border/50 font-mono"
+                />
+              </div>
+            </>
+          ) : (
+            <div className="md:col-span-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              Diretor não recebe salário ou comissão no sistema. Ele apenas visualiza e baixa pagamentos dos funcionários.
+            </div>
+          )}
 
           <div className="flex items-end">
             <Button onClick={handleInvite} disabled={sending} className="w-full gap-2">
@@ -516,7 +536,9 @@ function InvitesTab() {
                   <TableCell className="px-4 py-3 text-sm font-medium">{invite.email}</TableCell>
                   <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.position}</TableCell>
                   <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.role}</TableCell>
-                  <TableCell className="px-4 py-3 text-xs font-mono">{Number(invite.commission_percent || 0)}%</TableCell>
+                  <TableCell className="px-4 py-3 text-xs font-mono">
+                    {isCompensatedPosition(invite.position) ? `${Number(invite.commission_percent || 0)}%` : "N/A"}
+                  </TableCell>
                   <TableCell className="px-4 py-3">
                     <Badge variant={invite.status === "accepted" ? "default" : "secondary"}>
                       {invite.status === "accepted" ? "Aceito" : "Pendente"}
@@ -576,16 +598,22 @@ function TeamTab() {
 
   const handleUpdateField = async (userId: string, field: "role" | "position", value: string) => {
     const normalizedValue = field === "position" && value === "none" ? null : value;
-    const updatePayload: Record<string, string | null> = { [field]: normalizedValue };
+    const updatePayload: Record<string, string | number | null> = { [field]: normalizedValue };
     const currentProfile = profiles.find((profile) => profile.user_id === userId);
 
     if (field === "position" && isOperationalPosition(normalizedValue)) {
       updatePayload.role = "user";
     }
+    if (field === "position" && !isCompensatedPosition(normalizedValue)) {
+      updatePayload.fixed_salary = 0;
+      updatePayload.commission_percent = 0;
+    }
 
     if (field === "role" && value === "admin") {
       updatePayload.position = null;
       updatePayload.job_title = "Administrador do Sistema";
+      updatePayload.fixed_salary = 0;
+      updatePayload.commission_percent = 0;
     }
 
     if (field === "role" && isOperationalPosition(currentProfile?.position)) {
