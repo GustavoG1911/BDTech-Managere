@@ -40,6 +40,7 @@ export interface ChartDataPoint {
   opusPres: number;
   totalVolume: number;
   totalPres: number;
+  totalDeals: number;
 }
 
 interface DashboardChartsProps {
@@ -320,10 +321,10 @@ function VolumeAreaChart({ data }: { data: ChartDataPoint[] }) {
 function ConversionComboChart({ data }: { data: ChartDataPoint[] }) {
   const enriched = useMemo(() =>
     data.map(d => {
-      const deals = (d.bluepexVolume > 0 ? 1 : 0) + (d.opusVolume > 0 ? 1 : 0);
-      const totalPres = d.bluepexPres + d.opusPres;
-      const rate = totalPres > 0 ? Math.round((deals / totalPres) * 100 * 10) / 10 : 0;
-      return { ...d, deals, rate };
+      const rate = d.totalPres > 0
+        ? Math.round((d.totalDeals / d.totalPres) * 100 * 10) / 10
+        : 0;
+      return { ...d, rate };
     }),
   [data]);
 

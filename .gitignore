@@ -38,3 +38,6 @@ codex-final-fixes.patch
 # Python cache
 __pycache__/
 *.pyc
+attached_assets/
+agent_changes.*
+*.patch

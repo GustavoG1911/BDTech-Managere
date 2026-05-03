@@ -155,6 +155,7 @@ export default function Index() {
         bluepexPres: p.bluepex, opusPres: p.opus,
         totalVolume: bpVol + opVol,
         totalPres: p.bluepex + p.opus,
+        totalDeals: dealsInMonth.length,
       });
       start.setMonth(start.getMonth() + 1);
     }

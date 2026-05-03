@@ -412,14 +412,15 @@ function InvitesTab() {
     const { data: authData } = await supabase.auth.getUser();
     const isTestEnv = authData.user?.email?.endsWith("@teste.com") || false;
 
+    const isDiretor = form.position === "Diretor";
     const { error } = await (supabase as any)
       .from("user_invitations")
       .insert({
         email,
         position: form.position,
         role: "user",
-        fixed_salary: Number(form.fixed_salary || 0),
-        commission_percent: Math.round(Number(form.commission_percent || 0)),
+        fixed_salary: isDiretor ? 0 : Number(form.fixed_salary || 0),
+        commission_percent: isDiretor ? 0 : Math.round(Number(form.commission_percent || 0)),
         invited_by: authData.user?.id,
         is_test_data: isTestEnv,
       });
@@ -499,6 +500,11 @@ function InvitesTab() {
 
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground uppercase tracking-wide">Salário</Label>
+            {form.position === "Diretor" ? (
+              <div className="h-10 rounded-md border border-border/50 bg-muted/30 px-3 flex items-center text-sm text-muted-foreground/50 font-mono">
+                R$ 0 (Diretor)
+              </div>
+            ) : (
             <Input
               type="number"
               min="0"
@@ -506,10 +512,16 @@ function InvitesTab() {
               onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
               className="bg-muted/30 border-border/50 font-mono"
             />
+            )}
           </div>
 
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground uppercase tracking-wide">Comissão %</Label>
+            {form.position === "Diretor" ? (
+              <div className="h-10 rounded-md border border-border/50 bg-muted/30 px-3 flex items-center text-sm text-muted-foreground/50 font-mono">
+                0% (Diretor)
+              </div>
+            ) : (
             <Input
               type="number"
               min="0"
@@ -518,6 +530,7 @@ function InvitesTab() {
               onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
               className="bg-muted/30 border-border/50 font-mono"
             />
+            )}
           </div>
 
           <div className="flex items-end">
