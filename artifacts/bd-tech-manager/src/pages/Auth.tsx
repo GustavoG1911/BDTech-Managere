@@ -3,9 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DollarSign, Loader2, Mail, Chrome } from "lucide-react";
+import { TrendingUp, Loader2, Mail, Chrome, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Auth() {
@@ -16,14 +15,11 @@ export default function Auth() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    console.log("[Auth] Tentando login com:", email);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      // Ignorar erro de schema e deixar o session/user gerenciar
       if (error.message?.includes("querying schema")) {
         console.warn("[Auth] Erro de schema ignorado. Conectando...");
       } else {
-        console.error("[Auth] Erro no login:", error);
         toast.error(error.message);
       }
     } else {
@@ -71,84 +67,149 @@ export default function Auth() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-sm space-y-6">
-        {/* Logo */}
-        <div className="flex flex-col items-center gap-2">
-          <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
-            <DollarSign className="h-5 w-5 text-primary-foreground" />
+    <div className="dark min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="w-full max-w-sm space-y-8">
+
+        {/* Brand */}
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-lg shadow-primary/30 ring-1 ring-primary/20">
+            <TrendingUp className="h-6 w-6 text-white" />
           </div>
-          <h1 className="text-xl font-bold tracking-tight">BD Tech Manager</h1>
-          <p className="text-sm text-muted-foreground">Gestão de comissões e recebíveis</p>
+          <div className="text-center space-y-0.5">
+            <h1 className="text-xl font-bold tracking-tight text-foreground">BD Tech Manager</h1>
+            <p className="text-xs text-muted-foreground">Gestão de comissões e recebíveis</p>
+          </div>
         </div>
 
-        <Card className="glass-card">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-center text-base">Acesse sua conta</CardTitle>
-            <p className="text-center text-xs text-muted-foreground">
-              O acesso é liberado somente por convite. Use o mesmo e-mail convidado pelo administrador.
+        {/* Card */}
+        <div className="bg-card rounded-2xl border border-border/60 p-6 space-y-5 shadow-xl shadow-black/20">
+          <div className="text-center space-y-1">
+            <p className="text-sm font-semibold text-foreground">Acesse sua conta</p>
+            <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+              Acesso liberado somente por convite.
             </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Google */}
-            <Button variant="outline" className="w-full" onClick={handleGoogleLogin}>
-              <Chrome className="h-4 w-4 mr-2" />
-              Entrar com Google
-            </Button>
+          </div>
 
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">ou</span>
-              </div>
+          {/* Google */}
+          <Button
+            variant="outline"
+            className="w-full gap-2 border-border/60 hover:bg-muted/50 hover:border-border transition-all"
+            onClick={handleGoogleLogin}
+          >
+            <Chrome className="h-4 w-4" />
+            Entrar com Google
+          </Button>
+
+          {/* Divider */}
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t border-border/50" />
             </div>
+            <div className="relative flex justify-center">
+              <span className="bg-card px-3 text-[10px] text-muted-foreground/50 uppercase tracking-widest">
+                ou
+              </span>
+            </div>
+          </div>
 
-            {/* Email tabs */}
-            <Tabs defaultValue="login">
-              <TabsList className="w-full h-8">
-                <TabsTrigger value="login" className="text-xs flex-1">Entrar</TabsTrigger>
-                <TabsTrigger value="signup" className="text-xs flex-1">Tenho convite</TabsTrigger>
-              </TabsList>
+          {/* Email tabs */}
+          <Tabs defaultValue="login">
+            <TabsList className="w-full h-9 bg-muted/40 border border-border/40">
+              <TabsTrigger value="login" className="flex-1 text-xs data-[state=active]:bg-card data-[state=active]:shadow-sm">
+                Entrar
+              </TabsTrigger>
+              <TabsTrigger value="signup" className="flex-1 text-xs data-[state=active]:bg-card data-[state=active]:shadow-sm">
+                Tenho convite
+              </TabsTrigger>
+            </TabsList>
 
-              <TabsContent value="login">
-                <form onSubmit={handleLogin} className="space-y-3 mt-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Email</Label>
-                    <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="seu@email.com" required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Senha</Label>
-                    <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={loading}>
-                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Mail className="h-4 w-4 mr-2" />Entrar</>}
-                  </Button>
-                  <Button type="button" variant="link" className="w-full text-xs p-0 h-auto" onClick={handleForgotPassword}>
-                    Esqueci minha senha
-                  </Button>
-                </form>
-              </TabsContent>
+            {/* Login */}
+            <TabsContent value="login">
+              <form onSubmit={handleLogin} className="space-y-4 mt-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Email</Label>
+                  <Input
+                    id="login-email"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="seu@email.com"
+                    required
+                    className="bg-muted/30 border-border/50 focus-visible:border-primary/50"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Senha</Label>
+                  <Input
+                    id="login-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    className="bg-muted/30 border-border/50 focus-visible:border-primary/50"
+                  />
+                </div>
+                <Button type="submit" className="w-full gap-2" disabled={loading}>
+                  {loading
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : <><Mail className="h-4 w-4" />Entrar<ArrowRight className="h-3.5 w-3.5 ml-auto" /></>
+                  }
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full text-xs text-muted-foreground h-auto py-1 hover:text-foreground"
+                  onClick={handleForgotPassword}
+                >
+                  Esqueci minha senha
+                </Button>
+              </form>
+            </TabsContent>
 
-              <TabsContent value="signup">
-                <form onSubmit={handleSignUp} className="space-y-3 mt-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Email</Label>
-                    <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="seu@email.com" required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Senha</Label>
-                    <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" required minLength={6} />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={loading}>
-                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Criar acesso"}
-                  </Button>
-                </form>
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
+            {/* Sign up */}
+            <TabsContent value="signup">
+              <form onSubmit={handleSignUp} className="space-y-4 mt-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Email do convite</Label>
+                  <Input
+                    id="signup-email"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="seu@email.com"
+                    required
+                    className="bg-muted/30 border-border/50 focus-visible:border-primary/50"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Criar senha</Label>
+                  <Input
+                    id="signup-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Mínimo 6 caracteres"
+                    required
+                    minLength={6}
+                    className="bg-muted/30 border-border/50 focus-visible:border-primary/50"
+                  />
+                </div>
+                <Button type="submit" className="w-full gap-2" disabled={loading}>
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Criar acesso"}
+                </Button>
+              </form>
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        <p className="text-center text-[10px] text-muted-foreground/40 tracking-widest uppercase">
+          Sales Intelligence Platform
+        </p>
       </div>
     </div>
   );

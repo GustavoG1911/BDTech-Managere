@@ -1,0 +1,69 @@
+Boa auditoria. Pode seguir, mas preciso reforçar uma regra crítica:
+
+O Replit é apenas ambiente temporário. A versão final continuará rodando pela Lovable ou Cloudflare Pages, puxando do GitHub. Portanto, nenhuma mudança pode tornar o app dependente do Replit, pnpm workspace, artifacts/api-server ou mockup-sandbox.
+
+A aplicação final precisa continuar compatível com o projeto Vite estático original:
+- React + Vite + TypeScript
+- Supabase como backend principal
+- Supabase Auth, RLS, Realtime e Edge Functions
+- build estático com npm run build
+- variáveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY
+
+IMPORTANTE SOBRE ESTRUTURA:
+Se você estiver trabalhando em artifacts/bd-tech-manager por causa do Replit, as mudanças de produto/UI precisam também ser aplicáveis ao app principal original. Não quero uma UI bonita apenas no artifact se isso não chegar corretamente ao app final.
+
+Não altere a arquitetura.
+Não migre para Clerk.
+Não torne Express/Drizzle obrigatório.
+Não altere schema, migrations, RLS ou Edge Functions.
+Não altere regras de negócio.
+Não altere fluxos financeiros.
+
+Aprovado para implementar agora os itens de baixo risco:
+1. Corrigir sizing do Recharts / OperationsChart.
+3. Melhorar sidebar e seção “Em Breve”.
+4. Melhorar Auth com autocomplete/acessibilidade.
+5. Melhorar DealFormDialog em mobile, especialmente date-pickers/popovers.
+7. Adicionar future flags do React Router se compatível.
+8. Header com nome da página ativa.
+
+Não implementar agora:
+- Item 2, refactor grande do Financeiro.tsx, sem plano separado.
+- Item 6, meta dinâmica, sem confirmar schema e sem aprovação.
+- Badge novo de notificações pendentes na sidebar, por enquanto não. Isso é funcionalidade nova, não UI pura.
+
+Agora quero uma melhoria visual mais forte, com aparência de produto SaaS profissional.
+
+Direção visual desejada:
+- Moderna, limpa e profissional.
+- Menos aparência de template Lovable/Replit.
+- Melhor hierarquia visual para KPIs, filtros, gráficos e tabelas.
+- Mais clareza para leitura rápida.
+- Dark mode mais refinado, com melhor contraste.
+- Cards menos pesados e mais consistentes.
+- Tabelas financeiras mais legíveis.
+- Badges/status muito claros para:
+  previsto, pendente, baixado, aguardando confirmação, confirmado, rejeitado.
+- Formulários mais organizados e fáceis de preencher.
+- Mobile realmente utilizável.
+- Loading, vazio, erro e sincronização com visual profissional.
+
+Telas prioritárias:
+1. Dashboard principal.
+2. Financeiro / Torre de Controle.
+3. Financeiro individual Executivo/SDR.
+4. Novo fechamento / edição de fechamento.
+5. Configurações / Equipe / Convites.
+6. Onboarding.
+
+Antes de mexer no Financeiro.tsx em grande escala, faça somente melhorias visuais localizadas. Se quiser dividir componentes, apresente plano separado antes.
+
+Critérios de aceite:
+- Não quebrar deploy Lovable/Cloudflare Pages.
+- Não depender de backend Replit.
+- Não quebrar Supabase.
+- Não mudar regra de negócio.
+- Não mudar banco.
+- Não criar funções novas sem aprovação.
+- Rodar npx tsc --noEmit no final.
+- Informar exatamente quais arquivos foram alterados.

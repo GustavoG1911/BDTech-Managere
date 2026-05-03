@@ -20,13 +20,13 @@ const queryClient = new QueryClient();
 function SyncingScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-sm rounded-xl border border-border/60 bg-card p-5 text-center shadow-lg">
-        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/15">
+      <div className="w-full max-w-xs rounded-2xl border border-border/60 bg-card p-6 text-center shadow-xl">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
           <RefreshCw className="h-5 w-5 animate-spin text-primary" />
         </div>
-        <p className="text-sm font-semibold text-foreground">Atualizando o sistema</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Estamos sincronizando seu perfil, permissões e dados mais recentes.
+        <p className="text-sm font-semibold text-foreground">Sincronizando</p>
+        <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
+          Carregando perfil, permissões e dados…
         </p>
       </div>
     </div>
@@ -37,10 +37,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, role, position } = useAuth();
   const location = useLocation();
 
-  if (loading) {
-    return <SyncingScreen />;
-  }
-
+  if (loading) return <SyncingScreen />;
   if (!user) return <Navigate to="/auth" replace />;
   if (isPureSystemAdmin(role, position) && location.pathname !== "/settings") {
     return <Navigate to="/settings" replace />;
@@ -50,11 +47,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
-
-  if (loading) {
-    return <SyncingScreen />;
-  }
-
+  if (loading) return <SyncingScreen />;
   if (user) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
@@ -70,7 +63,12 @@ const App = () => {
         <Toaster />
         <Sonner />
         <AuthProvider>
-          <BrowserRouter>
+          <BrowserRouter
+            future={{
+              v7_startTransition: true,
+              v7_relativeSplatPath: true,
+            }}
+          >
             <Routes>
               <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
               <Route path="/auth" element={<PublicRoute><Auth /></PublicRoute>} />

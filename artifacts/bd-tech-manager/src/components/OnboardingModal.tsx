@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import { Save, User } from "lucide-react";
+import { Save, User, BadgeDollarSign, Loader2 } from "lucide-react";
 import { InfoHint } from "@/components/InfoHint";
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 
@@ -184,23 +184,30 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
         {...(isForced ? { "data-forced": true } : {})}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <User className="h-5 w-5 text-primary" />
-            {isForced ? "Complete seu perfil" : "Meu perfil"}
-          </DialogTitle>
-          <DialogDescription>
-            {isForced
-              ? pureAdmin
-                ? "Confirme seu nome para liberar o painel administrativo."
-                : "Nome completo e cargo são obrigatórios para liberar o acesso correto ao sistema."
-              : "Atualize suas informações pessoais."}
-          </DialogDescription>
+          <div className="flex items-center gap-2.5 mb-1">
+            <div className="h-9 w-9 rounded-xl bg-primary/15 flex items-center justify-center ring-1 ring-primary/20">
+              <User className="text-primary" style={{ width: 18, height: 18 }} />
+            </div>
+            <div>
+              <DialogTitle className="text-base leading-tight">
+                {isForced ? "Complete seu perfil" : "Meu perfil"}
+              </DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                {isForced
+                  ? pureAdmin
+                    ? "Confirme seu nome para liberar o painel."
+                    : "Nome e cargo são obrigatórios para liberar o acesso."
+                  : "Atualize suas informações pessoais."}
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className="space-y-4 py-1">
+          {/* Nome */}
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5">
-              <Label className="text-xs">Nome completo *</Label>
+              <Label className="text-xs text-muted-foreground">Nome completo *</Label>
               <InfoHint text="Esse nome aparece em filtros, pagamentos, notificações e relatórios." />
             </div>
             <Input
@@ -208,17 +215,23 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
               onChange={(e) => setForm({ ...form, full_name: e.target.value })}
               placeholder="Seu nome completo"
               autoComplete="name"
+              className="bg-muted/30 border-border/50"
             />
           </div>
 
+          {/* Cargo */}
           {!pureAdmin && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <Label className="text-xs">Cargo no sistema *</Label>
+                <Label className="text-xs text-muted-foreground">Cargo no sistema *</Label>
                 <InfoHint text="O cargo controla a visão do sistema: Diretor vê a operação completa, Executivo vê seus fechamentos e SDR acompanha os executivos." />
               </div>
-              <Select value={form.cargo} onValueChange={(v) => setForm({ ...form, cargo: v })} disabled={lockedOperationalCargo}>
-                <SelectTrigger>
+              <Select
+                value={form.cargo}
+                onValueChange={(v) => setForm({ ...form, cargo: v })}
+                disabled={lockedOperationalCargo}
+              >
+                <SelectTrigger className="bg-muted/30 border-border/50">
                   <SelectValue placeholder="Selecione seu cargo" />
                 </SelectTrigger>
                 <SelectContent>
@@ -232,42 +245,51 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
             </div>
           )}
 
+          {/* Remuneração */}
           {canChooseDirector && !pureAdmin && (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5">
-                  <Label className="text-xs">Salário fixo (R$)</Label>
-                  <InfoHint text="Valor mensal usado no Financeiro. Pode ser ajustado depois em Configurações." />
-                </div>
-                <Input
-                  type="number"
-                  min="0"
-                  value={form.fixed_salary}
-                  onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
-                  className="font-mono"
-                />
+            <div className="rounded-xl border border-border/40 bg-muted/15 p-3.5 space-y-3">
+              <div className="flex items-center gap-1.5">
+                <BadgeDollarSign className="h-3.5 w-3.5 text-muted-foreground/60" />
+                <span className="section-label">Remuneração</span>
               </div>
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5">
-                  <Label className="text-xs">Comissão (%)</Label>
-                  <InfoHint text="Percentual individual aplicado ao cálculo de comissão deste funcionário." />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-xs text-muted-foreground">Salário fixo (R$)</Label>
+                    <InfoHint text="Valor mensal usado no Financeiro. Pode ser ajustado depois em Configurações." />
+                  </div>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={form.fixed_salary}
+                    onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
+                    className="bg-muted/30 border-border/50 font-mono"
+                  />
                 </div>
-                <Input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={form.commission_percent}
-                  onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
-                  className="font-mono"
-                />
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-xs text-muted-foreground">Comissão (%)</Label>
+                    <InfoHint text="Percentual individual aplicado ao cálculo de comissão deste funcionário." />
+                  </div>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={form.commission_percent}
+                    onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
+                    className="bg-muted/30 border-border/50 font-mono"
+                  />
+                </div>
               </div>
             </div>
           )}
         </div>
 
-        <Button onClick={handleSave} disabled={saving} className="w-full">
-          <Save className="h-4 w-4 mr-2" />
-          {saving ? "Salvando..." : "Salvar perfil"}
+        <Button onClick={handleSave} disabled={saving} className="w-full gap-2 mt-1">
+          {saving
+            ? <><Loader2 className="h-4 w-4 animate-spin" />Salvando...</>
+            : <><Save className="h-4 w-4" />Salvar perfil</>
+          }
         </Button>
       </DialogContent>
     </Dialog>

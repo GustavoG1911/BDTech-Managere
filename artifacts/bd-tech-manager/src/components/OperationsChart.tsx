@@ -7,6 +7,11 @@ interface OperationsChartProps {
   deals: Deal[];
 }
 
+const COLORS = {
+  BluePex:   "hsl(218 90% 64%)",
+  "Opus Tech": "hsl(158 100% 41%)",
+};
+
 export function OperationsChart({ deals }: OperationsChartProps) {
   const data = [
     {
@@ -21,27 +26,42 @@ export function OperationsChart({ deals }: OperationsChartProps) {
 
   return (
     <Card className="glass-card">
-      <CardContent className="p-4">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Volume por Operação</span>
-        <div className="h-56 mt-3">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} barSize={32}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`} width={55} />
+      <CardContent className="p-5">
+        <span className="section-label">Volume por Operação</span>
+        <div className="mt-4" style={{ height: 200, minHeight: 200 }}>
+          <ResponsiveContainer width="100%" height="100%" debounce={50}>
+            <BarChart data={data} barSize={36} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border) / 0.5)" />
+              <XAxis
+                dataKey="name"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))", fontWeight: 500 }}
+              />
+              <YAxis
+                axisLine={false}
+                tickLine={false}
+                tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                tickFormatter={(v) => v >= 1000 ? `R$${(v / 1000).toFixed(0)}k` : `R$${v}`}
+                width={52}
+              />
               <Tooltip
+                cursor={{ fill: "hsl(var(--muted) / 0.3)" }}
                 formatter={(value: number) => [formatCurrency(value), "Volume"]}
                 contentStyle={{
                   backgroundColor: "hsl(var(--card))",
                   border: "1px solid hsl(var(--border))",
-                  borderRadius: "8px",
+                  borderRadius: "10px",
                   fontSize: "13px",
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+                  padding: "8px 12px",
                 }}
+                labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600, marginBottom: 4 }}
               />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                <Cell fill="hsl(var(--chart-1))" />
-                <Cell fill="hsl(var(--chart-2))" />
+              <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                {data.map((entry) => (
+                  <Cell key={entry.name} fill={COLORS[entry.name as keyof typeof COLORS] ?? "hsl(var(--primary))"} />
+                ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
