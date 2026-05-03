@@ -1,0 +1,11 @@
+{
+  "name": "@workspace/api-spec",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "codegen": "orval"
+  },
+  "devDependencies": {
+    "orval": "^6.23.0"
+  }
+}
