@@ -61,18 +61,6 @@ function OperationDonut({ data }: { data: ChartDataPoint }) {
   ];
   const total = data.bluepexVolume + data.opusVolume;
 
-  /* custom center label */
-  const CenterLabel = ({ cx, cy }: any) => (
-    <g>
-      <text x={cx} y={cy - 10} textAnchor="middle" fill={C.fg} fontSize={11} fontWeight={500} opacity={0.6}>
-        Volume Total
-      </text>
-      <text x={cx} y={cy + 12} textAnchor="middle" fill={C.fg} fontSize={15} fontWeight={700}>
-        {total > 0 ? formatCurrency(total) : "—"}
-      </text>
-    </g>
-  );
-
   return (
     <div className="bg-card rounded-xl border border-border/60 p-5 flex flex-col h-[280px]">
       <div className="flex items-center gap-2 mb-3">
@@ -89,28 +77,24 @@ function OperationDonut({ data }: { data: ChartDataPoint }) {
           </div>
         ) : (
           <>
-            <div className="flex-1 min-h-0">
+            {/* chart + center-label overlay */}
+            <div className="relative flex-1 min-h-0">
               <ResponsiveContainer width="100%" height="100%" debounce={50}>
                 <PieChart>
-                  <defs>
-                    <filter id="donut-shadow" x="-20%" y="-20%" width="140%" height="140%">
-                      <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor={C.blue} floodOpacity="0.3" />
-                    </filter>
-                  </defs>
                   <Pie
                     data={slices}
                     cx="50%" cy="50%"
-                    innerRadius="52%" outerRadius="75%"
+                    innerRadius="50%" outerRadius="72%"
                     paddingAngle={3}
                     dataKey="value"
                     startAngle={90} endAngle={-270}
                     labelLine={false}
+                    isAnimationActive={true}
                   >
                     {slices.map((s) => (
                       <Cell key={s.name} fill={s.color} stroke="transparent" />
                     ))}
                   </Pie>
-                  <CenterLabel cx="50%" cy="50%" />
                   <RechartsTooltip
                     formatter={(v: number, n: string) => [formatCurrency(v), n]}
                     contentStyle={tip.contentStyle}
@@ -119,6 +103,18 @@ function OperationDonut({ data }: { data: ChartDataPoint }) {
                   />
                 </PieChart>
               </ResponsiveContainer>
+
+              {/* Absolutely-positioned center label — no SVG coord issues */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="text-center leading-tight">
+                  <p className="text-[10px] text-muted-foreground/55 font-medium uppercase tracking-wide">
+                    Volume Total
+                  </p>
+                  <p className="text-sm font-bold text-foreground mt-0.5">
+                    {formatCurrency(total)}
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Legend */}
