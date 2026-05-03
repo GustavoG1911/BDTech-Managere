@@ -1,0 +1,91 @@
+Antes de continuar, ajuste o direcionamento do trabalho:
+
+O Replit está sendo usado apenas como ambiente temporário de desenvolvimento/auditoria. A aplicação final continuará sendo usada via Lovable ou Cloudflare Pages, puxando do GitHub.
+
+Portanto, NÃO transforme o projeto em uma aplicação dependente do Replit.
+
+Regras obrigatórias:
+
+1. Não mudar a arquitetura principal do projeto.
+   - Manter React + Vite + TypeScript.
+   - Manter Supabase como backend principal.
+   - Manter Supabase Auth, RLS, Realtime e Edge Functions.
+   - Não migrar para Clerk.
+   - Não migrar para Express/Drizzle como backend principal.
+   - Não tornar artifacts/api-server obrigatório para o app funcionar.
+
+2. Não quebrar deploy estático.
+   O app principal precisa continuar funcionando com:
+   - npm install
+   - npm run build
+   - output em dist/
+   - variáveis:
+     VITE_SUPABASE_URL
+     VITE_SUPABASE_ANON_KEY
+
+3. O branch precisa estar pronto para merge futuro no main.
+   Não fazer mudanças que só funcionem dentro do Replit.
+   Não depender de .replit, portas internas, artifacts/api-server ou mockup-sandbox para produção.
+
+4. Se trabalhar dentro de artifacts/bd-tech-manager, manter a estrutura equivalente ao app principal.
+   Qualquer melhoria importante de UI/UX deve ser aplicável ao app Vite original sem reescrever backend.
+   Não duplicar lógica de negócio em outro lugar.
+
+5. Não alterar regras de negócio sem aprovação:
+   - comissão por funcionário
+   - SDR separado do Executivo
+   - implantação parcelada
+   - Regra do Dia 07
+   - baixa do Diretor
+   - confirmação do funcionário
+   - salários
+   - convites
+   - role vs position
+   - is_test_data
+
+6. Não alterar migrations, RLS, autenticação, schema do banco ou Edge Functions sem pedir aprovação antes.
+
+7. Não remover compatibilidade com Lovable/Cloudflare Pages.
+   Nada de código que exija servidor Node próprio em produção.
+
+Objetivo agora:
+Fazer uma melhoria profissional de UI/UX, moderna, clean e altamente usável, sem alterar a arquitetura nem regras de negócio.
+
+Direção visual:
+- Interface com aparência de produto SaaS profissional.
+- Menos visual de template.
+- Mais clareza, hierarquia e consistência.
+- Dashboard executivo mais limpo.
+- Financeiro mais fácil de entender.
+- Status mais visíveis: previsto, pendente, baixado, aguardando confirmação, confirmado, rejeitado.
+- Melhor contraste e legibilidade no dark mode.
+- Cards, tabelas, filtros e modais mais refinados.
+- Melhor responsividade mobile/desktop.
+- Estados de loading, vazio, erro e sincronização mais úteis.
+
+Telas prioritárias:
+1. Dashboard principal
+2. Financeiro / Torre de Controle
+3. Financeiro individual Executivo/SDR
+4. Novo fechamento / edição de fechamento
+5. Configurações / Equipe / Convites
+6. Onboarding
+
+Fluxo de trabalho:
+Antes de implementar, gere um plano com:
+- problemas atuais de UI/UX
+- proposta visual
+- arquivos que pretende alterar
+- riscos
+- como manter compatibilidade com Lovable/Cloudflare
+- como validar que nenhuma regra de negócio foi alterada
+
+Depois implemente apenas a primeira rodada visual.
+
+Critérios de aprovação:
+- O app precisa continuar buildando como Vite estático.
+- Não pode depender de backend Replit.
+- Não pode quebrar Supabase.
+- Não pode quebrar deploy na Lovable/Cloudflare Pages.
+- Não pode alterar regra financeira.
+- Deve parecer feito por um designer profissional.
