@@ -72,14 +72,14 @@ export function KpiCard({
 
       {/* Top: label + icon */}
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <p className="section-label truncate">{title}</p>
+        <div className="flex flex-wrap items-start gap-x-1.5 gap-y-0.5 min-w-0 flex-1">
+          <p className="section-label leading-tight">{title}</p>
           {tooltip && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span
-                    className="cursor-help shrink-0"
+                    className="cursor-help shrink-0 mt-px"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <HelpCircle className="h-3 w-3 text-muted-foreground/35 hover:text-muted-foreground transition-colors" />
@@ -98,10 +98,10 @@ export function KpiCard({
         </div>
 
         <div className={cn(
-          "h-9 w-9 rounded-xl flex items-center justify-center shrink-0",
+          "h-8 w-8 rounded-xl flex items-center justify-center shrink-0",
           s.icon,
         )}>
-          <Icon style={{ width: 17, height: 17 }} />
+          <Icon style={{ width: 15, height: 15 }} />
         </div>
       </div>
 
