@@ -338,119 +338,172 @@ export default function Prospeccao() {
 
       <div className="flex-1 overflow-x-auto pb-4">
         <div className="flex gap-4 min-w-max h-full items-stretch">
-          {columns.map((col) => (
-            <div 
-              key={col} 
-              className="w-[300px] flex flex-col h-full rounded-lg bg-muted/40 p-3"
-              onDragOver={handleDragOver}
-              onDrop={(e) => handleDrop(e, col)}
-            >
-              <div className="flex items-center justify-between mb-3 px-1">
-                <h3 className="font-semibold text-sm">{col}</h3>
-                <Badge variant="secondary" className="px-1.5 py-0.5 text-xs">
-                  {getProspectsByStatus(col).length}
-                </Badge>
-              </div>
-              <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-[150px]">
-                {isLoading ? (
-                  <p className="text-xs text-center text-muted-foreground mt-4">Carregando...</p>
-                ) : (
-                  getProspectsByStatus(col).map((p) => (
-                    <Card 
-                      key={p.id} 
-                      className="cursor-grab active:cursor-grabbing hover:border-primary/50 transition-colors" 
-                      onClick={() => setSelectedProspect(p)}
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, p.id)}
-                      onDragEnd={handleDragEnd}
-                    >
-                      <CardContent className="p-3 pointer-events-none">
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-medium text-sm line-clamp-1">{p.company}</h4>
-                          {p.has_scheduled_meeting && (
-                            <span title="Reunião Agendada vinculada na Agenda">
-                              <Calendar className="h-4 w-4 text-green-500 shrink-0" />
-                            </span>
+          {columns.map((col, colIdx) => {
+            const colProspects = getProspectsByStatus(col);
+            const accentColors = [
+              "border-t-blue-500/70",
+              "border-t-amber-500/70",
+              "border-t-emerald-500/70",
+              "border-t-rose-500/70",
+              "border-t-violet-500/70",
+              "border-t-cyan-500/70",
+            ];
+            const accent = accentColors[colIdx % accentColors.length];
+            return (
+              <div
+                key={col}
+                className={`w-[290px] flex flex-col h-full rounded-xl bg-card border border-border/50 border-t-2 ${accent} shadow-sm`}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, col)}
+              >
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+                  <h3 className="font-semibold text-sm tracking-tight">{col}</h3>
+                  <span className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 rounded-full bg-muted text-muted-foreground text-[11px] font-semibold">
+                    {colProspects.length}
+                  </span>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-[150px]">
+                  {isLoading ? (
+                    <p className="text-xs text-center text-muted-foreground mt-6">Carregando...</p>
+                  ) : colProspects.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-10 text-center">
+                      <div className="w-8 h-8 rounded-full bg-muted/60 flex items-center justify-center mb-2">
+                        <Building2 className="h-4 w-4 text-muted-foreground/40" />
+                      </div>
+                      <p className="text-xs text-muted-foreground/50">Nenhum lead aqui</p>
+                    </div>
+                  ) : (
+                    colProspects.map((p) => (
+                      <Card
+                        key={p.id}
+                        className="cursor-grab active:cursor-grabbing hover:border-primary/60 hover:shadow-md transition-all duration-150 bg-background/60"
+                        onClick={() => setSelectedProspect(p)}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, p.id)}
+                        onDragEnd={handleDragEnd}
+                      >
+                        <CardContent className="p-3 pointer-events-none space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="font-semibold text-sm leading-tight line-clamp-1 flex-1">{p.company}</h4>
+                            {p.has_scheduled_meeting && (
+                              <span title="Reunião vinculada na Agenda">
+                                <Calendar className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                              </span>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs text-muted-foreground flex items-center gap-1.5 line-clamp-1">
+                              <UserCircle2 className="h-3 w-3 shrink-0" />
+                              {p.contact_name}
+                            </p>
+                            {p.role && (
+                              <p className="text-[11px] text-muted-foreground/60 pl-4 line-clamp-1">{p.role}</p>
+                            )}
+                          </div>
+                          {p.linkedin_url && (
+                            <div className="pt-1.5 border-t border-border/40 flex items-center gap-1.5">
+                              <Linkedin className="h-2.5 w-2.5 text-blue-400/60" />
+                              <span className="text-[10px] text-blue-400/60 font-medium">LinkedIn</span>
+                            </div>
                           )}
-                        </div>
-                        <p className="text-xs text-muted-foreground flex items-center gap-1.5 line-clamp-1">
-                          <UserCircle2 className="h-3.5 w-3.5" />
-                          {p.contact_name} {p.role ? `- ${p.role}` : ""}
-                        </p>
-                      </CardContent>
-                    </Card>
-                  ))
-                )}
+                        </CardContent>
+                      </Card>
+                    ))
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
       <Sheet open={!!selectedProspect} onOpenChange={(open) => !open && setSelectedProspect(null)}>
-        <SheetContent className="w-[400px] sm:w-[540px] flex flex-col">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-muted-foreground" />
-              {selectedProspect?.company}
-            </SheetTitle>
-          </SheetHeader>
-          <div className="flex-1 overflow-y-auto mt-6 custom-scrollbar pr-4">
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-sm font-semibold mb-2">Detalhes do Contato</h3>
-                <div className="bg-muted rounded-lg p-3 space-y-2 text-sm">
-                  <p><span className="text-muted-foreground">Nome:</span> {selectedProspect?.contact_name}</p>
-                  <p><span className="text-muted-foreground">Cargo:</span> {selectedProspect?.role || "-"}</p>
-                  <p className="flex items-center gap-2">
-                    <span className="text-muted-foreground">LinkedIn:</span> 
-                    {selectedProspect?.linkedin_url ? (
-                      <a href={selectedProspect.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline flex items-center gap-1">
-                        Ver Perfil <Linkedin className="h-3 w-3" />
-                      </a>
-                    ) : "-"}
-                  </p>
-                  <p><span className="text-muted-foreground">Status Atual:</span> <Badge variant="outline">{selectedProspect?.status}</Badge></p>
-                  {selectedProspect?.has_scheduled_meeting && (
-                    <div className="mt-2 p-2 bg-green-500/10 border border-green-500/20 rounded-md flex items-center gap-2 text-green-500">
-                      <Calendar className="h-4 w-4" />
-                      <span className="font-medium text-xs">Este prospect possui uma reunião agendada no sistema.</span>
-                    </div>
-                  )}
+        <SheetContent className="w-[400px] sm:w-[480px] flex flex-col p-0 gap-0">
+          {/* Header */}
+          <div className="p-6 pb-4 border-b border-border/50">
+            <SheetHeader className="space-y-0">
+              <div className="flex items-start gap-3">
+                <div className="w-11 h-11 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                  <Building2 className="h-5 w-5 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <SheetTitle className="text-lg font-bold leading-tight truncate">{selectedProspect?.company}</SheetTitle>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <Badge variant="outline" className="text-[10px] h-5">{selectedProspect?.status}</Badge>
+                    {selectedProspect?.has_scheduled_meeting && (
+                      <Badge className="text-[10px] h-5 bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/15">
+                        <Calendar className="h-3 w-3 mr-1" /> Reunião agendada
+                      </Badge>
+                    )}
+                  </div>
                 </div>
               </div>
+            </SheetHeader>
 
-              <div>
-                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4" /> Histórico e Notas
-                </h3>
-                <form onSubmit={handleAddNote} className="mb-4 space-y-2">
-                  <Textarea name="note_text" placeholder="Adicionar registro de contato, resumo de call, qualificação..." required className="resize-none" rows={3} />
-                  <Button type="submit" size="sm" className="w-full" disabled={createNoteMutation.isPending}>
-                    {createNoteMutation.isPending ? "Salvando..." : "Adicionar Nota"}
-                  </Button>
-                </form>
+            {/* Contact info row */}
+            <div className="mt-4 grid grid-cols-1 gap-2">
+              <div className="flex items-center gap-2 text-sm">
+                <UserCircle2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="font-medium">{selectedProspect?.contact_name}</span>
+                {selectedProspect?.role && <span className="text-muted-foreground text-xs">· {selectedProspect.role}</span>}
+              </div>
+              {selectedProspect?.linkedin_url && (
+                <a
+                  href={selectedProspect.linkedin_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors w-fit"
+                >
+                  <Linkedin className="h-4 w-4 shrink-0" />
+                  <span>Ver perfil no LinkedIn</span>
+                </a>
+              )}
+            </div>
+          </div>
 
-                <div className="space-y-3 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-muted before:to-transparent">
-                  {notes?.map((note) => (
-                    <div key={note.id} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                      <div className="flex items-center justify-center w-10 h-10 rounded-full border border-background bg-muted text-muted-foreground shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
-                        <MessageSquare className="h-4 w-4" />
+          {/* Notes section */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">Histórico e Notas</h3>
+              <form onSubmit={handleAddNote} className="mb-5 space-y-2">
+                <Textarea
+                  name="note_text"
+                  placeholder="Registro de contato, resumo de call, qualificação..."
+                  required
+                  className="resize-none text-sm"
+                  rows={3}
+                />
+                <Button type="submit" size="sm" className="w-full" disabled={createNoteMutation.isPending}>
+                  {createNoteMutation.isPending ? "Salvando..." : "Adicionar Nota"}
+                </Button>
+              </form>
+
+              {/* Notes timeline — simplified linear */}
+              <div className="space-y-3">
+                {notes?.map((note) => (
+                  <div key={note.id} className="flex gap-3">
+                    <div className="relative flex flex-col items-center">
+                      <div className="w-7 h-7 rounded-full bg-muted border border-border/60 flex items-center justify-center shrink-0">
+                        <MessageSquare className="h-3 w-3 text-muted-foreground" />
                       </div>
-                      <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-3 rounded-lg border bg-card text-card-foreground shadow-sm">
-                        <div className="flex items-center justify-between mb-1">
-                          <time className="text-[10px] font-medium text-muted-foreground">
-                            {format(new Date(note.created_at), "dd/MM/yyyy HH:mm")}
-                          </time>
-                        </div>
-                        <p className="text-sm text-foreground">{note.note_text}</p>
+                      <div className="w-px flex-1 bg-border/40 mt-1"></div>
+                    </div>
+                    <div className="flex-1 pb-4">
+                      <time className="text-[10px] font-medium text-muted-foreground/70 block mb-1">
+                        {format(new Date(note.created_at), "dd/MM/yyyy 'às' HH:mm")}
+                      </time>
+                      <div className="bg-muted/40 border border-border/40 rounded-lg p-3">
+                        <p className="text-sm leading-relaxed">{note.note_text}</p>
                       </div>
                     </div>
-                  ))}
-                  {notes?.length === 0 && (
-                    <p className="text-center text-xs text-muted-foreground pt-4">Nenhuma nota registrada ainda.</p>
-                  )}
-                </div>
+                  </div>
+                ))}
+                {(!notes || notes.length === 0) && (
+                  <div className="text-center py-8">
+                    <MessageSquare className="h-8 w-8 text-muted-foreground/20 mx-auto mb-2" />
+                    <p className="text-xs text-muted-foreground/50">Nenhuma nota registrada ainda.</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

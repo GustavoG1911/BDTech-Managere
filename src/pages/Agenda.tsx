@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { fetchCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { CalendarEvent, CalendarEventStatus } from "@/lib/types";
 
 type MappedCalendarEvent = CalendarEvent & { start: Date; end: Date };
@@ -12,7 +13,7 @@ import { Calendar, dateFnsLocalizer, View, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit, Video, Users, Link as LinkIcon, Mail } from "lucide-react";
+import { Plus, Trash2, Edit, Video, Users, Link as LinkIcon, Mail, RefreshCw, CheckCircle2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,6 +42,70 @@ export default function Agenda() {
   const [slotDates, setSlotDates] = useState<{ start: string; end: string } | null>(null);
   const [view, setView] = useState<View>(Views.MONTH);
   const [date, setDate] = useState(new Date());
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  // Check Google connection status and handle OAuth callback result
+  useEffect(() => {
+    if (!user?.id) return;
+    (async () => {
+      const { data } = await (supabase as any).from("profiles").select("google_sync_enabled, google_email").eq("id", user.id).single();
+      if (data?.google_sync_enabled) {
+        setGoogleConnected(true);
+        setGoogleEmail(data.google_email ?? null);
+      }
+    })();
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("google_connected") === "1") {
+      toast.success("Conta Google conectada com sucesso!");
+      window.history.replaceState({}, "", "/agenda");
+      setGoogleConnected(true);
+    } else if (params.get("google_error")) {
+      toast.error("Erro ao conectar conta Google. Tente novamente.");
+      window.history.replaceState({}, "", "/agenda");
+    }
+  }, [user?.id]);
+
+  const handleConnectGoogle = async () => {
+    setIsConnecting(true);
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-oauth-initiate`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const { url, error } = await res.json();
+      if (error) throw new Error(error);
+      window.location.href = url;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro ao iniciar conexão";
+      toast.error(msg);
+      setIsConnecting(false);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    setIsSyncing(true);
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-calendar-sync`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Erro na sincronização");
+      toast.success(`Sincronizado! ${data.created} novo(s), ${data.updated} atualizado(s).`);
+      queryClient.invalidateQueries({ queryKey: ["calendar-events"] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erro ao sincronizar";
+      toast.error(msg);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const { data: events, isLoading } = useQuery({
     queryKey: ["calendar-events", user?.id],
@@ -92,7 +157,8 @@ export default function Agenda() {
     const formData = new FormData(e.currentTarget);
     const start_time = formData.get("start_time") as string;
     const end_time = formData.get("end_time") as string;
-    
+    const operation = formData.get("operation") as string;
+
     saveEventMutation.mutate({
       title: formData.get("title") as string,
       start_time: new Date(start_time).toISOString(),
@@ -100,6 +166,7 @@ export default function Agenda() {
       meeting_link: formData.get("meeting_link") as string,
       description: formData.get("description") as string,
       status: (formData.get("status") || "Agendado") as CalendarEventStatus,
+      ...(operation && operation !== "auto" ? { operation: operation as "BluePex" | "Opus Tech" } : {}),
     });
   };
 
@@ -135,7 +202,9 @@ export default function Agenda() {
         <h2 className="text-3xl font-bold tracking-tight">Agenda de Reuniões</h2>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setIsConfigOpen(true)}>
-            <Mail className="mr-2 h-4 w-4" /> Integração Google (Em breve)
+            <Mail className="mr-2 h-4 w-4" />
+            {googleConnected ? "Google Calendar" : "Conectar Google"}
+            {googleConnected && <span className="ml-2 w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>}
           </Button>
           <Button onClick={() => handleOpenDialog()}>
             <Plus className="mr-2 h-4 w-4" /> Nova Reunião
@@ -144,20 +213,60 @@ export default function Agenda() {
       </div>
 
       <Dialog open={isConfigOpen} onOpenChange={setIsConfigOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[440px]">
           <DialogHeader>
             <DialogTitle>Integração com Google Calendar</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 pt-4 text-sm text-muted-foreground">
-            <p>Em breve, você poderá conectar a sua conta centralizadora do Gmail para puxar os convites e reuniões agendadas automaticamente para o sistema.</p>
-            <div className="bg-muted p-4 rounded-md flex flex-col gap-3">
+          <div className="space-y-4 pt-2 text-sm">
+            <div className="bg-muted/40 border border-border/50 rounded-lg p-4 flex flex-col gap-3">
               <div className="flex items-center justify-between">
-                <span className="font-medium text-foreground">Status da Conexão</span>
-                <Badge variant="secondary">Desconectado</Badge>
+                <span className="font-medium">Status da Conexão</span>
+                {googleConnected
+                  ? <Badge className="text-xs bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/15">Conectado</Badge>
+                  : <Badge variant="secondary" className="text-xs">Desconectado</Badge>
+                }
               </div>
-              <Button disabled className="w-full">
-                <Mail className="mr-2 h-4 w-4" /> Conectar Conta Google
-              </Button>
+              {googleConnected && googleEmail && (
+                <p className="text-xs text-muted-foreground">Conta: <span className="text-foreground font-medium">{googleEmail}</span></p>
+              )}
+              {!googleConnected && (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Conecte sua conta Google para sincronizar automaticamente convites e reuniões aceitas no Gmail/Google Calendar.
+                </p>
+              )}
+              {googleConnected ? (
+                <Button onClick={handleSyncNow} disabled={isSyncing} className="w-full">
+                  <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
+                  {isSyncing ? "Sincronizando..." : "Sincronizar Agora"}
+                </Button>
+              ) : (
+                <Button onClick={handleConnectGoogle} disabled={isConnecting} className="w-full">
+                  <Mail className="mr-2 h-4 w-4" />
+                  {isConnecting ? "Redirecionando..." : "Conectar Conta Google"}
+                </Button>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Como vai funcionar</p>
+              <ul className="space-y-2 text-xs text-muted-foreground">
+                <li className="flex items-start gap-2">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                  <span>Convites aceitos no Gmail serão importados automaticamente para esta agenda.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                  <span>Links <strong>meet.google.com</strong> → classificado como <strong>BluePex</strong>.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                  <span>Links <strong>teams.microsoft.com</strong> → classificado como <strong>Opus Tech</strong>.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                  <span>Reuniões criadas manualmente continuam pedindo a operação.</span>
+                </li>
+              </ul>
             </div>
           </div>
         </DialogContent>
@@ -191,18 +300,33 @@ export default function Agenda() {
               <Label htmlFor="description">Descrição (opcional)</Label>
               <Textarea id="description" name="description" defaultValue={editingEvent?.description} />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="status">Status</Label>
-              <Select name="status" defaultValue={editingEvent?.status || "Agendado"}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione o status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Agendado">Agendado</SelectItem>
-                  <SelectItem value="Realizado">Realizado</SelectItem>
-                  <SelectItem value="Cancelado">Cancelado</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="status">Status</Label>
+                <Select name="status" defaultValue={editingEvent?.status || "Agendado"}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Agendado">Agendado</SelectItem>
+                    <SelectItem value="Realizado">Realizado</SelectItem>
+                    <SelectItem value="Cancelado">Cancelado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="operation">Operação</Label>
+                <Select name="operation" defaultValue={editingEvent?.operation || "auto"}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Operação" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Detectar pelo link</SelectItem>
+                    <SelectItem value="BluePex">BluePex</SelectItem>
+                    <SelectItem value="Opus Tech">Opus Tech</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="flex justify-between mt-6">
               {editingEvent ? (
