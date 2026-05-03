@@ -1,98 +1,96 @@
-import { Home, Target, CalendarDays, Settings, LogOut, DollarSign, Landmark, TrendingUp } from "lucide-react";
+import { Home, Settings, LogOut, TrendingUp, Landmark, Target, CalendarDays, Zap } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth, UserRole } from "@/hooks/useAuth";
 import { isPureSystemAdmin } from "@/lib/roles";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarFooter,
-  SidebarHeader,
-  useSidebar,
+  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
+  SidebarMenu, SidebarMenuButton, SidebarMenuItem,
+  SidebarFooter, SidebarHeader, useSidebar,
 } from "@/components/ui/sidebar";
 
 interface NavItem {
   title: string;
   url: string;
-  icon: any;
+  icon: React.ElementType;
   roles?: UserRole[];
 }
-
-interface ComingSoonItem {
-  title: string;
-  icon: any;
-}
+interface SoonItem { title: string; icon: React.ElementType; }
 
 const navItems: NavItem[] = [
-  { title: "Dashboard", url: "/", icon: Home },
-  { title: "Financeiro", url: "/financeiro", icon: Landmark },
-  { title: "Configurações", url: "/settings", icon: Settings },
+  { title: "Dashboard",     url: "/",           icon: Home },
+  { title: "Financeiro",    url: "/financeiro",  icon: Landmark },
+  { title: "Configurações", url: "/settings",    icon: Settings },
 ];
 
-const comingSoonItems: ComingSoonItem[] = [
+const soonItems: SoonItem[] = [
   { title: "Prospecção", icon: Target },
-  { title: "Agenda", icon: CalendarDays },
+  { title: "Agenda",     icon: CalendarDays },
 ];
 
-const positionLabels: Record<string, { label: string; color: string }> = {
-  "Diretor":               { label: "Diretor",   color: "bg-primary/15 text-primary border-primary/25" },
-  "Executivo de Negócios": { label: "Executivo", color: "bg-success/15 text-success border-success/25" },
-  "SDR":                   { label: "SDR",       color: "bg-warning/15 text-warning border-warning/25" },
+const positionColors: Record<string, string> = {
+  "Diretor":               "text-primary   bg-primary/12   border-primary/25",
+  "Executivo de Negócios": "text-success   bg-success/12   border-success/25",
+  "SDR":                   "text-warning   bg-warning/12   border-warning/25",
 };
 
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const { signOut, role, position } = useAuth();
+  const isAdmin = isPureSystemAdmin(role, position);
 
-  const visibleItems = navItems.filter((item) => {
-    if (isPureSystemAdmin(role, position)) return item.url === "/settings";
-    return !item.roles || item.roles.includes(role);
+  const visible = navItems.filter((item) => {
+    if (isAdmin) return item.url === "/settings";
+    return true;
   });
 
-  const posInfo = positionLabels[position] || {
-    label: position || "User",
-    color: "bg-muted/60 text-muted-foreground border-border/40",
-  };
+  const posColor = positionColors[position] ?? "text-muted-foreground bg-muted/50 border-border/40";
+  const posLabel = isAdmin ? "Admin" : (position ?? "—");
 
   return (
-    <Sidebar collapsible="icon">
-      {/* Brand */}
-      <SidebarHeader className="border-b border-sidebar-border/50 pb-3">
-        <div className="flex items-center gap-2.5 px-1 pt-1">
-          <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shrink-0 shadow-md shadow-primary/30">
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+      {/* ── Brand ── */}
+      <SidebarHeader className="border-b border-sidebar-border px-3 py-3">
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-xl
+                          bg-gradient-to-br from-primary to-primary/60
+                          flex items-center justify-center shrink-0
+                          shadow-md shadow-primary/30">
             <TrendingUp className="h-4 w-4 text-white" />
           </div>
           {!collapsed && (
-            <div className="min-w-0">
-              <p className="font-bold text-sm tracking-tight text-foreground leading-tight">BD Tech</p>
-              <p className="text-[9px] text-muted-foreground/50 tracking-widest uppercase">Manager</p>
+            <div>
+              <p className="text-sm font-bold tracking-tight text-foreground leading-none">
+                BD Tech
+              </p>
+              <p className="text-[9px] font-medium tracking-[0.15em] uppercase text-muted-foreground/50 mt-0.5">
+                Manager
+              </p>
             </div>
           )}
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="pt-2">
-        {/* Main Nav */}
-        <SidebarGroup>
+      <SidebarContent className="px-2 py-2">
+        {/* ── Main nav ── */}
+        <SidebarGroup className="p-0">
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
-              {visibleItems.map((item) => (
+              {visible.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild tooltip={collapsed ? item.title : undefined}>
                     <NavLink
                       to={item.url}
                       end={item.url === "/"}
-                      className="flex items-center gap-2.5 px-2 py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/60 transition-all duration-150"
+                      className="group flex items-center gap-2.5 px-2.5 py-2 rounded-lg
+                                 text-muted-foreground hover:text-foreground
+                                 hover:bg-sidebar-accent/80 transition-all duration-150 w-full"
                       activeClassName="text-primary bg-primary/10 hover:bg-primary/10 hover:text-primary font-semibold"
                     >
                       <item.icon className="h-4 w-4 shrink-0" />
-                      {!collapsed && <span className="text-sm">{item.title}</span>}
+                      {!collapsed && (
+                        <span className="text-sm truncate">{item.title}</span>
+                      )}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -101,24 +99,23 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Em Breve */}
-        {!isPureSystemAdmin(role, position) && (
-          <SidebarGroup className="mt-2">
-            {!collapsed && (
-              <SidebarGroupLabel className="text-[9px] tracking-widest uppercase text-muted-foreground/40 px-2 mb-1">
+        {/* ── Em breve ── */}
+        {!isAdmin && !collapsed && (
+          <SidebarGroup className="p-0 mt-4">
+            <div className="px-2.5 mb-1.5">
+              <span className="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground/35">
                 Em breve
-              </SidebarGroupLabel>
-            )}
+              </span>
+            </div>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {comingSoonItems.map((item) => (
+                {soonItems.map((item) => (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild disabled>
-                      <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg opacity-30 cursor-default select-none">
-                        <item.icon className="h-4 w-4 shrink-0" />
-                        {!collapsed && <span className="text-sm">{item.title}</span>}
-                      </div>
-                    </SidebarMenuButton>
+                    <div className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg
+                                    opacity-25 cursor-default select-none">
+                      <item.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">{item.title}</span>
+                    </div>
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
@@ -127,21 +124,28 @@ export function AppSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border/50 pt-2 space-y-1">
+      {/* ── Footer ── */}
+      <SidebarFooter className="border-t border-sidebar-border px-2 py-2 space-y-1">
         {/* Position badge */}
         {!collapsed && (
-          <div className="px-2 pb-1">
-            <span className={`inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-lg border ${posInfo.color}`}>
-              <DollarSign className="h-3 w-3" />
-              {isPureSystemAdmin(role, position) ? "Admin" : posInfo.label}
+          <div className="px-1 pb-1">
+            <span className={`inline-flex items-center gap-1.5 text-[10px] font-semibold
+                              px-2.5 py-1 rounded-lg border ${posColor}`}>
+              <Zap className="h-3 w-3" />
+              {posLabel}
             </span>
           </div>
         )}
+
+        {/* Logout */}
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               onClick={signOut}
-              className="flex items-center gap-2.5 px-2 py-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all duration-150 cursor-pointer"
+              tooltip={collapsed ? "Sair" : undefined}
+              className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg w-full
+                         text-muted-foreground hover:text-destructive
+                         hover:bg-destructive/10 transition-all duration-150 cursor-pointer"
             >
               <LogOut className="h-4 w-4 shrink-0" />
               {!collapsed && <span className="text-sm">Sair</span>}

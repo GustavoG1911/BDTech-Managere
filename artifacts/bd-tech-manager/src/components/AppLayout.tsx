@@ -3,37 +3,65 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { NotificationBell } from "@/components/NotificationBell";
+import { useAuth } from "@/hooks/useAuth";
 
-const PAGE_TITLES: Record<string, string> = {
-  "/": "Dashboard",
-  "/financeiro": "Financeiro",
-  "/settings": "Configurações",
+const PAGE_META: Record<string, { title: string; description: string }> = {
+  "/":           { title: "Dashboard",      description: "Visão geral de performance e fechamentos" },
+  "/financeiro": { title: "Financeiro",     description: "Gestão de recebíveis e pagamentos" },
+  "/settings":   { title: "Configurações",  description: "Perfil, equipe, metas e parâmetros" },
 };
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
-  const pageTitle = PAGE_TITLES[pathname] ?? "BD Tech";
+  const { user } = useAuth();
+  const meta = PAGE_META[pathname] ?? { title: "BD Tech", description: "" };
+  const initials = user?.email?.slice(0, 2).toUpperCase() ?? "BD";
 
   return (
     <SidebarProvider>
-      <div className="dark min-h-screen flex w-full bg-background">
+      <div className="min-h-screen flex w-full bg-background">
         <AppSidebar />
-        <div className="flex-1 flex flex-col min-w-0">
-          <header className="h-12 flex items-center border-b border-border/50 bg-card/95 backdrop-blur-md sticky top-0 z-30 px-3 gap-3">
-            <SidebarTrigger className="ml-1 text-muted-foreground hover:text-foreground transition-colors" />
-            <div className="h-4 w-px bg-border/60" />
-            <span className="text-sm font-semibold text-foreground/90 tracking-tight">
-              {pageTitle}
-            </span>
-            <div className="ml-auto">
+
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          {/* ── Sticky Header ── */}
+          <header className="h-[52px] shrink-0 flex items-center gap-3 px-4
+                             border-b border-border/60
+                             bg-card/80 backdrop-blur-md
+                             sticky top-0 z-30">
+            <SidebarTrigger className="h-7 w-7 rounded-lg text-muted-foreground
+                                       hover:bg-accent hover:text-foreground
+                                       transition-colors" />
+
+            <div className="h-4 w-px bg-border/70" />
+
+            <div className="flex flex-col justify-center leading-none">
+              <span className="text-sm font-semibold text-foreground tracking-tight">
+                {meta.title}
+              </span>
+              {meta.description && (
+                <span className="text-[10px] text-muted-foreground/60 mt-0.5 hidden sm:block">
+                  {meta.description}
+                </span>
+              )}
+            </div>
+
+            <div className="ml-auto flex items-center gap-2">
               <NotificationBell />
+              <div className="h-7 w-7 rounded-full bg-primary/15 border border-primary/25
+                              flex items-center justify-center shrink-0
+                              text-[10px] font-bold text-primary">
+                {initials}
+              </div>
             </div>
           </header>
-          <main className="flex-1 overflow-auto">
+
+          {/* ── Main content ── */}
+          <main className="flex-1 overflow-y-auto">
             {children}
           </main>
         </div>
       </div>
+
       <OnboardingModal />
     </SidebarProvider>
   );

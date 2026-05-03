@@ -1,5 +1,6 @@
-import { LucideIcon, HelpCircle } from "lucide-react";
+import { LucideIcon, HelpCircle, TrendingUp, TrendingDown } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 interface KpiCardProps {
   title: string;
@@ -12,83 +13,109 @@ interface KpiCardProps {
   onClick?: () => void;
 }
 
-const variantConfig = {
+const styles = {
   default: {
-    border:     "border-border/60",
-    iconBg:     "bg-muted/60",
-    iconColor:  "text-muted-foreground",
-    valueColor: "text-foreground",
-    accentBar:  "",
-    glow:       "",
+    card:      "border-border/70",
+    icon:      "bg-muted/60 text-muted-foreground ring-1 ring-border/50",
+    value:     "text-foreground",
+    bar:       "",
+    glow:      "",
   },
   primary: {
-    border:     "border-primary/25",
-    iconBg:     "bg-primary/15",
-    iconColor:  "text-primary",
-    valueColor: "text-primary",
-    accentBar:  "bg-primary",
-    glow:       "glow-blue",
+    card:      "border-primary/20",
+    icon:      "bg-primary/15 text-primary ring-1 ring-primary/20",
+    value:     "text-primary",
+    bar:       "bg-primary",
+    glow:      "glow-blue",
   },
   success: {
-    border:     "border-success/25",
-    iconBg:     "bg-success/15",
-    iconColor:  "text-success",
-    valueColor: "text-success",
-    accentBar:  "bg-success",
-    glow:       "glow-green",
+    card:      "border-success/20",
+    icon:      "bg-success/15 text-success ring-1 ring-success/20",
+    value:     "text-success",
+    bar:       "bg-success",
+    glow:      "glow-green",
   },
   warning: {
-    border:     "border-warning/25",
-    iconBg:     "bg-warning/15",
-    iconColor:  "text-warning",
-    valueColor: "text-warning",
-    accentBar:  "bg-warning",
-    glow:       "glow-yellow",
+    card:      "border-warning/20",
+    icon:      "bg-warning/15 text-warning ring-1 ring-warning/20",
+    value:     "text-warning",
+    bar:       "bg-warning",
+    glow:      "glow-yellow",
   },
 } as const;
 
-export function KpiCard({ title, value, icon: Icon, trend, subtitle, variant = "default", tooltip, onClick }: KpiCardProps) {
-  const cfg = variantConfig[variant];
+export function KpiCard({
+  title, value, icon: Icon, trend, subtitle, variant = "default", tooltip, onClick,
+}: KpiCardProps) {
+  const s = styles[variant];
 
   return (
     <div
-      className={`relative bg-card rounded-xl border ${cfg.border} ${cfg.glow} p-5 flex flex-col gap-3 overflow-hidden transition-all duration-200 ${onClick ? "cursor-pointer hover:scale-[1.015] hover:shadow-lg active:scale-[0.99]" : ""}`}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
+      onKeyDown={(e) => e.key === "Enter" && onClick?.()}
+      className={cn(
+        "relative bg-card rounded-xl border p-5 flex flex-col gap-4 overflow-hidden select-none",
+        s.card, s.glow,
+        onClick && "cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-xl active:scale-[0.99]",
+        !onClick && "cursor-default",
+      )}
     >
       {/* Left accent stripe */}
-      {cfg.accentBar && (
-        <div className={`absolute left-0 top-4 bottom-4 w-0.5 rounded-r-full ${cfg.accentBar} opacity-60`} />
+      {s.bar && (
+        <div className={cn(
+          "absolute inset-y-0 left-0 w-[3px] rounded-r-full opacity-70",
+          s.bar,
+        )} />
       )}
 
-      {/* Top row */}
+      {/* Top: label + icon */}
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <span className="section-label">{title}</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="section-label truncate">{title}</p>
           {tooltip && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span onClick={(e) => e.stopPropagation()} className="cursor-help">
-                    <HelpCircle className="h-3 w-3 text-muted-foreground/35" />
+                  <span
+                    className="cursor-help shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <HelpCircle className="h-3 w-3 text-muted-foreground/35 hover:text-muted-foreground transition-colors" />
                   </span>
                 </TooltipTrigger>
-                <TooltipContent side="top" className="max-w-[240px] text-xs" onClick={(e) => e.stopPropagation()}>
+                <TooltipContent
+                  side="top"
+                  className="max-w-[240px] text-xs"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {tooltip}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
           )}
         </div>
-        <div className={`h-9 w-9 rounded-xl ${cfg.iconBg} flex items-center justify-center shrink-0 ring-1 ring-inset ring-white/5`}>
-          <Icon className={cfg.iconColor} style={{ width: 17, height: 17 }} />
+
+        <div className={cn(
+          "h-9 w-9 rounded-xl flex items-center justify-center shrink-0",
+          s.icon,
+        )}>
+          <Icon style={{ width: 17, height: 17 }} />
         </div>
       </div>
 
-      {/* Value */}
-      <div>
-        <p className={`text-2xl font-bold tracking-tight ${cfg.valueColor} tabular-nums`}>{value}</p>
-        {trend && <p className="text-xs text-muted-foreground mt-1.5 leading-snug">{trend}</p>}
-        {subtitle && <p className="text-[11px] text-muted-foreground/50 mt-0.5 leading-snug">{subtitle}</p>}
+      {/* Bottom: value + trend */}
+      <div className="space-y-1">
+        <p className={cn("text-2xl font-bold tracking-tight tabular-nums", s.value)}>
+          {value}
+        </p>
+        {trend && (
+          <p className="text-xs text-muted-foreground leading-snug">{trend}</p>
+        )}
+        {subtitle && (
+          <p className="text-[11px] text-muted-foreground/50 leading-snug">{subtitle}</p>
+        )}
       </div>
     </div>
   );
