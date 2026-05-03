@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Prospect, ProspectNote, ProspectStatus } from "./types";
 
 export const fetchProspects = async (userId: string): Promise<Prospect[]> => {
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from("prospects")
     .select("*")
     .eq("owner_id", userId)
@@ -13,11 +13,11 @@ export const fetchProspects = async (userId: string): Promise<Prospect[]> => {
     throw error;
   }
 
-  return data as Prospect[];
+  return (data || []) as Prospect[];
 };
 
 export const createProspect = async (prospect: Partial<Prospect>): Promise<Prospect> => {
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from("prospects")
     .insert([prospect])
     .select()
@@ -32,7 +32,7 @@ export const createProspect = async (prospect: Partial<Prospect>): Promise<Prosp
 };
 
 export const updateProspectStatus = async (id: string, status: ProspectStatus): Promise<void> => {
-  const { error } = await supabase
+  const { error } = await (supabase as any)
     .from("prospects")
     .update({ status })
     .eq("id", id);
@@ -44,7 +44,7 @@ export const updateProspectStatus = async (id: string, status: ProspectStatus): 
 };
 
 export const updateProspect = async (id: string, updates: Partial<Prospect>): Promise<void> => {
-  const { error } = await supabase
+  const { error } = await (supabase as any)
     .from("prospects")
     .update(updates)
     .eq("id", id);
@@ -56,7 +56,7 @@ export const updateProspect = async (id: string, updates: Partial<Prospect>): Pr
 };
 
 export const fetchProspectNotes = async (prospectId: string): Promise<ProspectNote[]> => {
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from("prospect_notes")
     .select("*")
     .eq("prospect_id", prospectId)
@@ -67,11 +67,11 @@ export const fetchProspectNotes = async (prospectId: string): Promise<ProspectNo
     throw error;
   }
 
-  return data as ProspectNote[];
+  return (data || []) as ProspectNote[];
 };
 
 export const createProspectNote = async (prospectId: string, text: string): Promise<ProspectNote> => {
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from("prospect_notes")
     .insert([{ prospect_id: prospectId, note_text: text }])
     .select()

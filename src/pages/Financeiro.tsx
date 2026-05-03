@@ -747,7 +747,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         const expectedDate = baseDate ? getPaymentDateInfo(baseDate).expectedPaymentDate : null;
         return { cp, deal, expectedDate };
       })
-      .filter(Boolean) as Array<{ cp: CommissionPayment; deal: Deal; expectedDate: Date | null }>;
+      .filter(Boolean) as Array<{ cp: CommissionPayment; deal: Deal; expectedDate: string | null }>;
   }, [commissionPayments, scopedDeals]);
 
   useEffect(() => {

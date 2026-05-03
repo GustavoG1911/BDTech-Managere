@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { fetchProspects, createProspect, updateProspectStatus, fetchProspectNotes, createProspectNote } from "@/lib/supabase-prospeccao";
 import { createCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
-import { Prospect, ProspectStatus } from "@/lib/types";
+import { CalendarEvent, Prospect, ProspectStatus } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -76,9 +76,9 @@ export default function Prospeccao() {
       setIsNewProspectOpen(false);
       toast.success("Lead criado com sucesso!");
     },
-    onError: (error: any) => {
-      console.error(error);
-      toast.error(`Erro ao criar lead: ${error?.message || "Erro desconhecido"}`);
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao criar lead: ${msg}`);
     }
   });
 
@@ -88,9 +88,9 @@ export default function Prospeccao() {
       queryClient.invalidateQueries({ queryKey: ["prospects"] });
       toast.success("Status atualizado!");
     },
-    onError: (error: any) => {
-      console.error(error);
-      toast.error(`Erro ao atualizar status: ${error?.message || "Erro desconhecido"}`);
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao atualizar status: ${msg}`);
     }
   });
 
@@ -100,20 +100,21 @@ export default function Prospeccao() {
       queryClient.invalidateQueries({ queryKey: ["prospect-notes"] });
       toast.success("Nota adicionada com sucesso!");
     },
-    onError: (error: any) => {
-      console.error(error);
-      toast.error(`Erro ao adicionar nota: ${error?.message || "Erro desconhecido"}`);
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao adicionar nota: ${msg}`);
     }
   });
 
   const createEventMutation = useMutation({
-    mutationFn: async (eventData: any) => {
-      // First update prospect status
+    mutationFn: async (eventData: Omit<Partial<CalendarEvent>, "user_id" | "prospect_id">) => {
+      // 1. Cria evento PRIMEIRO — se falhar, prospect não muda de coluna
+      const createdEvent = await createCalendarEvent({ ...eventData, user_id: user!.id, prospect_id: scheduleTargetId });
+      // 2. Só então atualiza o status do prospect
       if (scheduleTargetId && scheduleTargetCol) {
         await updateProspectStatus(scheduleTargetId, scheduleTargetCol);
       }
-      // Then create event
-      return createCalendarEvent({ ...eventData, user_id: user!.id, prospect_id: scheduleTargetId });
+      return createdEvent;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["prospects"] });
@@ -123,9 +124,9 @@ export default function Prospeccao() {
       setScheduleTargetCol(null);
       toast.success("Lead movido e Reunião agendada com sucesso!");
     },
-    onError: (error: any) => {
-      console.error(error);
-      toast.error(`Erro ao agendar reunião: ${error?.message || "Erro desconhecido"}`);
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao agendar reunião: ${msg}`);
     }
   });
 
@@ -196,7 +197,7 @@ export default function Prospeccao() {
   const handleDrop = (e: React.DragEvent, status: string) => {
     e.preventDefault();
     if (draggedProspectId) {
-      if (status.toLowerCase().includes("agendado")) {
+      if (status.trim().toLowerCase() === "agendado") {
         setScheduleTargetId(draggedProspectId);
         setScheduleTargetCol(status);
         setIsScheduleModalOpen(true);
@@ -367,7 +368,9 @@ export default function Prospeccao() {
                         <div className="flex justify-between items-start mb-2">
                           <h4 className="font-medium text-sm line-clamp-1">{p.company}</h4>
                           {p.has_scheduled_meeting && (
-                            <Calendar className="h-4 w-4 text-green-500 shrink-0" title="Reunião Agendada vinculada na Agenda" />
+                            <span title="Reunião Agendada vinculada na Agenda">
+                              <Calendar className="h-4 w-4 text-green-500 shrink-0" />
+                            </span>
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground flex items-center gap-1.5 line-clamp-1">

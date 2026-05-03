@@ -427,7 +427,7 @@ export function DashboardCharts({
       name: "", monthKey: "",
       bluepexVolume: 0, opusVolume: 0,
       bluepexPres: 0,  opusPres: 0,
-      totalVolume: 0,  totalPres: 0,
+      totalVolume: 0,  totalPres: 0, totalDeals: 0,
     };
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -18,29 +18,27 @@ export const autoLinkEventToProspect = async (title: string, userId: string): Pr
   try {
     const prospects = await fetchProspects(userId);
     const titleLower = title.toLowerCase();
-    
-    // Find the first prospect whose company name is contained in the event title
-    const matchedProspect = prospects.find(p => 
+
+    const matchedProspect = prospects.find(p =>
       titleLower.includes(p.company.toLowerCase())
     );
 
     if (matchedProspect) {
-      // Mark the prospect as having a scheduled meeting
-      await supabase
+      await (supabase as any)
         .from("prospects")
         .update({ has_scheduled_meeting: true })
         .eq("id", matchedProspect.id);
-        
+
       return matchedProspect.id;
     }
   } catch (err) {
-    console.error("Failed to auto-link prospect:", err);
+    console.error("[autoLinkEventToProspect]", err);
   }
   return undefined;
 };
 
 export const fetchCalendarEvents = async (userId: string): Promise<CalendarEvent[]> => {
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from("calendar_events")
     .select("*")
     .eq("user_id", userId)
@@ -51,23 +49,23 @@ export const fetchCalendarEvents = async (userId: string): Promise<CalendarEvent
     throw error;
   }
 
-  return data as CalendarEvent[];
+  return (data || []) as CalendarEvent[];
 };
 
 export const createCalendarEvent = async (event: Partial<CalendarEvent>): Promise<CalendarEvent> => {
-  // Classify operation automatically
-  if (!event.operation) {
-    event.operation = classifyOperation(event.meeting_link, event.description);
+  const payload: Partial<CalendarEvent> = { ...event };
+
+  if (!payload.operation) {
+    payload.operation = classifyOperation(payload.meeting_link, payload.description);
   }
 
-  // Auto-link to prospect if not explicitly linked
-  if (!event.prospect_id && event.title && event.user_id) {
-    event.prospect_id = await autoLinkEventToProspect(event.title, event.user_id);
+  if (!payload.prospect_id && payload.title && payload.user_id) {
+    payload.prospect_id = await autoLinkEventToProspect(payload.title, payload.user_id);
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from("calendar_events")
-    .insert([event])
+    .insert([payload])
     .select()
     .single();
 
@@ -80,15 +78,16 @@ export const createCalendarEvent = async (event: Partial<CalendarEvent>): Promis
 };
 
 export const updateCalendarEvent = async (id: string, updates: Partial<CalendarEvent>): Promise<void> => {
-  // Re-classify if link or description changes
-  if (updates.meeting_link !== undefined || updates.description !== undefined) {
-    const newOp = classifyOperation(updates.meeting_link, updates.description);
-    if (newOp) updates.operation = newOp;
+  const patch: Partial<CalendarEvent> = { ...updates };
+
+  if (patch.meeting_link !== undefined || patch.description !== undefined) {
+    const newOp = classifyOperation(patch.meeting_link, patch.description);
+    if (newOp) patch.operation = newOp;
   }
 
-  const { error } = await supabase
+  const { error } = await (supabase as any)
     .from("calendar_events")
-    .update(updates)
+    .update(patch)
     .eq("id", id);
 
   if (error) {
@@ -98,7 +97,7 @@ export const updateCalendarEvent = async (id: string, updates: Partial<CalendarE
 };
 
 export const deleteCalendarEvent = async (id: string): Promise<void> => {
-  const { error } = await supabase
+  const { error } = await (supabase as any)
     .from("calendar_events")
     .delete()
     .eq("id", id);

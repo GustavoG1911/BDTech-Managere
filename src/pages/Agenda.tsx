@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { fetchCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
 import { CalendarEvent, CalendarEventStatus } from "@/lib/types";
+
+type MappedCalendarEvent = CalendarEvent & { start: Date; end: Date };
 import { format, parse, startOfWeek, getDay } from "date-fns";
 import { ptBR } from "date-fns/locale/pt-BR";
 import { Calendar, dateFnsLocalizer, View, Views } from "react-big-calendar";
@@ -36,6 +38,7 @@ export default function Agenda() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [slotDates, setSlotDates] = useState<{ start: string; end: string } | null>(null);
   const [view, setView] = useState<View>(Views.MONTH);
   const [date, setDate] = useState(new Date());
 
@@ -58,9 +61,9 @@ export default function Agenda() {
       setEditingEvent(null);
       toast.success("Reunião salva com sucesso!");
     },
-    onError: (error: any) => {
-      console.error(error);
-      toast.error(`Erro ao salvar reunião: ${error?.message || "Erro desconhecido"}`);
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao salvar reunião: ${msg}`);
     }
   });
 
@@ -72,14 +75,15 @@ export default function Agenda() {
       setEditingEvent(null);
       toast.success("Reunião excluída!");
     },
-    onError: (error: any) => {
-      console.error(error);
-      toast.error(`Erro ao excluir reunião: ${error?.message || "Erro desconhecido"}`);
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao excluir reunião: ${msg}`);
     }
   });
 
   const handleOpenDialog = (event?: CalendarEvent) => {
     setEditingEvent(event || null);
+    setSlotDates(null);
     setIsDialogOpen(true);
   };
 
@@ -99,13 +103,13 @@ export default function Agenda() {
     });
   };
 
-  const mappedEvents = events?.map(evt => ({
+  const mappedEvents: MappedCalendarEvent[] = events?.map(evt => ({
     ...evt,
     start: new Date(evt.start_time),
     end: new Date(evt.end_time),
   })) || [];
 
-  const eventStyleGetter = (event: any) => {
+  const eventStyleGetter = (event: MappedCalendarEvent) => {
     let backgroundColor = "#3b82f6"; // default blue
     if (event.operation === "Opus Tech") backgroundColor = "#10b981"; // green
     if (event.status === "Realizado") backgroundColor = "#6b7280"; // gray
@@ -164,7 +168,7 @@ export default function Agenda() {
           <DialogHeader>
             <DialogTitle>{editingEvent ? "Detalhes da Reunião" : "Nova Reunião"}</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSave} className="space-y-4 pt-4">
+          <form key={editingEvent?.id ?? (slotDates?.start ?? "new")} onSubmit={handleSave} className="space-y-4 pt-4">
             <div className="space-y-2">
               <Label htmlFor="title">Título</Label>
               <Input id="title" name="title" required defaultValue={editingEvent?.title} />
@@ -172,11 +176,11 @@ export default function Agenda() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="start_time">Início</Label>
-                <Input id="start_time" name="start_time" type="datetime-local" required defaultValue={editingEvent ? new Date(editingEvent.start_time).toISOString().slice(0, 16) : ""} />
+                <Input id="start_time" name="start_time" type="datetime-local" required defaultValue={editingEvent ? new Date(editingEvent.start_time).toISOString().slice(0, 16) : (slotDates?.start ?? "")} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="end_time">Fim</Label>
-                <Input id="end_time" name="end_time" type="datetime-local" required defaultValue={editingEvent ? new Date(editingEvent.end_time).toISOString().slice(0, 16) : ""} />
+                <Input id="end_time" name="end_time" type="datetime-local" required defaultValue={editingEvent ? new Date(editingEvent.end_time).toISOString().slice(0, 16) : (slotDates?.end ?? "")} />
               </div>
             </div>
             <div className="space-y-2">
@@ -223,7 +227,7 @@ export default function Agenda() {
               Carregando calendário...
             </div>
           ) : (
-            <Calendar
+            <Calendar<MappedCalendarEvent>
               localizer={localizer}
               events={mappedEvents}
               startAccessor="start"
@@ -245,17 +249,14 @@ export default function Agenda() {
               }}
               culture="pt-BR"
               eventPropGetter={eventStyleGetter}
-              onSelectEvent={(event) => handleOpenDialog(event)}
+              onSelectEvent={(event: MappedCalendarEvent) => handleOpenDialog(event)}
               selectable
-              onSelectSlot={(slotInfo) => {
+              onSelectSlot={({ start, end }) => {
                 setEditingEvent(null);
-                // Pre-fill dialog with clicked dates
-                const prefillEvent: Partial<CalendarEvent> = {
-                  start_time: slotInfo.start.toISOString(),
-                  end_time: slotInfo.end.toISOString()
-                };
-                // React-hook-form or native form isn't fully controlled here, 
-                // but we can set it and let the defaultValue handle it roughly
+                setSlotDates({
+                  start: format(start, "yyyy-MM-dd'T'HH:mm"),
+                  end: format(end, "yyyy-MM-dd'T'HH:mm"),
+                });
                 setIsDialogOpen(true);
               }}
               components={{
