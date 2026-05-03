@@ -1,0 +1,14 @@
+kind = "api"
+title = "API Server"
+version = "1.0.0"
+id = "artifacts/api-server"
+
+[[services]]
+name = "api"
+localPort = 3001
+
+[services.development]
+run = "pnpm --filter @workspace/api-server run dev"
+
+[services.env]
+PORT = "3001"

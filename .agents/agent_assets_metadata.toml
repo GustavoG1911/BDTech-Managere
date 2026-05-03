@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "dqH473pBO0YXuptabse-o"
+uri = "file://agent_changes.txt"
+type = "text"
+title = "Diff completo — todas as alterações do agente (git patch)"
+
+[[outputs]]
+id = "1ousYNI-mKYhkkyy4S0-Q"
+uri = "file://ROADMAP.md"
+type = "text"
+title = "ROADMAP.md — BD Tech Manager"

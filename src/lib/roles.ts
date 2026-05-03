@@ -6,6 +6,14 @@ export function isOperationalPosition(position?: string | null): position is Ope
   return OPERATIONAL_POSITIONS.includes(position as OperationalPosition);
 }
 
+export function isDirectorPosition(position?: string | null) {
+  return position === "Diretor";
+}
+
+export function isCompensatedPosition(position?: string | null) {
+  return position === "Executivo de Negócios" || position === "SDR";
+}
+
 export function isPureSystemAdmin(role?: string | null, position?: string | null) {
   return role === "admin" && !isOperationalPosition(position);
 }

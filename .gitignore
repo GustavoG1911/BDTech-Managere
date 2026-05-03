@@ -29,3 +29,15 @@ dist-ssr
 
 # Legacy nested copy kept out of the production/Lovable project
 /sales-navigator/
+
+# Codex temp files
+codex-temp-objects/
+codex-temp.index
+codex-final-fixes.patch
+
+# Python cache
+__pycache__/
+*.pyc
+attached_assets/
+agent_changes.*
+*.patch
