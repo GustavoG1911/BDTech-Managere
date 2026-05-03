@@ -15,17 +15,13 @@ interface NavItem {
   icon: React.ElementType;
   roles?: UserRole[];
 }
-interface SoonItem { title: string; icon: React.ElementType; }
 
 const navItems: NavItem[] = [
   { title: "Dashboard",     url: "/",           icon: Home },
+  { title: "Prospecção",    url: "/prospeccao", icon: Target },
+  { title: "Agenda",        url: "/agenda",     icon: CalendarDays },
   { title: "Financeiro",    url: "/financeiro",  icon: Landmark },
   { title: "Configurações", url: "/settings",    icon: Settings },
-];
-
-const soonItems: SoonItem[] = [
-  { title: "Prospecção", icon: Target },
-  { title: "Agenda",     icon: CalendarDays },
 ];
 
 const positionColors: Record<string, string> = {
@@ -105,30 +101,6 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
-        {/* ── Em breve ── */}
-        {!isAdmin && !collapsed && (
-          <SidebarGroup className="p-0 mt-4">
-            <div className="px-2.5 mb-1.5">
-              <span className="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground/35">
-                Em breve
-              </span>
-            </div>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {soonItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <div className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg
-                                    opacity-25 cursor-default select-none">
-                      <item.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground">{item.title}</span>
-                    </div>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
       </SidebarContent>
 
       {/* ── Footer ── */}

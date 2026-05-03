@@ -11,6 +11,8 @@ import Auth from "./pages/Auth.tsx";
 import ResetPassword from "./pages/ResetPassword.tsx";
 import SettingsPage from "./pages/Settings.tsx";
 import Financeiro from "./pages/Financeiro.tsx";
+import Agenda from "./pages/Agenda.tsx";
+import Prospeccao from "./pages/Prospeccao.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import { RefreshCw } from "lucide-react";
 import { isPureSystemAdmin } from "@/lib/roles";
@@ -75,6 +77,8 @@ const App = () => {
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
               <Route path="/financeiro" element={<ProtectedRoute><Financeiro /></ProtectedRoute>} />
+              <Route path="/agenda" element={<ProtectedRoute><Agenda /></ProtectedRoute>} />
+              <Route path="/prospeccao" element={<ProtectedRoute><Prospeccao /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>

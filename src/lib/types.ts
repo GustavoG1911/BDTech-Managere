@@ -96,3 +96,42 @@ export interface ReceivableAdjustment {
 export interface ReceivableAdjustments {
   [entryId: string]: ReceivableAdjustment;
 }
+
+export type CalendarEventStatus = "Agendado" | "Realizado" | "Cancelado";
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  meeting_link?: string;
+  description?: string;
+  operation?: Operation;
+  status: CalendarEventStatus;
+  prospect_id?: string;
+  user_id?: string;
+}
+
+export type ProspectStatus = string;
+
+export interface Prospect {
+  id: string;
+  company: string;
+  contact_name: string;
+  role?: string;
+  linkedin_url?: string;
+  qualification_notes?: string;
+  status: ProspectStatus;
+  owner_id: string;
+  created_at?: string;
+  updated_at?: string;
+  has_scheduled_meeting?: boolean;
+}
+
+export interface ProspectNote {
+  id: string;
+  prospect_id: string;
+  note_text: string;
+  created_at: string;
+}
+
