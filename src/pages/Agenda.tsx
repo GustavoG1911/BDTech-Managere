@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { fetchCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from "@/lib/supabase-agenda";
@@ -21,6 +21,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 
+function getSmartDefaultStart(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  if (d.getMinutes() > 0 || d.getSeconds() > 0) {
+    d.setHours(d.getHours() + 1);
+  }
+  d.setMinutes(0, 0, 0);
+  return format(d, "yyyy-MM-dd'T'HH:mm");
+}
+
+function addMinutes(dateStr: string, mins: number): string {
+  const d = new Date(dateStr);
+  d.setMinutes(d.getMinutes() + mins);
+  return format(d, "yyyy-MM-dd'T'HH:mm");
+}
+
 const locales = {
   "pt-BR": ptBR,
 };
@@ -34,7 +50,7 @@ const localizer = dateFnsLocalizer({
 });
 
 export default function Agenda() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -46,13 +62,18 @@ export default function Agenda() {
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [formStart, setFormStart] = useState("");
+  const [formEnd, setFormEnd] = useState("");
 
-  // Check Google connection status and handle OAuth callback result
+  // Check centralized Google connection status and handle OAuth callback result
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
-      const { data } = await (supabase as any).from("profiles").select("google_sync_enabled, google_email").eq("id", user.id).single();
-      if (data?.google_sync_enabled) {
+      const { data } = await (supabase as any)
+        .from("admin_calendar_config")
+        .select("sync_enabled, google_email")
+        .single();
+      if (data?.sync_enabled) {
         setGoogleConnected(true);
         setGoogleEmail(data.google_email ?? null);
       }
@@ -87,8 +108,8 @@ export default function Agenda() {
     }
   };
 
-  const handleSyncNow = async () => {
-    setIsSyncing(true);
+  const handleSyncNow = useCallback(async (silent = false) => {
+    if (!silent) setIsSyncing(true);
     try {
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
@@ -97,15 +118,23 @@ export default function Agenda() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Erro na sincronização");
-      toast.success(`Sincronizado! ${data.created} novo(s), ${data.updated} atualizado(s).`);
+      if (!silent) toast.success(`Sincronizado! ${data.created} novo(s), ${data.updated} atualizado(s).`);
       queryClient.invalidateQueries({ queryKey: ["calendar-events"] });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao sincronizar";
-      toast.error(msg);
+      if (!silent) toast.error(msg);
     } finally {
-      setIsSyncing(false);
+      if (!silent) setIsSyncing(false);
     }
-  };
+  }, [queryClient]);
+
+  // Auto-sync on page mount and every 15 minutes when admin calendar is connected
+  useEffect(() => {
+    if (!googleConnected) return;
+    handleSyncNow(true);
+    const interval = setInterval(() => handleSyncNow(true), 15 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [googleConnected, handleSyncNow]);
 
   const { data: events, isLoading } = useQuery({
     queryKey: ["calendar-events", user?.id],
@@ -149,20 +178,26 @@ export default function Agenda() {
   const handleOpenDialog = (event?: CalendarEvent) => {
     setEditingEvent(event || null);
     setSlotDates(null);
+    if (event) {
+      setFormStart(new Date(event.start_time).toISOString().slice(0, 16));
+      setFormEnd(new Date(event.end_time).toISOString().slice(0, 16));
+    } else {
+      const defaultStart = getSmartDefaultStart();
+      setFormStart(defaultStart);
+      setFormEnd(addMinutes(defaultStart, 90));
+    }
     setIsDialogOpen(true);
   };
 
   const handleSave = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const start_time = formData.get("start_time") as string;
-    const end_time = formData.get("end_time") as string;
     const operation = formData.get("operation") as string;
 
     saveEventMutation.mutate({
       title: formData.get("title") as string,
-      start_time: new Date(start_time).toISOString(),
-      end_time: new Date(end_time).toISOString(),
+      start_time: new Date(formStart).toISOString(),
+      end_time: new Date(formEnd).toISOString(),
       meeting_link: formData.get("meeting_link") as string,
       description: formData.get("description") as string,
       status: (formData.get("status") || "Agendado") as CalendarEventStatus,
@@ -201,6 +236,11 @@ export default function Agenda() {
       <div className="flex items-center justify-between space-y-2">
         <h2 className="text-3xl font-bold tracking-tight">Agenda de Reuniões</h2>
         <div className="flex gap-2">
+          {googleConnected && (
+            <Button variant="ghost" size="icon" onClick={() => handleSyncNow(false)} disabled={isSyncing} title="Sincronizar Google Calendar">
+              <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
+            </Button>
+          )}
           <Button variant="outline" onClick={() => setIsConfigOpen(true)}>
             <Mail className="mr-2 h-4 w-4" />
             {googleConnected ? "Google Calendar" : "Conectar Google"}
@@ -220,39 +260,55 @@ export default function Agenda() {
           <div className="space-y-4 pt-2 text-sm">
             <div className="bg-muted/40 border border-border/50 rounded-lg p-4 flex flex-col gap-3">
               <div className="flex items-center justify-between">
-                <span className="font-medium">Status da Conexão</span>
+                <span className="font-medium">Status da Conexão Centralizada</span>
                 {googleConnected
-                  ? <Badge className="text-xs bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/15">Conectado</Badge>
-                  : <Badge variant="secondary" className="text-xs">Desconectado</Badge>
+                  ? <Badge className="text-xs bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/15">Ativo</Badge>
+                  : <Badge variant="secondary" className="text-xs">Não configurado</Badge>
                 }
               </div>
               {googleConnected && googleEmail && (
-                <p className="text-xs text-muted-foreground">Conta: <span className="text-foreground font-medium">{googleEmail}</span></p>
+                <p className="text-xs text-muted-foreground">Conta vinculada: <span className="text-foreground font-medium">{googleEmail}</span></p>
               )}
-              {!googleConnected && (
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Conecte sua conta Google para sincronizar automaticamente convites e reuniões aceitas no Gmail/Google Calendar.
-                </p>
-              )}
-              {googleConnected ? (
-                <Button onClick={handleSyncNow} disabled={isSyncing} className="w-full">
-                  <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
-                  {isSyncing ? "Sincronizando..." : "Sincronizar Agora"}
-                </Button>
+
+              {role === "admin" ? (
+                /* Admin: can connect or resync */
+                googleConnected ? (
+                  <Button onClick={() => handleSyncNow(false)} disabled={isSyncing} className="w-full">
+                    <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
+                    {isSyncing ? "Sincronizando..." : "Sincronizar Agora"}
+                  </Button>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Conecte a conta Google que será a fonte centralizada de calendário para toda a plataforma.
+                    </p>
+                    <Button onClick={handleConnectGoogle} disabled={isConnecting} className="w-full">
+                      <Mail className="mr-2 h-4 w-4" />
+                      {isConnecting ? "Redirecionando..." : "Conectar Conta Google Centralizada"}
+                    </Button>
+                  </>
+                )
               ) : (
-                <Button onClick={handleConnectGoogle} disabled={isConnecting} className="w-full">
-                  <Mail className="mr-2 h-4 w-4" />
-                  {isConnecting ? "Redirecionando..." : "Conectar Conta Google"}
-                </Button>
+                /* Non-admin: can only sync */
+                googleConnected ? (
+                  <Button onClick={() => handleSyncNow(false)} disabled={isSyncing} className="w-full">
+                    <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
+                    {isSyncing ? "Sincronizando..." : "Sincronizar Agora"}
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    A conta Google centralizada ainda não foi configurada. Solicite ao administrador da plataforma para conectá-la.
+                  </p>
+                )
               )}
             </div>
 
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Como vai funcionar</p>
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Como funciona</p>
               <ul className="space-y-2 text-xs text-muted-foreground">
                 <li className="flex items-start gap-2">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mt-0.5 shrink-0" />
-                  <span>Convites aceitos no Gmail serão importados automaticamente para esta agenda.</span>
+                  <span>Convites aceitos no Google Calendar são importados automaticamente (a cada 15 min e ao entrar na página).</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mt-0.5 shrink-0" />
@@ -277,7 +333,7 @@ export default function Agenda() {
           <DialogHeader>
             <DialogTitle>{editingEvent ? "Detalhes da Reunião" : "Nova Reunião"}</DialogTitle>
           </DialogHeader>
-          <form key={editingEvent?.id ?? (slotDates?.start ?? "new")} onSubmit={handleSave} className="space-y-4 pt-4">
+          <form key={editingEvent?.id ?? "new"} onSubmit={handleSave} className="space-y-4 pt-4">
             <div className="space-y-2">
               <Label htmlFor="title">Título</Label>
               <Input id="title" name="title" required defaultValue={editingEvent?.title} />
@@ -285,11 +341,28 @@ export default function Agenda() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="start_time">Início</Label>
-                <Input id="start_time" name="start_time" type="datetime-local" required defaultValue={editingEvent ? new Date(editingEvent.start_time).toISOString().slice(0, 16) : (slotDates?.start ?? "")} />
+                <Input
+                  id="start_time"
+                  name="start_time"
+                  type="datetime-local"
+                  required
+                  value={formStart}
+                  onChange={(e) => {
+                    setFormStart(e.target.value);
+                    if (e.target.value) setFormEnd(addMinutes(e.target.value, 90));
+                  }}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="end_time">Fim</Label>
-                <Input id="end_time" name="end_time" type="datetime-local" required defaultValue={editingEvent ? new Date(editingEvent.end_time).toISOString().slice(0, 16) : (slotDates?.end ?? "")} />
+                <Input
+                  id="end_time"
+                  name="end_time"
+                  type="datetime-local"
+                  required
+                  value={formEnd}
+                  onChange={(e) => setFormEnd(e.target.value)}
+                />
               </div>
             </div>
             <div className="space-y-2">
@@ -375,12 +448,12 @@ export default function Agenda() {
               eventPropGetter={eventStyleGetter}
               onSelectEvent={(event: MappedCalendarEvent) => handleOpenDialog(event)}
               selectable
-              onSelectSlot={({ start, end }) => {
+              onSelectSlot={({ start }) => {
                 setEditingEvent(null);
-                setSlotDates({
-                  start: format(start, "yyyy-MM-dd'T'HH:mm"),
-                  end: format(end, "yyyy-MM-dd'T'HH:mm"),
-                });
+                setSlotDates(null);
+                const s = format(start, "yyyy-MM-dd'T'HH:mm");
+                setFormStart(s);
+                setFormEnd(addMinutes(s, 90));
                 setIsDialogOpen(true);
               }}
               components={{

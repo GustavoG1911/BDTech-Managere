@@ -1,12 +1,14 @@
 import { supabase } from "@/integrations/supabase/client";
 import { Prospect, ProspectNote, ProspectStatus } from "./types";
 
-export const fetchProspects = async (userId: string): Promise<Prospect[]> => {
-  const { data, error } = await (supabase as any)
+export const fetchProspects = async (userId: string, position?: string): Promise<Prospect[]> => {
+  const isManager = position === "Diretor" || position === "Executivo de Negócios";
+  let query = (supabase as any)
     .from("prospects")
     .select("*")
-    .eq("owner_id", userId)
     .order("created_at", { ascending: false });
+  if (!isManager) query = query.eq("owner_id", userId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching prospects:", error);

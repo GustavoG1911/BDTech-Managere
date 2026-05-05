@@ -18,7 +18,7 @@ serve(async (req) => {
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
     const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
-    const { userId } = JSON.parse(atob(state)) as { userId: string };
+    const { userId } = JSON.parse(atob(state)) as { userId: string; adminSetup?: boolean };
 
     const callbackUrl = `${supabaseUrl}/functions/v1/google-oauth-callback`;
 
@@ -35,18 +35,21 @@ serve(async (req) => {
     const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
-    const profile = await profileRes.json();
+    const googleProfile = await profileRes.json();
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     const expiry = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
 
-    await supabase.from("profiles").update({
+    // Save into the single centralized admin_calendar_config row (fixed UUID for upsert)
+    await supabase.from("admin_calendar_config").upsert({
+      id: "00000000-0000-0000-0000-000000000001",
       google_refresh_token: tokens.refresh_token,
       google_access_token: tokens.access_token,
       google_token_expiry: expiry,
-      google_email: profile.email,
-      google_sync_enabled: true,
-    }).eq("id", userId);
+      google_email: googleProfile.email,
+      sync_enabled: true,
+      updated_at: new Date().toISOString(),
+    });
 
     return redirect("/agenda?google_connected=1");
 

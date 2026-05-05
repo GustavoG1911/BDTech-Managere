@@ -121,6 +121,10 @@ export interface Prospect {
   role?: string;
   linkedin_url?: string;
   qualification_notes?: string;
+  company_email?: string;
+  company_phone?: string;
+  contact_email?: string;
+  contact_phone?: string;
   status: ProspectStatus;
   owner_id: string;
   created_at?: string;

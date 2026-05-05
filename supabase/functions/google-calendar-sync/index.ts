@@ -58,20 +58,25 @@ serve(async (req) => {
     const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
     if (authErr || !user) return new Response(JSON.stringify({ error: "Sessão inválida." }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    // Load user profile with Google tokens
-    const { data: profile } = await supabase.from("profiles").select("google_refresh_token, google_access_token, google_token_expiry, google_sync_enabled").eq("id", user.id).single();
-    if (!profile?.google_sync_enabled || !profile.google_refresh_token) {
-      return new Response(JSON.stringify({ error: "Conta Google não conectada." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // Load centralized admin Google tokens (single row, independent of calling user)
+    const { data: adminConfig } = await (supabase as any)
+      .from("admin_calendar_config")
+      .select("google_refresh_token, google_access_token, google_token_expiry, sync_enabled, google_email")
+      .single();
+    if (!adminConfig?.sync_enabled || !adminConfig.google_refresh_token) {
+      return new Response(JSON.stringify({ error: "Conta Google centralizada não configurada. Peça ao administrador para conectar." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // Refresh access token if expired (with 60s buffer)
-    let accessToken = profile.google_access_token;
-    const expiry = profile.google_token_expiry ? new Date(profile.google_token_expiry) : new Date(0);
+    let accessToken = adminConfig.google_access_token;
+    const expiry = adminConfig.google_token_expiry ? new Date(adminConfig.google_token_expiry) : new Date(0);
     if (expiry.getTime() < Date.now() + 60_000) {
-      const refreshed = await refreshAccessToken(clientId, clientSecret, profile.google_refresh_token);
+      const refreshed = await refreshAccessToken(clientId, clientSecret, adminConfig.google_refresh_token);
       accessToken = refreshed.accessToken;
       const newExpiry = new Date(Date.now() + refreshed.expiresIn * 1000).toISOString();
-      await supabase.from("profiles").update({ google_access_token: accessToken, google_token_expiry: newExpiry }).eq("id", user.id);
+      await (supabase as any).from("admin_calendar_config")
+        .update({ google_access_token: accessToken, google_token_expiry: newExpiry })
+        .eq("id", "00000000-0000-0000-0000-000000000001");
     }
 
     // Fetch Google Calendar events (primary calendar, next 60 days)

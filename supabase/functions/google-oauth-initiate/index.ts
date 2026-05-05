@@ -35,11 +35,17 @@ serve(async (req) => {
     const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
     if (authErr || !user) return new Response(JSON.stringify({ error: "Sessão inválida." }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+    // Only the platform admin (role = "admin") may connect the centralized Google account
+    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+    if (profile?.role !== "admin") {
+      return new Response(JSON.stringify({ error: "Apenas o administrador da plataforma pode conectar a conta Google centralizada." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // Callback URL points to the google-oauth-callback Edge Function
     const callbackUrl = `${supabaseUrl}/functions/v1/google-oauth-callback`;
 
-    // State encodes the user id so callback can identify who is connecting
-    const state = btoa(JSON.stringify({ userId: user.id }));
+    // State encodes adminSetup flag so callback knows to save to admin_calendar_config
+    const state = btoa(JSON.stringify({ userId: user.id, adminSetup: true }));
 
     const params = new URLSearchParams({
       client_id: clientId,

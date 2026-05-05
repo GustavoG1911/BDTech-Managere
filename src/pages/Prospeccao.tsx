@@ -1,14 +1,14 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { fetchProspects, createProspect, updateProspectStatus, fetchProspectNotes, createProspectNote } from "@/lib/supabase-prospeccao";
+import { fetchProspects, createProspect, updateProspect, updateProspectStatus, fetchProspectNotes, createProspectNote } from "@/lib/supabase-prospeccao";
 import { createCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
 import { CalendarEvent, Prospect, ProspectStatus } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, MessageSquare, Linkedin, Calendar, Building2, UserCircle2, Settings2, X, GripVertical } from "lucide-react";
+import { Plus, MessageSquare, Linkedin, Calendar, Building2, UserCircle2, Settings2, X, GripVertical, Phone, Pencil, ClipboardList, Mail } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { format } from "date-fns";
 
 export default function Prospeccao() {
-  const { user } = useAuth();
+  const { user, position } = useAuth();
   const queryClient = useQueryClient();
   const [isNewProspectOpen, setIsNewProspectOpen] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -25,7 +25,16 @@ export default function Prospeccao() {
   const [scheduleTargetId, setScheduleTargetId] = useState<string | null>(null);
   const [scheduleTargetCol, setScheduleTargetCol] = useState<string | null>(null);
   const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
+  const [isSheetEditMode, setIsSheetEditMode] = useState(false);
+  const [editFormData, setEditFormData] = useState<Partial<Prospect>>({});
   const [draggedProspectId, setDraggedProspectId] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (selectedProspect) {
+      setEditFormData({ ...selectedProspect });
+      setIsSheetEditMode(false);
+    }
+  }, [selectedProspect?.id]);
   const [newColumnName, setNewColumnName] = useState("");
 
   const [columns, setColumns] = useState<string[]>(() => {
@@ -58,8 +67,8 @@ export default function Prospeccao() {
   };
 
   const { data: prospects, isLoading } = useQuery({
-    queryKey: ["prospects", user?.id],
-    queryFn: () => fetchProspects(user!.id),
+    queryKey: ["prospects", user?.id, position],
+    queryFn: () => fetchProspects(user!.id, position),
     enabled: !!user?.id,
   });
 
@@ -106,6 +115,20 @@ export default function Prospeccao() {
     }
   });
 
+  const updateProspectMutation = useMutation({
+    mutationFn: ({ id, updates }: { id: string; updates: Partial<Prospect> }) => updateProspect(id, updates),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["prospects"] });
+      setSelectedProspect(prev => prev ? { ...prev, ...editFormData } : null);
+      setIsSheetEditMode(false);
+      toast.success("Prospect atualizado!");
+    },
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao atualizar: ${msg}`);
+    }
+  });
+
   const createEventMutation = useMutation({
     mutationFn: async (eventData: Omit<Partial<CalendarEvent>, "user_id" | "prospect_id">) => {
       // 1. Cria evento PRIMEIRO — se falhar, prospect não muda de coluna
@@ -130,6 +153,11 @@ export default function Prospeccao() {
     }
   });
 
+  const handleSaveProspect = () => {
+    if (!selectedProspect) return;
+    updateProspectMutation.mutate({ id: selectedProspect.id, updates: editFormData });
+  };
+
   const handleCreateProspect = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -138,7 +166,12 @@ export default function Prospeccao() {
       contact_name: formData.get("contact_name") as string,
       role: formData.get("role") as string,
       linkedin_url: formData.get("linkedin_url") as string,
-      status: columns[0] || "Mapeamento", // defaults to first column
+      company_email: formData.get("company_email") as string || undefined,
+      company_phone: formData.get("company_phone") as string || undefined,
+      contact_email: formData.get("contact_email") as string || undefined,
+      contact_phone: formData.get("contact_phone") as string || undefined,
+      qualification_notes: formData.get("qualification_notes") as string || undefined,
+      status: columns[0] || "Mapeamento",
     });
   };
 
@@ -272,22 +305,44 @@ export default function Prospeccao() {
           <DialogHeader>
             <DialogTitle>Adicionar Novo Prospect</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleCreateProspect} className="space-y-4 pt-4">
-            <div className="space-y-2">
-              <Label htmlFor="company">Empresa *</Label>
-              <Input id="company" name="company" required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="contact_name">Nome do Contato *</Label>
-              <Input id="contact_name" name="contact_name" required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="role">Cargo</Label>
-              <Input id="role" name="role" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="linkedin_url">LinkedIn URL</Label>
-              <Input id="linkedin_url" name="linkedin_url" type="text" />
+          <form onSubmit={handleCreateProspect} className="space-y-3 pt-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5 col-span-2">
+                <Label htmlFor="company">Empresa *</Label>
+                <Input id="company" name="company" required />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="contact_name">Nome do Contato *</Label>
+                <Input id="contact_name" name="contact_name" required />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="role">Cargo</Label>
+                <Input id="role" name="role" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="contact_phone">Tel. Contato (WhatsApp)</Label>
+                <Input id="contact_phone" name="contact_phone" placeholder="+55 11..." />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="contact_email">Email Contato</Label>
+                <Input id="contact_email" name="contact_email" type="email" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="company_phone">Tel. Empresa</Label>
+                <Input id="company_phone" name="company_phone" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="company_email">Email Empresa</Label>
+                <Input id="company_email" name="company_email" type="email" />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label htmlFor="linkedin_url">LinkedIn URL</Label>
+                <Input id="linkedin_url" name="linkedin_url" type="text" />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label htmlFor="qualification_notes">Observações</Label>
+                <Textarea id="qualification_notes" name="qualification_notes" rows={2} className="resize-none" />
+              </div>
             </div>
             <Button type="submit" className="w-full" disabled={createProspectMutation.isPending}>
               {createProspectMutation.isPending ? "Salvando..." : "Salvar Lead"}
@@ -400,10 +455,20 @@ export default function Prospeccao() {
                               <p className="text-[11px] text-muted-foreground/60 pl-4 line-clamp-1">{p.role}</p>
                             )}
                           </div>
-                          {p.linkedin_url && (
-                            <div className="pt-1.5 border-t border-border/40 flex items-center gap-1.5">
-                              <Linkedin className="h-2.5 w-2.5 text-blue-400/60" />
-                              <span className="text-[10px] text-blue-400/60 font-medium">LinkedIn</span>
+                          {(p.linkedin_url || p.contact_phone) && (
+                            <div className="pt-1.5 border-t border-border/40 flex items-center gap-3">
+                              {p.linkedin_url && (
+                                <div className="flex items-center gap-1.5">
+                                  <Linkedin className="h-2.5 w-2.5 text-blue-400/60" />
+                                  <span className="text-[10px] text-blue-400/60 font-medium">LinkedIn</span>
+                                </div>
+                              )}
+                              {p.contact_phone && (
+                                <div className="flex items-center gap-1.5">
+                                  <Phone className="h-2.5 w-2.5 text-emerald-400/60" />
+                                  <span className="text-[10px] text-emerald-400/60 font-medium">WhatsApp</span>
+                                </div>
+                              )}
                             </div>
                           )}
                         </CardContent>
@@ -418,7 +483,7 @@ export default function Prospeccao() {
       </div>
 
       <Sheet open={!!selectedProspect} onOpenChange={(open) => !open && setSelectedProspect(null)}>
-        <SheetContent className="w-[400px] sm:w-[480px] flex flex-col p-0 gap-0">
+        <SheetContent className="w-[400px] sm:w-[540px] flex flex-col p-0 gap-0">
           {/* Header */}
           <div className="p-6 pb-4 border-b border-border/50">
             <SheetHeader className="space-y-0">
@@ -427,7 +492,23 @@ export default function Prospeccao() {
                   <Building2 className="h-5 w-5 text-primary" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <SheetTitle className="text-lg font-bold leading-tight truncate">{selectedProspect?.company}</SheetTitle>
+                  <div className="flex items-center justify-between gap-2">
+                    <SheetTitle className="text-lg font-bold leading-tight truncate">{selectedProspect?.company}</SheetTitle>
+                    {isSheetEditMode ? (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button size="sm" className="h-7 px-2 text-xs" onClick={handleSaveProspect} disabled={updateProspectMutation.isPending}>
+                          {updateProspectMutation.isPending ? "..." : "Salvar"}
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setIsSheetEditMode(false)}>
+                          Cancelar
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs shrink-0" onClick={() => setIsSheetEditMode(true)}>
+                        <Pencil className="h-3.5 w-3.5 mr-1" /> Editar
+                      </Button>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 mt-1.5">
                     <Badge variant="outline" className="text-[10px] h-5">{selectedProspect?.status}</Badge>
                     {selectedProspect?.has_scheduled_meeting && (
@@ -440,29 +521,119 @@ export default function Prospeccao() {
               </div>
             </SheetHeader>
 
-            {/* Contact info row */}
-            <div className="mt-4 grid grid-cols-1 gap-2">
-              <div className="flex items-center gap-2 text-sm">
-                <UserCircle2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                <span className="font-medium">{selectedProspect?.contact_name}</span>
-                {selectedProspect?.role && <span className="text-muted-foreground text-xs">· {selectedProspect.role}</span>}
+            {/* Contact info — view mode */}
+            {!isSheetEditMode ? (
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center gap-2 text-sm">
+                  <UserCircle2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="font-medium">{selectedProspect?.contact_name}</span>
+                  {selectedProspect?.role && <span className="text-muted-foreground text-xs">· {selectedProspect.role}</span>}
+                </div>
+                {selectedProspect?.linkedin_url && (
+                  <a href={selectedProspect.linkedin_url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors w-fit">
+                    <Linkedin className="h-4 w-4 shrink-0" />
+                    <span>Ver perfil no LinkedIn</span>
+                  </a>
+                )}
+                {selectedProspect?.contact_phone && (
+                  <a href={`https://wa.me/${selectedProspect.contact_phone.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-emerald-400 hover:text-emerald-300 transition-colors w-fit">
+                    <Phone className="h-4 w-4 shrink-0" />
+                    <span>{selectedProspect.contact_phone}</span>
+                  </a>
+                )}
+                {selectedProspect?.contact_email && (
+                  <a href={`mailto:${selectedProspect.contact_email}`}
+                    className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
+                    <Mail className="h-4 w-4 shrink-0" />
+                    <span>{selectedProspect.contact_email}</span>
+                  </a>
+                )}
+                {selectedProspect?.company_phone && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Building2 className="h-4 w-4 shrink-0" />
+                    <span>{selectedProspect.company_phone} (empresa)</span>
+                  </div>
+                )}
+                {selectedProspect?.company_email && (
+                  <a href={`mailto:${selectedProspect.company_email}`}
+                    className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
+                    <Mail className="h-4 w-4 shrink-0" />
+                    <span>{selectedProspect.company_email} (empresa)</span>
+                  </a>
+                )}
               </div>
-              {selectedProspect?.linkedin_url && (
-                <a
-                  href={selectedProspect.linkedin_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors w-fit"
-                >
-                  <Linkedin className="h-4 w-4 shrink-0" />
-                  <span>Ver perfil no LinkedIn</span>
-                </a>
-              )}
-            </div>
+            ) : (
+              /* Edit mode form */
+              <div className="mt-4 space-y-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Empresa *</Label>
+                  <Input value={editFormData.company || ''} onChange={e => setEditFormData(p => ({ ...p, company: e.target.value }))} className="h-8 text-sm" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Contato *</Label>
+                    <Input value={editFormData.contact_name || ''} onChange={e => setEditFormData(p => ({ ...p, contact_name: e.target.value }))} className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Cargo</Label>
+                    <Input value={editFormData.role || ''} onChange={e => setEditFormData(p => ({ ...p, role: e.target.value }))} className="h-8 text-sm" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Tel. Contato (WhatsApp)</Label>
+                    <Input value={editFormData.contact_phone || ''} onChange={e => setEditFormData(p => ({ ...p, contact_phone: e.target.value }))} className="h-8 text-sm" placeholder="+55 11..." />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Email Contato</Label>
+                    <Input value={editFormData.contact_email || ''} onChange={e => setEditFormData(p => ({ ...p, contact_email: e.target.value }))} className="h-8 text-sm" type="email" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Tel. Empresa</Label>
+                    <Input value={editFormData.company_phone || ''} onChange={e => setEditFormData(p => ({ ...p, company_phone: e.target.value }))} className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Email Empresa</Label>
+                    <Input value={editFormData.company_email || ''} onChange={e => setEditFormData(p => ({ ...p, company_email: e.target.value }))} className="h-8 text-sm" type="email" />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">LinkedIn URL</Label>
+                  <Input value={editFormData.linkedin_url || ''} onChange={e => setEditFormData(p => ({ ...p, linkedin_url: e.target.value }))} className="h-8 text-sm" />
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Notes section */}
+          {/* Body */}
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            {/* Observations */}
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+                <ClipboardList className="h-3.5 w-3.5" /> Observações
+              </h3>
+              {isSheetEditMode ? (
+                <Textarea
+                  value={editFormData.qualification_notes || ''}
+                  onChange={e => setEditFormData(p => ({ ...p, qualification_notes: e.target.value }))}
+                  placeholder="Contexto da empresa, pontos de atenção, qualificação..."
+                  className="resize-none text-sm"
+                  rows={3}
+                />
+              ) : selectedProspect?.qualification_notes ? (
+                <div className="bg-muted/40 border border-border/40 rounded-lg p-3">
+                  <p className="text-sm leading-relaxed text-muted-foreground">{selectedProspect.qualification_notes}</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground/50 italic">Nenhuma observação registrada.</p>
+              )}
+            </div>
+
+            {/* Notes */}
             <div>
               <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">Histórico e Notas</h3>
               <form onSubmit={handleAddNote} className="mb-5 space-y-2">
@@ -478,7 +649,6 @@ export default function Prospeccao() {
                 </Button>
               </form>
 
-              {/* Notes timeline — simplified linear */}
               <div className="space-y-3">
                 {notes?.map((note) => (
                   <div key={note.id} className="flex gap-3">
