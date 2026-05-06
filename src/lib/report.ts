@@ -11,6 +11,23 @@ interface ReportData {
   superMeta: MonthlySuperMeta;
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeClassToken(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9_-]/g, "-");
+}
+
 export function generateReportHTML(data: ReportData): string {
   const { deals, presentations, salary, periodLabel, settings, superMeta } = data;
   const rate = ((settings.commissionRate || 0.20) * 100).toFixed(0);
@@ -38,19 +55,22 @@ export function generateReportHTML(data: ReportData): string {
     else opusTechVolume += vol;
 
     const basePercent = comm.monthlyBaseRate === 1 ? "100%" : "70%";
+    const operationLabel = escapeHtml(deal.operation);
+    const statusLabel = escapeHtml(deal.paymentStatus);
+    const statusClass = safeClassToken(deal.paymentStatus);
 
     return `
       <tr>
         <td>${format(new Date(deal.closingDate), "dd/MM/yyyy")}</td>
-        <td>${deal.clientName}</td>
-        <td><span class="badge ${deal.operation === "BluePex" ? "badge-blue" : "badge-purple"}">${deal.operation}</span></td>
+        <td>${escapeHtml(deal.clientName)}</td>
+        <td><span class="badge ${deal.operation === "BluePex" ? "badge-blue" : "badge-purple"}">${operationLabel}</span></td>
         <td class="num">${formatCurrency(deal.monthlyValue)}</td>
         <td class="num">${formatCurrency(deal.implantationValue)}</td>
         <td class="num">${formatCurrency(comm.monthlyCommission)}</td>
         <td class="num">${formatCurrency(comm.implantationCommission)}</td>
         ${comm.superMetaBonus > 0 ? `<td class="num bold" style="color:#eab308">${formatCurrency(comm.superMetaBonus)}</td>` : `<td class="num">—</td>`}
         <td class="num bold">${formatCurrency(comm.totalCommission)}</td>
-        <td><span class="status status-${deal.paymentStatus.toLowerCase()}">${deal.paymentStatus}</span></td>
+        <td><span class="status status-${statusClass}">${statusLabel}</span></td>
       </tr>
       <tr class="detail-row">
         <td colspan="10" style="padding:4px 10px 8px 10px;background:#f8fafa;font-size:11px;color:#64748b;">
@@ -66,7 +86,7 @@ export function generateReportHTML(data: ReportData): string {
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>Relatório de Fechamentos — ${periodLabel}</title>
+<title>Relatório de Fechamentos — ${escapeHtml(periodLabel)}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a2e; background: #fff; padding: 40px; max-width: 1100px; margin: 0 auto; }
@@ -112,7 +132,7 @@ export function generateReportHTML(data: ReportData): string {
   <div class="header">
     <div>
       <h1>Relatório de Fechamentos</h1>
-      <div class="subtitle">Período: ${periodLabel}</div>
+      <div class="subtitle">Período: ${escapeHtml(periodLabel)}</div>
     </div>
     <div class="date">
       Gerado em: ${format(new Date(), "dd/MM/yyyy 'às' HH:mm")}
