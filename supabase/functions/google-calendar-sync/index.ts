@@ -57,6 +57,11 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
     if (authErr || !user) return new Response(JSON.stringify({ error: "Sessão inválida." }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const { data: profile } = await supabase.from("profiles").select("role").eq("user_id", user.id).single();
+    if (profile?.role !== "admin") {
+      return new Response(JSON.stringify({ error: "Apenas o administrador pode sincronizar o Google Calendar centralizado." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    const isTestEnv = user.email?.endsWith("@teste.com") || false;
 
     // Load centralized admin Google tokens (single row, independent of calling user)
     const { data: adminConfig } = await (supabase as any)
@@ -94,7 +99,7 @@ serve(async (req) => {
     const accepted = googleEvents.filter((ev) => {
       if (ev.status === "cancelled") return false;
       const self = ev.attendees?.find((a) => a.self);
-      if (!self) return true; // organizer — no self entry means they're the creator
+      if (!self) return true; // organizer, no self entry means they are the creator
       return self.responseStatus === "accepted";
     });
 
@@ -120,9 +125,10 @@ serve(async (req) => {
         meeting_link: meetingLink || null,
         operation: operation ?? null,
         status: "Agendado",
+        is_test_data: isTestEnv,
       };
 
-      // Upsert based on google_event_id — avoids duplicates
+      // Upsert based on google_event_id, avoids duplicates
       const { data: existing } = await (supabase as any)
         .from("calendar_events")
         .select("id")

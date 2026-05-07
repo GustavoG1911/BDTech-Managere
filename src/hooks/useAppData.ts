@@ -163,10 +163,15 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
   }, [role, userId, position]);
 
   const updateSettings = useCallback(async (newSettings: AppSettings) => {
+    if (position !== "Diretor") {
+      toast.error("Apenas o Diretor pode alterar salário e comissão.");
+      return;
+    }
+
     saveSettings(newSettings);
     setSettings(newSettings);
     // SDR não pode auto-editar comissão e salário — apenas o gestor define via Team tab
-    if (userId && position !== "SDR") {
+    if (userId) {
       try {
         await Promise.all([
           saveUserCommissionRate(userId, newSettings.commissionRate),

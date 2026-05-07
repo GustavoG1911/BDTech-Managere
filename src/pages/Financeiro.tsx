@@ -16,6 +16,7 @@ import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, Badge
 import { toast } from "sonner";
 import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
 import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, confirmCommissionPaymentById, rejectCommissionPaymentById, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, CommissionPayment } from "@/lib/supabase-deals";
+import { getCurrentUserContext } from "@/lib/supabase-env";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
@@ -637,6 +638,8 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const location = useLocation();
   const currentMonthKey = getMonthKey(new Date());
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
+  const [filtroOperacao, setFiltroOperacao] = useState("Todas");
+  const [filtroStatus, setFiltroStatus] = useState("Todos Status");
   const monthOptions = useMemo(() => buildMonthOptions(), []);
   const [pendingScroll, setPendingScroll] = useState(false);
   const [pendingDialogOpen, setPendingDialogOpen] = useState(false);
@@ -654,8 +657,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const { data, isLoading: loading } = useQuery({
     queryKey: ["user-finance-data", userId],
     queryFn: async () => {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
+      const { isTestEnv } = await getCurrentUserContext();
       let salariesRes = await (supabase.from("salary_payments") as any)
         .select("*")
         .eq("user_id", userId)
@@ -710,13 +712,23 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   // Deals onde mensalidade OU implantação têm competência financeira no mês selecionado
   const filteredDeals = useMemo(() => {
     return scopedDeals.filter((d) => {
-      return dealHasFinancialMovementInPeriod(d, {
+      const passTime = dealHasFinancialMovementInPeriod(d, {
         filterType: "month",
         selectedMonth,
         selectedYear: selectedMonth.slice(0, 4),
       });
+      const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
+      let passStatus = true;
+      if (filtroStatus === "Finalizados") {
+        const parts = getCommissionPeriodParts(d, presentations, settings, { filterType: "month", selectedMonth, selectedYear: selectedMonth.slice(0, 4) });
+        passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments, false) === "done";
+      } else if (filtroStatus === "Pendentes") {
+        const parts = getCommissionPeriodParts(d, presentations, settings, { filterType: "month", selectedMonth, selectedYear: selectedMonth.slice(0, 4) });
+        passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments, false) !== "done";
+      }
+      return passTime && passOp && passStatus;
     });
-  }, [scopedDeals, selectedMonth]);
+  }, [scopedDeals, selectedMonth, filtroOperacao, filtroStatus, presentations, settings, commissionPayments]);
 
   const filteredSalaries = useMemo(() => {
     return activeSalaries.filter((s) => getMonthKey(s.reference_month) === selectedMonth);
@@ -734,6 +746,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     const legacyPendingDeals = scopedDeals.filter((d) => d.isPaidToUser && !d.isUserConfirmedPayment && !pendingCpIds.has(d.id));
     return [...cpPendingDeals, ...legacyPendingDeals];
   }, [scopedDeals, commissionPayments]);
+  const showPendingConfirmationsPanel = false;
 
   const pendingCommissionItems = useMemo(() => {
     return commissionPayments
@@ -936,8 +949,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     try {
       await confirmCommissionPaymentById(paymentId, userId);
       const item = pendingCommissionItems.find(({ cp }) => cp.id === paymentId);
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
+      const { isTestEnv } = await getCurrentUserContext();
       const { data: directors } = await (supabase as any)
         .from("profiles")
         .select("user_id")
@@ -997,18 +1009,40 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
           <h1 className="text-xl font-bold tracking-tight text-foreground">Meu Fluxo Individual</h1>
           <p className="text-xs text-muted-foreground/60 mt-0.5">Comissões e salário do período selecionado</p>
         </div>
-        <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-          <SelectTrigger className="w-[180px] h-9 text-sm bg-card border-border/60">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {monthOptions.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+            <SelectTrigger className="w-[180px] h-9 text-sm bg-card border-border/60">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {monthOptions.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={filtroOperacao} onValueChange={setFiltroOperacao}>
+            <SelectTrigger className="w-[150px] h-9 text-sm bg-card border-border/60">
+              <SelectValue placeholder="Operação" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Todas">Todas Operações</SelectItem>
+              <SelectItem value="BluePex">BluePex</SelectItem>
+              <SelectItem value="Opus Tech">Opus Tech</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={filtroStatus} onValueChange={setFiltroStatus}>
+            <SelectTrigger className="w-[150px] h-9 text-sm bg-card border-border/60">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Todos Status">Todos Status</SelectItem>
+              <SelectItem value="Finalizados">Finalizados</SelectItem>
+              <SelectItem value="Pendentes">Pendentes</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KpiCard title="Comissão Paga" value={formatCurrency(kpis.paid)} icon={BadgeDollarSign} variant="success" subtitle="Já confirmada e recebida" tooltip="Comissões que você confirmou como recebidas. Se o pagamento foi antecipado, conta no mês da confirmação." />
@@ -1095,7 +1129,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         </DialogContent>
       </Dialog>
 
-      {false && pendingConfirmations.length > 0 && (
+      {showPendingConfirmationsPanel && pendingConfirmations.length > 0 && (
         <div id="pending-confirmations" className="mb-5 bg-card rounded-xl border-2 border-warning/50 overflow-hidden">
           <div className="px-5 py-3 border-b border-warning/30 flex items-center gap-2 bg-warning/5">
             <span className="h-2 w-2 rounded-full bg-warning animate-pulse shrink-0" />
@@ -1247,8 +1281,7 @@ function FinanceiroContent() {
   const { data, isLoading: loading } = useQuery({
     queryKey: ["finance-data", role, user?.id, filterType, selectedYear],
     queryFn: async () => {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
+      const { isTestEnv } = await getCurrentUserContext();
 
       // profiles filtrado por is_test_data para isolamento test/prod
       let profilesRes = await (supabase.from("profiles") as any)
@@ -1709,8 +1742,7 @@ function FinanceiroContent() {
     setProcessingSalaryKeys((prev) => new Set(prev).add(processingKey));
     const dateStr = referenceMonth.slice(0, 7) + "-20";
     const referenceDate = referenceMonth.slice(0, 7) + "-01";
-    const { data: { user: currentUser } } = await supabase.auth.getUser();
-    const isTestEnv = currentUser?.email?.endsWith("@teste.com") || false;
+    const { isTestEnv } = await getCurrentUserContext();
     const payload = {
       user_id: userId,
       amount,
