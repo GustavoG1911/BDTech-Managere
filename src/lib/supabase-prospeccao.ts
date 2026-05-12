@@ -9,7 +9,7 @@ const getIsTestEnv = async () => {
 
 export const fetchProspects = async (_userId: string, _position?: string): Promise<Prospect[]> => {
   const isTestEnv = await getIsTestEnv();
-  let query = (supabase as any)
+  const query = (supabase as any)
     .from("prospects")
     .select("*")
     .eq("is_test_data", isTestEnv)
