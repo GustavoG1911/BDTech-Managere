@@ -613,10 +613,67 @@ function TeamTab() {
   };
 
   const isAdminProfile = (profile: any) => isPureSystemAdmin(profile.role, profile.position);
+  const hasRequiredUserData = (profile: any) => Boolean(profile.full_name?.trim());
   const isApprovedProfile = (profile: any) =>
-    isAdminProfile(profile) || (isOperationalPosition(profile.position) && Boolean(profile.onboarding_completed_at));
+    isAdminProfile(profile)
+    || (
+      hasRequiredUserData(profile)
+      && isOperationalPosition(profile.position)
+      && Boolean(profile.onboarding_completed_at)
+    );
+
+  const getApprovalState = (profile: any) => {
+    if (isAdminProfile(profile)) {
+      return {
+        label: "Admin",
+        buttonLabel: "Liberado",
+        approved: true,
+        ready: false,
+        disabledReason: null,
+      };
+    }
+    if (isApprovedProfile(profile)) {
+      return {
+        label: "Aprovado",
+        buttonLabel: "Aprovado",
+        approved: true,
+        ready: false,
+        disabledReason: null,
+      };
+    }
+    if (!hasRequiredUserData(profile)) {
+      return {
+        label: "Aguardando dados",
+        buttonLabel: "Aguardando",
+        approved: false,
+        ready: false,
+        disabledReason: "A pessoa precisa acessar e informar os dados obrigatórios primeiro.",
+      };
+    }
+    if (!isOperationalPosition(profile.position)) {
+      return {
+        label: "Sem função",
+        buttonLabel: "Defina função",
+        approved: false,
+        ready: false,
+        disabledReason: "Escolha a função da pessoa antes de aprovar.",
+      };
+    }
+    return {
+      label: "Pronto",
+      buttonLabel: "Aprovar",
+      approved: false,
+      ready: true,
+      disabledReason: null,
+    };
+  };
 
   const handleApproveUser = async (profile: any) => {
+    if (!hasRequiredUserData(profile)) {
+      toast.error("A pessoa precisa acessar e informar os dados obrigatórios antes da aprovação.");
+      return;
+    }
+
     if (!isOperationalPosition(profile.position)) {
       toast.error("Escolha a função da pessoa antes de aprovar.");
       return;
@@ -701,9 +758,8 @@ function TeamTab() {
         </TableHeader>
         <TableBody>
           {profiles.map((p) => {
-            const approved = isApprovedProfile(p);
             const adminProfile = isAdminProfile(p);
-            const readyToApprove = isOperationalPosition(p.position);
+            const approvalState = getApprovalState(p);
 
             return (
             <TableRow key={p.id} className="border-border/25 hover:bg-[#242842]/40">
@@ -793,33 +849,34 @@ function TeamTab() {
               </TableCell>
               <TableCell className="px-4 py-3">
                 <Badge
-                  variant={approved ? "default" : "secondary"}
+                  variant={approvalState.approved ? "default" : "secondary"}
                   className={
-                    approved
+                    approvalState.approved
                       ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/25"
-                      : readyToApprove
+                      : approvalState.ready
                         ? "bg-amber-500/15 text-amber-300 border-amber-500/25"
                         : "bg-muted/50 text-muted-foreground border-border/50"
                   }
                 >
-                  {adminProfile ? "Admin" : approved ? "Aprovado" : readyToApprove ? "Pronto" : "Pendente"}
+                  {approvalState.label}
                 </Badge>
               </TableCell>
               <TableCell className="px-4 py-3 text-right">
-                {adminProfile || approved ? (
+                {adminProfile || approvalState.approved ? (
                   <Button disabled variant="outline" size="sm" className="h-8 text-xs">
-                    {adminProfile ? "Liberado" : "Aprovado"}
+                    {approvalState.buttonLabel}
                   </Button>
                 ) : (
                   <Button
                     type="button"
                     size="sm"
-                    disabled={!readyToApprove}
+                    disabled={!approvalState.ready}
+                    title={approvalState.disabledReason || undefined}
                     onClick={() => handleApproveUser(p)}
                     className="h-8 text-xs gap-1.5"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    Aprovar
+                    {approvalState.buttonLabel}
                   </Button>
                 )}
               </TableCell>
