@@ -47,6 +47,7 @@ export default function Settings() {
   const { settings, updateSettings } = useAppData(role, user?.id, position);
   const pureAdmin = isPureSystemAdmin(role, position);
   const isDirector = position === "Diretor";
+  const canManageUsers = isDirector || pureAdmin;
 
   if (authLoading) {
     return (
@@ -65,7 +66,7 @@ export default function Settings() {
         </p>
       </div>
 
-      <Tabs defaultValue={pureAdmin ? "appearance" : "profile"}>
+      <Tabs defaultValue={pureAdmin ? "team" : "profile"}>
         <TabsList className="h-9 mb-6 bg-muted/40 border border-border/40">
           <TabsTrigger value="profile" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
             <User className="h-3.5 w-3.5" />
@@ -77,13 +78,13 @@ export default function Settings() {
               {isDirector ? "Metas e Comissões" : "Minha Remuneração"}
             </TabsTrigger>
           )}
-          {isDirector && (
+          {canManageUsers && (
             <TabsTrigger value="invites" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <MailPlus className="h-3.5 w-3.5" />
               Convites
             </TabsTrigger>
           )}
-          {isDirector && (
+          {canManageUsers && (
             <TabsTrigger value="team" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <Users className="h-3.5 w-3.5" />
               Gestão de Equipe
@@ -109,12 +110,12 @@ export default function Settings() {
           />
         </TabsContent>
         )}
-        {isDirector && (
+        {canManageUsers && (
           <TabsContent value="invites">
             <InvitesTab />
           </TabsContent>
         )}
-        {isDirector && (
+        {canManageUsers && (
           <TabsContent value="team">
             <TeamTab />
           </TabsContent>

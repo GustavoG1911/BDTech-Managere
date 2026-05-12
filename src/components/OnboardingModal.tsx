@@ -114,12 +114,13 @@ interface OnboardingModalProps {
 }
 
 function isProfileComplete(profile: any, role: string) {
-  if (isPureSystemAdmin(role, profile?.position)) return Boolean(profile?.full_name?.trim());
+  if (isPureSystemAdmin(role, profile?.position)) return true;
   if (!profile?.full_name?.trim()) return false;
   return isOperationalPosition(profile?.position);
 }
 
 function hasCompletedOnboarding(profile: any, role: string) {
+  if (isPureSystemAdmin(role, profile?.position)) return true;
   if (!("onboarding_completed_at" in (profile || {}))) return true;
   return isProfileComplete(profile, role) && Boolean(profile?.onboarding_completed_at);
 }
@@ -142,9 +143,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
 
   const pureAdmin = isPureSystemAdmin(profileRole || role, form.cargo || position);
   const hasOperationalCargo = isOperationalPosition(form.cargo);
-  const hasRequiredProfileData = pureAdmin
-    ? Boolean(form.full_name.trim())
-    : Boolean(form.full_name.trim() && hasOperationalCargo);
+  const hasRequiredProfileData = pureAdmin || Boolean(form.full_name.trim() && hasOperationalCargo);
   const tourAreas = getTourAreas(form.cargo, pureAdmin);
   const workflowGuides = getWorkflowGuides(form.cargo, pureAdmin);
   const totalSteps = 3;
@@ -201,6 +200,11 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
 
       if (data) {
         hydrateForm(data);
+        if (isPureSystemAdmin(data.role || role, data.position)) {
+          setIsForced(false);
+          setOpen(false);
+          return;
+        }
         if (!hasCompletedOnboarding(data, data.role || role)) {
           setStep(0);
           setIsForced(true);
