@@ -488,7 +488,7 @@ function TeamTab() {
 
       const query = (supabase as any)
         .from("profiles")
-        .select("id, user_id, display_name, full_name, role, job_title, position, fixed_salary, commission_percent, created_at")
+        .select("id, user_id, display_name, full_name, role, job_title, position, fixed_salary, commission_percent, created_at, is_test_data")
         .eq("is_test_data", isTestEnv)
         .order("created_at", { ascending: true });
 
@@ -498,7 +498,18 @@ function TeamTab() {
         setProfiles(data);
         setSalaryBaseline(Object.fromEntries(data.map((p: any) => [p.user_id, Number(p.fixed_salary || 0)])));
       }
-      if (error) toast.error("Erro ao carregar usuários: " + error.message);
+      if (error) {
+        const fallback = await (supabase as any)
+          .from("profiles")
+          .select("id, user_id, display_name, full_name, role, job_title, position, fixed_salary, commission_percent, created_at")
+          .order("created_at", { ascending: true });
+
+        if (fallback.data) {
+          setProfiles(fallback.data);
+          setSalaryBaseline(Object.fromEntries(fallback.data.map((p: any) => [p.user_id, Number(p.fixed_salary || 0)])));
+        }
+        if (fallback.error) toast.error("Erro ao carregar usuários: " + fallback.error.message);
+      }
       setLoading(false);
     };
 
