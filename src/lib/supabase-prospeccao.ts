@@ -1,13 +1,19 @@
 import { supabase } from "@/integrations/supabase/client";
 import { Prospect, ProspectNote, ProspectStatus } from "./types";
+import { getCurrentUserContext } from "./supabase-env";
 
-export const fetchProspects = async (userId: string, position?: string): Promise<Prospect[]> => {
-  const isManager = position === "Diretor" || position === "Executivo de Negócios";
-  let query = (supabase as any)
+const getIsTestEnv = async () => {
+  const { isTestEnv } = await getCurrentUserContext();
+  return isTestEnv;
+};
+
+export const fetchProspects = async (_userId: string, _position?: string): Promise<Prospect[]> => {
+  const isTestEnv = await getIsTestEnv();
+  const query = (supabase as any)
     .from("prospects")
     .select("*")
+    .eq("is_test_data", isTestEnv)
     .order("created_at", { ascending: false });
-  if (!isManager) query = query.eq("owner_id", userId);
   const { data, error } = await query;
 
   if (error) {
@@ -19,9 +25,10 @@ export const fetchProspects = async (userId: string, position?: string): Promise
 };
 
 export const createProspect = async (prospect: Partial<Prospect>): Promise<Prospect> => {
+  const isTestEnv = await getIsTestEnv();
   const { data, error } = await (supabase as any)
     .from("prospects")
-    .insert([prospect])
+    .insert([{ ...prospect, is_test_data: isTestEnv }])
     .select()
     .single();
 

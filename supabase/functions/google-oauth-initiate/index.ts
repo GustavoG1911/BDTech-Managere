@@ -18,6 +18,19 @@ const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
 ].join(" ");
 
+function base64Url(bytes: Uint8Array) {
+  let binary = "";
+  bytes.forEach((b) => binary += String.fromCharCode(b));
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function signState(payload: string, secret: string) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+  return `${base64Url(enc.encode(payload))}.${base64Url(new Uint8Array(signature))}`;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -36,7 +49,7 @@ serve(async (req) => {
     if (authErr || !user) return new Response(JSON.stringify({ error: "Sessão inválida." }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     // Only the platform admin (role = "admin") may connect the centralized Google account
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+    const { data: profile } = await supabase.from("profiles").select("role").eq("user_id", user.id).single();
     if (profile?.role !== "admin") {
       return new Response(JSON.stringify({ error: "Apenas o administrador da plataforma pode conectar a conta Google centralizada." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -45,7 +58,8 @@ serve(async (req) => {
     const callbackUrl = `${supabaseUrl}/functions/v1/google-oauth-callback`;
 
     // State encodes adminSetup flag so callback knows to save to admin_calendar_config
-    const state = btoa(JSON.stringify({ userId: user.id, adminSetup: true }));
+    const payload = JSON.stringify({ userId: user.id, adminSetup: true, ts: Date.now() });
+    const state = await signState(payload, Deno.env.get("GOOGLE_OAUTH_STATE_SECRET") ?? serviceRoleKey);
 
     const params = new URLSearchParams({
       client_id: clientId,

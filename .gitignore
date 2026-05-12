@@ -31,6 +31,7 @@ dist-ssr
 /sales-navigator/
 
 # Codex temp files
+.codex-tmp/
 codex-temp-objects/
 codex-temp.index
 codex-final-fixes.patch

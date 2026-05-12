@@ -1,6 +1,31 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
+function base64UrlToBytes(input: string) {
+  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), "=");
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+}
+
+function base64Url(bytes: Uint8Array) {
+  let binary = "";
+  bytes.forEach((b) => binary += String.fromCharCode(b));
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function verifyState(state: string, secret: string) {
+  const [payloadPart, signaturePart] = state.split(".");
+  if (!payloadPart || !signaturePart) throw new Error("Estado OAuth inválido.");
+  const payload = new TextDecoder().decode(base64UrlToBytes(payloadPart));
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+  if (base64Url(new Uint8Array(signature)) !== signaturePart) throw new Error("Assinatura OAuth inválida.");
+  const parsed = JSON.parse(payload) as { userId: string; adminSetup?: boolean; ts?: number };
+  if (!parsed.ts || Date.now() - parsed.ts > 10 * 60 * 1000) throw new Error("Estado OAuth expirado.");
+  return parsed;
+}
+
 serve(async (req) => {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
@@ -18,7 +43,10 @@ serve(async (req) => {
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
     const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
-    const { userId } = JSON.parse(atob(state)) as { userId: string; adminSetup?: boolean };
+    const { userId } = await verifyState(state, Deno.env.get("GOOGLE_OAUTH_STATE_SECRET") ?? serviceRoleKey);
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const { data: profile } = await supabase.from("profiles").select("role").eq("user_id", userId).single();
+    if (profile?.role !== "admin") throw new Error("Apenas admin pode conectar Google Calendar.");
 
     const callbackUrl = `${supabaseUrl}/functions/v1/google-oauth-callback`;
 
@@ -37,7 +65,6 @@ serve(async (req) => {
     });
     const googleProfile = await profileRes.json();
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
     const expiry = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
 
     // Save into the single centralized admin_calendar_config row (fixed UUID for upsert)

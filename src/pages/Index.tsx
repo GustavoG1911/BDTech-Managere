@@ -18,6 +18,7 @@ import { downloadReportPDF, printReport } from "@/lib/report";
 import { Deal, PaymentStatus } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
+import { getCurrentUserContext } from "@/lib/supabase-env";
 import { Plus, DollarSign, TrendingUp, BadgeDollarSign, FileDown, Printer, BarChart3, AlertTriangle } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -47,6 +48,7 @@ export default function Index() {
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [kpiModalType, setKpiModalType] = useState<"projected" | "paid" | "deals" | "volume" | null>(null);
   const [filtroOperacao, setFiltroOperacao] = useState("Todas");
+  const [filtroStatus, setFiltroStatus] = useState("Todos Status");
   const [profiles, setProfiles] = useState<any>({});
   const [executivos, setExecutivos] = useState<{id: string, name: string}[]>([]);
   const [sdrs, setSdrs] = useState<{id: string, name: string}[]>([]);
@@ -68,8 +70,7 @@ export default function Index() {
 
   useEffect(() => {
     if (!position || position === "SDR") return;
-    supabase.auth.getUser().then(({ data: authData }) => {
-      const isTestEnv = authData.user?.email?.endsWith("@teste.com") || false;
+    getCurrentUserContext().then(({ isTestEnv }) => {
       (supabase as any)
         .from("profiles")
         .select("user_id, full_name, display_name, position")
@@ -102,14 +103,12 @@ export default function Index() {
     () => deals.filter((d) => {
       const date = new Date(d.closingDate);
       const passDate = date >= dateRange.from && date <= dateRange.to;
-      if (position === "Diretor") {
-        const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
-        const passUser = filtroFuncionario === "Todos" || d.userId === filtroFuncionario || d.sdrUserId === filtroFuncionario;
-        return passDate && passOp && passUser;
-      }
-      return passDate;
+      const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
+      const passStatus = filtroStatus === "Todos Status" || d.paymentStatus === filtroStatus;
+      const passUser = position !== "Diretor" || filtroFuncionario === "Todos" || d.userId === filtroFuncionario || d.sdrUserId === filtroFuncionario;
+      return passDate && passOp && passStatus && passUser;
     }),
-    [deals, dateRange, filtroOperacao, filtroFuncionario, position]
+    [deals, dateRange, filtroOperacao, filtroFuncionario, filtroStatus, position]
   );
 
   const financialDeals = useMemo(
@@ -124,21 +123,27 @@ export default function Index() {
         const toKey = getMonthKey(dateRange.to);
         passDate = monthKey >= fromKey && monthKey <= toKey;
       }
-      if (isDirector) {
-        const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
-        const passUser = filtroFuncionario === "Todos" || d.userId === filtroFuncionario || d.sdrUserId === filtroFuncionario;
-        return passDate && passOp && passUser;
-      }
-      return passDate;
+      const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
+      const passStatus = filtroStatus === "Todos Status" || d.paymentStatus === filtroStatus;
+      const passUser = !isDirector || filtroFuncionario === "Todos" || d.userId === filtroFuncionario || d.sdrUserId === filtroFuncionario;
+      return passDate && passOp && passStatus && passUser;
     }),
-    [deals, selectedMonthKey, isSingleMonth, dateRange, isDirector, filtroOperacao, filtroFuncionario, user?.id]
+    [deals, selectedMonthKey, isSingleMonth, dateRange, isDirector, filtroOperacao, filtroFuncionario, filtroStatus]
   );
 
   const filteredDeals = closedDeals;
+  const commissionClosedDeals = useMemo(
+    () => position === "SDR" ? closedDeals.filter((d) => d.sdrUserId === user?.id) : closedDeals,
+    [closedDeals, position, user?.id]
+  );
+  const commissionFinancialDeals = useMemo(
+    () => position === "SDR" ? financialDeals.filter((d) => d.sdrUserId === user?.id) : financialDeals,
+    [financialDeals, position, user?.id]
+  );
 
   const chartTimeline = useMemo(() => {
     const data: any[] = [];
-    let start = new Date(dateRange.from);
+    const start = new Date(dateRange.from);
     const end = new Date(dateRange.to);
     let iterations = 0;
     while (start <= end && iterations < 24) {
@@ -167,6 +172,8 @@ export default function Index() {
     let volumeFechamentos = 0;
     closedDeals.forEach(deal => {
       volumeFechamentos += (deal.monthlyValue || 0) + (deal.implantationValue || 0);
+    });
+    commissionClosedDeals.forEach(deal => {
       const presCount = getPresentationsForDeal(deal, optimisticPresentations);
       const comm = calculateCommission(deal, presCount, settings, false);
       comissaoFechamentos += comm.totalCommission;
@@ -174,7 +181,7 @@ export default function Index() {
     const ticketMedio = closedDeals.length > 0 ? volumeFechamentos / closedDeals.length : 0;
 
     let receitaPrevista = 0;
-    financialDeals.forEach(deal => {
+    commissionFinancialDeals.forEach(deal => {
       const presCount = getPresentationsForDeal(deal, optimisticPresentations);
       const comm = calculateCommission(deal, presCount, settings, false);
       receitaPrevista += comm.totalCommission;
@@ -232,7 +239,7 @@ export default function Index() {
         tooltip: "Divide o volume bruto dos fechamentos pela quantidade de contratos assinados no período."
       }
     ];
-  }, [closedDeals, financialDeals, optimisticPresentations, settings]);
+  }, [closedDeals, commissionClosedDeals, commissionFinancialDeals, optimisticPresentations, settings]);
 
   const closedDealsFinancialMonth = useMemo(() => {
     if (!isSingleMonth || closedDeals.length === 0 || financialDeals.length > 0) return null;
@@ -310,9 +317,7 @@ export default function Index() {
         <div className="bg-card rounded-xl border border-border/60 px-4 py-3 flex flex-wrap items-center gap-3">
           <PeriodFilter onPeriodChange={handlePeriodChange} availableYears={availableYears} />
 
-          {position === "Diretor" && (
-            <>
-              <div className="h-5 w-px bg-border/60 hidden sm:block" />
+          <div className="h-5 w-px bg-border/60 hidden sm:block" />
               <Select value={filtroOperacao} onValueChange={setFiltroOperacao}>
                 <SelectTrigger className="w-[150px] h-8 text-xs bg-muted/30 border-border/40">
                   <SelectValue placeholder="Operação" />
@@ -323,6 +328,19 @@ export default function Index() {
                   <SelectItem value="Opus Tech">Opus Tech</SelectItem>
                 </SelectContent>
               </Select>
+              <Select value={filtroStatus} onValueChange={setFiltroStatus}>
+                <SelectTrigger className="w-[150px] h-8 text-xs bg-muted/30 border-border/40">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Todos Status">Todos Status</SelectItem>
+                  <SelectItem value="Pendente">Pendente</SelectItem>
+                  <SelectItem value="Pago">Pago</SelectItem>
+                  <SelectItem value="Cancelado">Cancelado</SelectItem>
+                </SelectContent>
+              </Select>
+          {position === "Diretor" && (
+            <>
               <Select value={filtroFuncionario} onValueChange={setFiltroFuncionario}>
                 <SelectTrigger className="w-[160px] h-8 text-xs bg-muted/30 border-border/40">
                   <SelectValue placeholder="Funcionário" />

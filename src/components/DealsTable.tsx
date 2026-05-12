@@ -91,6 +91,10 @@ export function DealsTable({ deals, presentations, settings, superMetaActive, on
   const isDirector = position === "Diretor";
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
+  const handleDelete = (deal: Deal) => {
+    const confirmed = window.confirm(`Excluir o fechamento de ${deal.clientName}? Esta ação não pode ser desfeita.`);
+    if (confirmed) onDelete(deal.id);
+  };
 
   return (
     <div className="bg-card rounded-xl border border-border/60 overflow-hidden">
@@ -209,7 +213,7 @@ export function DealsTable({ deals, presentations, settings, superMetaActive, on
                           <Button size="icon" variant="ghost" className="h-7 w-7 hover:bg-primary/10 hover:text-primary" onClick={() => onEdit(deal)}>
                             <Pencil className="h-3 w-3" />
                           </Button>
-                          <Button size="icon" variant="ghost" className="h-7 w-7 hover:bg-destructive/10 hover:text-destructive" onClick={() => onDelete(deal.id)}>
+                          <Button size="icon" variant="ghost" className="h-7 w-7 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleDelete(deal)}>
                             <Trash2 className="h-3 w-3" />
                           </Button>
                         </div>

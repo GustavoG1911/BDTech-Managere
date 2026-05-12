@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Deal, PaymentStatus, MonthlyPresentations } from "./types";
 import { UserRole } from "@/hooks/useAuth";
 import { getPaymentDateInfo } from "./commission";
+import { getCurrentUserContext } from "./supabase-env";
 
 const dbToDeal = (db: any): Deal => ({
   id: db.id,
@@ -67,8 +68,7 @@ const dealToDb = (deal: Partial<Deal>) => {
 };
 
 export async function fetchDeals(role: UserRole, userId?: string, position?: string): Promise<Deal[]> {
-  const { data: { user } } = await supabase.auth.getUser();
-  const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+  const { user, isTestEnv } = await getCurrentUserContext();
 
   console.log(`[fetchDeals] Buscando dados para ambiente: ${isTestEnv ? "TESTE 🧪" : "PRODUÇÃO 🚀"} (User: ${user?.email}, Role: ${role}, Position: ${position})`);
 
@@ -129,8 +129,7 @@ export async function fetchDeals(role: UserRole, userId?: string, position?: str
 }
 
 export async function upsertDeal(deal: Deal): Promise<Deal> {
-  const { data: { user } } = await supabase.auth.getUser();
-  const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+  const { user, isTestEnv } = await getCurrentUserContext();
 
   const payload = {
     ...dealToDb(deal),
@@ -157,8 +156,7 @@ export async function deleteDealFromDb(id: string): Promise<void> {
 }
 
 export async function fetchAvailableYears(): Promise<number[]> {
-  const { data: { user } } = await supabase.auth.getUser();
-  const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+  const { isTestEnv } = await getCurrentUserContext();
   const { data, error } = await (supabase as any)
     .from("deals")
     .select("closing_date, first_payment_date, implantation_payment_date")
@@ -192,8 +190,7 @@ export async function fetchAvailableYears(): Promise<number[]> {
 // Uma linha por operação por mês — contador global compartilhado entre todos os cargos.
 
 export async function fetchPresentations(role: UserRole, userId?: string, position?: string): Promise<MonthlyPresentations> {
-  const { data: { user } } = await supabase.auth.getUser();
-  const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+  const { isTestEnv } = await getCurrentUserContext();
 
   // Apresentações são globais: todos os cargos veem o mesmo contador.
   const { data, error } = await (supabase as any)
@@ -221,8 +218,7 @@ export async function fetchPresentations(role: UserRole, userId?: string, positi
 }
 
 export async function savePresentationToDb(monthKey: string, operation: "bluepex" | "opus", count: number, userId: string) {
-  const { data: { user } } = await supabase.auth.getUser();
-  const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+  const { isTestEnv } = await getCurrentUserContext();
 
   // Mapeia o campo frontend para o valor da coluna operation no banco
   const dbOperation = operation === "bluepex" ? "BluePex" : "Opus Tech";
@@ -306,8 +302,7 @@ export async function createNotification(
   message: string,
   dealId?: string
 ): Promise<void> {
-  const { data: authData } = await supabase.auth.getUser();
-  const isTestData = authData.user?.email?.endsWith("@teste.com") || false;
+  const { isTestEnv: isTestData } = await getCurrentUserContext();
   const payload: Record<string, unknown> = { user_id: userId, title, message, is_test_data: isTestData, is_read: false };
   if (dealId) payload.deal_id = dealId;
   const { error } = await (supabase as any).from("notifications").insert(payload);
@@ -317,8 +312,7 @@ export async function createNotification(
 }
 
 export async function fetchNotifications(userId: string): Promise<AppNotification[]> {
-  const { data: authData } = await supabase.auth.getUser();
-  const isTestData = authData.user?.email?.endsWith("@teste.com") || false;
+  const { isTestEnv: isTestData } = await getCurrentUserContext();
   const { data, error } = await (supabase as any)
     .from("notifications")
     .select("*")
@@ -511,8 +505,7 @@ export async function rejectCommissionPaymentById(
 export async function fetchCommissionPaymentsForUser(
   recipientUserId: string
 ): Promise<CommissionPayment[]> {
-  const { data: { user } } = await supabase.auth.getUser();
-  const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+  const { isTestEnv } = await getCurrentUserContext();
   const { data, error } = await (supabase as any)
     .from("commission_payments")
     .select("*")
@@ -527,8 +520,7 @@ export async function fetchCommissionPaymentsForUser(
 }
 
 export async function fetchCommissionPaymentsForEnvironment(): Promise<CommissionPayment[]> {
-  const { data: { user } } = await supabase.auth.getUser();
-  const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+  const { isTestEnv } = await getCurrentUserContext();
 
   const { data, error } = await (supabase as any)
     .from("commission_payments")

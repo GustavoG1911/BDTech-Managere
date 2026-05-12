@@ -51,6 +51,7 @@ const localizer = dateFnsLocalizer({
 
 export default function Agenda() {
   const { user, role } = useAuth();
+  const isAdmin = role === "admin";
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -70,7 +71,7 @@ export default function Agenda() {
     if (!user?.id) return;
     (async () => {
       const { data } = await (supabase as any)
-        .from("admin_calendar_config")
+        .from("admin_calendar_status")
         .select("sync_enabled, google_email")
         .single();
       if (data?.sync_enabled) {
@@ -130,14 +131,14 @@ export default function Agenda() {
 
   // Auto-sync on page mount and every 15 minutes when admin calendar is connected
   useEffect(() => {
-    if (!googleConnected) return;
+    if (!googleConnected || !isAdmin) return;
     handleSyncNow(true);
     const interval = setInterval(() => handleSyncNow(true), 15 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [googleConnected, handleSyncNow]);
+  }, [googleConnected, handleSyncNow, isAdmin]);
 
   const { data: events, isLoading } = useQuery({
-    queryKey: ["calendar-events", user?.id],
+    queryKey: ["calendar-events"],
     queryFn: () => fetchCalendarEvents(user!.id),
     enabled: !!user?.id,
   });
@@ -236,16 +237,18 @@ export default function Agenda() {
       <div className="flex items-center justify-between space-y-2">
         <h2 className="text-3xl font-bold tracking-tight">Agenda de Reuniões</h2>
         <div className="flex gap-2">
-          {googleConnected && (
+          {isAdmin && googleConnected && (
             <Button variant="ghost" size="icon" onClick={() => handleSyncNow(false)} disabled={isSyncing} title="Sincronizar Google Calendar">
               <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
             </Button>
           )}
-          <Button variant="outline" onClick={() => setIsConfigOpen(true)}>
-            <Mail className="mr-2 h-4 w-4" />
-            {googleConnected ? "Google Calendar" : "Conectar Google"}
-            {googleConnected && <span className="ml-2 w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>}
-          </Button>
+          {isAdmin && (
+            <Button variant="outline" onClick={() => setIsConfigOpen(true)}>
+              <Mail className="mr-2 h-4 w-4" />
+              {googleConnected ? "Google Calendar" : "Conectar Google"}
+              {googleConnected && <span className="ml-2 w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>}
+            </Button>
+          )}
           <Button onClick={() => handleOpenDialog()}>
             <Plus className="mr-2 h-4 w-4" /> Nova Reunião
           </Button>

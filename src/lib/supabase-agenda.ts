@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { CalendarEvent, Operation } from "./types";
 import { fetchProspects } from "./supabase-prospeccao";
+import { getCurrentUserContext } from "./supabase-env";
 
 export const classifyOperation = (link?: string, description?: string): Operation | undefined => {
   const content = `${link || ""} ${description || ""}`.toLowerCase();
@@ -37,11 +38,17 @@ export const autoLinkEventToProspect = async (title: string, userId: string): Pr
   return undefined;
 };
 
-export const fetchCalendarEvents = async (userId: string): Promise<CalendarEvent[]> => {
+const getIsTestEnv = async () => {
+  const { isTestEnv } = await getCurrentUserContext();
+  return isTestEnv;
+};
+
+export const fetchCalendarEvents = async (_userId: string): Promise<CalendarEvent[]> => {
+  const isTestEnv = await getIsTestEnv();
   const { data, error } = await (supabase as any)
     .from("calendar_events")
     .select("*")
-    .eq("user_id", userId)
+    .eq("is_test_data", isTestEnv)
     .order("start_time", { ascending: true });
 
   if (error) {
@@ -53,7 +60,7 @@ export const fetchCalendarEvents = async (userId: string): Promise<CalendarEvent
 };
 
 export const createCalendarEvent = async (event: Partial<CalendarEvent>): Promise<CalendarEvent> => {
-  const payload: Partial<CalendarEvent> = { ...event };
+  const payload: Partial<CalendarEvent> = { ...event, is_test_data: await getIsTestEnv() } as Partial<CalendarEvent>;
 
   if (!payload.operation) {
     payload.operation = classifyOperation(payload.meeting_link, payload.description);

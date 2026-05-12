@@ -11,13 +11,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Users,
   Save,
-  Shield,
   UserCog,
   User,
   Loader2,
   SlidersHorizontal,
-  FlaskConical,
-  Trash2,
   MailPlus,
   Send,
   ImageIcon,
@@ -29,20 +26,13 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { AvatarUpload } from "@/components/AvatarUpload";
 import { useAppData } from "@/hooks/useAppData";
 import { useAppLogo } from "@/hooks/useAppLogo";
-import { seedHistoricalData, clearTestData } from "@/lib/seed-test-data";
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
-
-const POSITION_OPTIONS = ["SDR", "Executivo de Negócios", "Diretor"] as const;
-const ROLE_OPTIONS = ["user", "gestor", "admin"] as const;
-
-function normalizeRoleForPosition(role: string, position: string | null) {
-  return isOperationalPosition(position) ? "user" : role;
-}
+import { getCurrentUserContext } from "@/lib/supabase-env";
 
 type InviteRow = {
   id: string;
   email: string;
-  position: string;
+  position: string | null;
   role: string;
   fixed_salary: number | null;
   commission_percent: number | null;
@@ -54,33 +44,8 @@ type InviteRow = {
 export default function Settings() {
   const { role, user, loading: authLoading, position } = useAuth();
   const { settings, updateSettings } = useAppData(role, user?.id, position);
-  const [seeding, setSeeding] = useState(false);
-  const [clearing, setClearing] = useState(false);
   const pureAdmin = isPureSystemAdmin(role, position);
-
-  const handleSeed = async () => {
-    setSeeding(true);
-    try {
-      await seedHistoricalData();
-      toast.success("Banco de teste populado com sucesso!");
-    } catch (err: unknown) {
-      toast.error("Erro ao popular banco: " + (err instanceof Error ? err.message : String(err)));
-    } finally {
-      setSeeding(false);
-    }
-  };
-
-  const handleClear = async () => {
-    setClearing(true);
-    try {
-      await clearTestData();
-      toast.success("Todos os dados de teste foram removidos.");
-    } catch (err: unknown) {
-      toast.error("Erro ao limpar: " + (err instanceof Error ? err.message : String(err)));
-    } finally {
-      setClearing(false);
-    }
-  };
+  const isDirector = position === "Diretor";
 
   if (authLoading) {
     return (
@@ -101,21 +66,25 @@ export default function Settings() {
 
       <Tabs defaultValue={pureAdmin ? "invites" : "profile"}>
         <TabsList className="h-9 mb-6 bg-muted/40 border border-border/40">
-          <TabsTrigger value="profile" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
-            <User className="h-3.5 w-3.5" />
-            Meu Perfil
-          </TabsTrigger>
-          <TabsTrigger value="comissions" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            Metas e Comissões
-          </TabsTrigger>
-          {role === "admin" && (
+          {!pureAdmin && (
+            <TabsTrigger value="profile" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
+              <User className="h-3.5 w-3.5" />
+              Meu Perfil
+            </TabsTrigger>
+          )}
+          {isDirector && (
+            <TabsTrigger value="comissions" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Metas e Comissões
+            </TabsTrigger>
+          )}
+          {isDirector && (
             <TabsTrigger value="invites" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <MailPlus className="h-3.5 w-3.5" />
               Convites
             </TabsTrigger>
           )}
-          {role === "admin" && (
+          {isDirector && (
             <TabsTrigger value="team" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <Users className="h-3.5 w-3.5" />
               Gestão de Equipe
@@ -129,18 +98,22 @@ export default function Settings() {
           )}
         </TabsList>
 
+        {!pureAdmin && (
         <TabsContent value="profile">
           <ProfileTab />
         </TabsContent>
+        )}
+        {isDirector && (
         <TabsContent value="comissions">
-          <SettingsPanel settings={settings} onUpdate={updateSettings} readOnly={position === "SDR"} />
+          <SettingsPanel settings={settings} onUpdate={updateSettings} readOnly={false} />
         </TabsContent>
-        {role === "admin" && (
+        )}
+        {isDirector && (
           <TabsContent value="invites">
             <InvitesTab />
           </TabsContent>
         )}
-        {role === "admin" && (
+        {isDirector && (
           <TabsContent value="team">
             <TeamTab />
           </TabsContent>
@@ -151,44 +124,6 @@ export default function Settings() {
           </TabsContent>
         )}
       </Tabs>
-
-      {(position === "Diretor" || role === "admin") && (
-        <div className="mt-8 bg-card rounded-xl border border-border/60 p-5">
-          <p className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground mb-4">
-            Ambiente de Teste
-          </p>
-          <div className="flex flex-wrap gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Button
-                variant="outline"
-                onClick={handleClear}
-                disabled={clearing || seeding}
-                className="gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:border-destructive"
-              >
-                {clearing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                {clearing ? "Limpando..." : "Limpar Todos os Dados"}
-              </Button>
-              <p className="text-[11px] text-muted-foreground/60">
-                Remove todos os deals, pagamentos e apresentações de teste.
-              </p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Button
-                variant="destructive"
-                onClick={handleSeed}
-                disabled={seeding || clearing}
-                className="gap-2"
-              >
-                {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />}
-                {seeding ? "Populando banco..." : "Popular Banco (Teste)"}
-              </Button>
-              <p className="text-[11px] text-muted-foreground/60">
-                Reinserir dados de teste realistas.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -232,17 +167,10 @@ function ProfileTab() {
       return;
     }
 
-    const normalizedPosition = form.position === "none" ? null : form.position;
-    const normalizedRole = normalizeRoleForPosition(form.role, normalizedPosition);
     const updateData: any = {
       full_name: form.full_name.trim(),
-      job_title: form.job_title.trim() || (normalizedPosition || "Administrador do Sistema"),
-      position: normalizedPosition,
+      job_title: form.job_title.trim() || form.position || "Administrador do Sistema",
     };
-
-    if (currentUserRole === "admin") {
-      updateData.role = normalizedRole;
-    }
 
     setSaving(true);
     const { error } = await (supabase as any)
@@ -323,8 +251,8 @@ function ProfileTab() {
           <Label className="text-xs text-muted-foreground uppercase tracking-wide">Nível de Sistema</Label>
           <Select
             value={form.role}
-            onValueChange={(val) => setForm({ ...form, role: val, position: val === "admin" ? "none" : form.position })}
-            disabled={currentUserRole !== "admin"}
+            onValueChange={(val) => setForm({ ...form, role: val })}
+            disabled
           >
             <SelectTrigger className="bg-muted/30 border-border/50">
               <SelectValue />
@@ -341,7 +269,8 @@ function ProfileTab() {
           <Label className="text-xs text-muted-foreground uppercase tracking-wide">Função na Empresa</Label>
           <Select
             value={isOperationalPosition(form.position) ? form.position : "none"}
-            onValueChange={(val) => setForm({ ...form, position: val, role: isOperationalPosition(val) ? "user" : form.role })}
+            onValueChange={(val) => setForm({ ...form, position: val })}
+            disabled
           >
             <SelectTrigger className="bg-muted/30 border-border/50">
               <SelectValue />
@@ -370,10 +299,6 @@ function InvitesTab() {
   const [invites, setInvites] = useState<InviteRow[]>([]);
   const [form, setForm] = useState({
     email: "",
-    position: "Executivo de Negócios",
-    role: "user",
-    fixed_salary: 0,
-    commission_percent: 20,
   });
 
   const loadInvites = async () => {
@@ -403,25 +328,18 @@ function InvitesTab() {
       toast.error("Informe um e-mail válido.");
       return;
     }
-    if (!isOperationalPosition(form.position)) {
-      toast.error("Escolha o cargo operacional do convidado.");
-      return;
-    }
-
     setSending(true);
-    const { data: authData } = await supabase.auth.getUser();
-    const isTestEnv = authData.user?.email?.endsWith("@teste.com") || false;
+    const { user, isTestEnv } = await getCurrentUserContext();
 
-    const isDiretor = form.position === "Diretor";
     const { error } = await (supabase as any)
       .from("user_invitations")
       .insert({
         email,
-        position: form.position,
+        position: null,
         role: "user",
-        fixed_salary: isDiretor ? 0 : Number(form.fixed_salary || 0),
-        commission_percent: isDiretor ? 0 : Math.round(Number(form.commission_percent || 0)),
-        invited_by: authData.user?.id,
+        fixed_salary: null,
+        commission_percent: null,
+        invited_by: user?.id,
         is_test_data: isTestEnv,
       });
 
@@ -439,7 +357,7 @@ function InvitesTab() {
     });
 
     setSending(false);
-    setForm({ ...form, email: "" });
+    setForm({ email: "" });
     await loadInvites();
 
     if (functionError) {
@@ -460,12 +378,12 @@ function InvitesTab() {
           <div>
             <p className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Novo Convite</p>
             <p className="text-xs text-muted-foreground/70 mt-0.5">
-              O cargo escolhido aqui será aplicado no primeiro acesso do usuário.
+              O Diretor configura cargo, salário e comissão na gestão de equipe após o cadastro.
             </p>
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-[minmax(220px,1.4fr)_minmax(180px,1fr)_120px_120px_120px_auto] pt-4">
+        <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_120px_auto] pt-4">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground uppercase tracking-wide">E-mail</Label>
             <Input
@@ -478,60 +396,12 @@ function InvitesTab() {
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Cargo</Label>
-            <Select value={form.position} onValueChange={(val) => setForm({ ...form, position: val, role: "user" })}>
-              <SelectTrigger className="bg-muted/30 border-border/50">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {POSITION_OPTIONS.map((position) => (
-                  <SelectItem key={position} value={position}>{position}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground uppercase tracking-wide">Permissão</Label>
             <div className="h-10 rounded-md border border-border/50 bg-muted/30 px-3 flex items-center text-sm">
               user
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Salário</Label>
-            {form.position === "Diretor" ? (
-              <div className="h-10 rounded-md border border-border/50 bg-muted/30 px-3 flex items-center text-sm text-muted-foreground/50 font-mono">
-                R$ 0 (Diretor)
-              </div>
-            ) : (
-            <Input
-              type="number"
-              min="0"
-              value={form.fixed_salary}
-              onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value) })}
-              className="bg-muted/30 border-border/50 font-mono"
-            />
-            )}
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Comissão %</Label>
-            {form.position === "Diretor" ? (
-              <div className="h-10 rounded-md border border-border/50 bg-muted/30 px-3 flex items-center text-sm text-muted-foreground/50 font-mono">
-                0% (Diretor)
-              </div>
-            ) : (
-            <Input
-              type="number"
-              min="0"
-              max="100"
-              value={form.commission_percent}
-              onChange={(e) => setForm({ ...form, commission_percent: Number(e.target.value) })}
-              className="bg-muted/30 border-border/50 font-mono"
-            />
-            )}
-          </div>
 
           <div className="flex items-end">
             <Button onClick={handleInvite} disabled={sending} className="w-full gap-2">
@@ -566,9 +436,11 @@ function InvitesTab() {
               {invites.map((invite) => (
                 <TableRow key={invite.id} className="border-border/25 hover:bg-[#242842]/40">
                   <TableCell className="px-4 py-3 text-sm font-medium">{invite.email}</TableCell>
-                  <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.position}</TableCell>
+                  <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.position || "A configurar"}</TableCell>
                   <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.role}</TableCell>
-                  <TableCell className="px-4 py-3 text-xs font-mono">{Number(invite.commission_percent || 0)}%</TableCell>
+                  <TableCell className="px-4 py-3 text-xs font-mono">
+                    {invite.commission_percent == null ? "-" : `${Number(invite.commission_percent)}%`}
+                  </TableCell>
                   <TableCell className="px-4 py-3">
                     <Badge variant={invite.status === "accepted" ? "default" : "secondary"}>
                       {invite.status === "accepted" ? "Aceito" : "Pendente"}
@@ -597,26 +469,15 @@ function TeamTab() {
 
   useEffect(() => {
     const loadTeam = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      const isTestEnv = user?.email?.endsWith("@teste.com") || false;
+      const { isTestEnv } = await getCurrentUserContext();
 
-      let query = (supabase as any)
+      const query = (supabase as any)
         .from("profiles")
-        .select("id, user_id, display_name, full_name, role, job_title, position, created_at")
+        .select("id, user_id, display_name, full_name, role, job_title, position, fixed_salary, commission_percent, created_at")
         .eq("is_test_data", isTestEnv)
         .order("created_at", { ascending: true });
 
-      let { data, error } = await query;
-
-      if (error && (error.message?.includes("is_test_data") || error.message?.includes("column"))) {
-        console.warn("[Settings] Coluna is_test_data não encontrada, buscando tudo.");
-        const fallback = await supabase
-          .from("profiles")
-          .select("id, user_id, display_name, full_name, role, job_title, position, created_at")
-          .order("created_at", { ascending: true });
-        data = fallback.data;
-        error = fallback.error;
-      }
+      const { data, error } = await query;
 
       if (data) setProfiles(data);
       if (error) toast.error("Erro ao carregar usuários: " + error.message);
@@ -626,30 +487,25 @@ function TeamTab() {
     loadTeam();
   }, []);
 
-  const handleUpdateField = async (userId: string, field: "role" | "position", value: string) => {
+  const handleLocalFieldChange = (userId: string, field: "position" | "fixed_salary" | "commission_percent", value: string | number | null) => {
+    setProfiles((prev) => prev.map((p) => (p.user_id === userId ? { ...p, [field]: value } : p)));
+  };
+
+  const handleUpdateField = async (userId: string, field: "position" | "fixed_salary" | "commission_percent", value: string | number | null) => {
     const normalizedValue = field === "position" && value === "none" ? null : value;
-    const updatePayload: Record<string, string | null> = { [field]: normalizedValue };
-    const currentProfile = profiles.find((profile) => profile.user_id === userId);
+    const updatePayload: Record<string, string | number | null> = { [field]: normalizedValue };
 
     if (field === "position" && isOperationalPosition(normalizedValue)) {
       updatePayload.role = "user";
     }
 
-    if (field === "role" && value === "admin") {
-      updatePayload.position = null;
-      updatePayload.job_title = "Administrador do Sistema";
-    }
-
-    if (field === "role" && isOperationalPosition(currentProfile?.position)) {
-      updatePayload.role = "user";
-    }
     const { error } = await (supabase as any)
       .from("profiles")
       .update(updatePayload)
       .eq("user_id", userId);
 
     if (error) {
-      toast.error(`Erro ao alterar ${field}: ` + error.message);
+      toast.error("Erro ao atualizar usuário: " + error.message);
       return;
     }
 
@@ -680,7 +536,8 @@ function TeamTab() {
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Cargo Descritivo</TableHead>
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Desde</TableHead>
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[170px]">Função na Empresa</TableHead>
-            <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[140px]">Nível de Sistema</TableHead>
+            <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[140px]">Salário</TableHead>
+            <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[120px]">Comissão</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -718,32 +575,31 @@ function TeamTab() {
                 </Select>
               </TableCell>
               <TableCell className="px-4 py-3">
-                <Select
-                  value={isOperationalPosition(p.position) ? "user" : p.role || "user"}
-                  onValueChange={(val) => handleUpdateField(p.user_id, "role", val)}
-                  disabled={isOperationalPosition(p.position)}
-                >
-                  <SelectTrigger className="h-8 text-xs w-[130px] bg-muted/30 border-border/40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">
-                      <div className="flex items-center gap-1.5"><Shield className="h-3 w-3 text-primary" /> Admin</div>
-                    </SelectItem>
-                    <SelectItem value="gestor">
-                      <div className="flex items-center gap-1.5"><Users className="h-3 w-3 text-muted-foreground" /> Gestor</div>
-                    </SelectItem>
-                    <SelectItem value="user">
-                      <div className="flex items-center gap-1.5"><User className="h-3 w-3 text-muted-foreground" /> User</div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <Input
+                  type="number"
+                  min="0"
+                  value={Number(p.fixed_salary || 0)}
+                  onChange={(e) => handleLocalFieldChange(p.user_id, "fixed_salary", Number(e.target.value))}
+                  onBlur={(e) => handleUpdateField(p.user_id, "fixed_salary", Number(e.target.value || 0))}
+                  className="h-8 text-xs w-[120px] bg-muted/30 border-border/40 font-mono"
+                />
+              </TableCell>
+              <TableCell className="px-4 py-3">
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={Number(p.commission_percent || 0)}
+                  onChange={(e) => handleLocalFieldChange(p.user_id, "commission_percent", Number(e.target.value))}
+                  onBlur={(e) => handleUpdateField(p.user_id, "commission_percent", Math.round(Number(e.target.value || 0)))}
+                  className="h-8 text-xs w-[100px] bg-muted/30 border-border/40 font-mono"
+                />
               </TableCell>
             </TableRow>
           ))}
           {profiles.length === 0 && (
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-10">
+              <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-10">
                 Nenhum usuário encontrado.
               </TableCell>
             </TableRow>
