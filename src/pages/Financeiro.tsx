@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/hooks/useAppData";
 import { supabase } from "@/integrations/supabase/client";
 import { KpiCard } from "@/components/KpiCard";
+import { PeriodFilter, DateRange, PeriodType } from "@/components/PeriodFilter";
 import { Navigate, useLocation } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, BadgeDollarSign, Calendar, ChevronDown, ChevronUp, Clock, FileText, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, Check, Loader2, Wallet, Plus, CalendarDays, FileDown, Printer, HelpCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
-import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, confirmCommissionPaymentById, rejectCommissionPaymentById, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, CommissionPayment } from "@/lib/supabase-deals";
+import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, confirmCommissionPaymentById, rejectCommissionPaymentById, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, fetchAvailableYears, CommissionPayment } from "@/lib/supabase-deals";
 import { getCurrentUserContext } from "@/lib/supabase-env";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -214,7 +215,7 @@ function normalizeSalaryRows<T extends { amount?: any; is_paid_by_gestor?: any; 
 function dateInFinancePeriod(date: string | null | undefined, period: FinancePeriod): boolean {
   if (!date) return false;
   const monthKey = getMonthKey(date);
-  return period.filterType === "month" ? monthKey === period.selectedMonth : monthKey.startsWith(period.selectedYear);
+  return monthKeyInPeriod(monthKey, period);
 }
 
 /**
@@ -233,16 +234,18 @@ function getDealMonthKeys(deal: Deal): { mensalidadeMonthKey: string | null; imp
 }
 
 type FinancePeriod = {
-  filterType: "month" | "year";
+  filterType: PeriodType;
   selectedMonth: string;
   selectedYear: string;
+  fromMonth?: string;
+  toMonth?: string;
 };
 
 function monthKeyInPeriod(monthKey: string | null, period: FinancePeriod): boolean {
   if (!monthKey) return false;
-  return period.filterType === "month"
-    ? monthKey === period.selectedMonth
-    : monthKey.startsWith(period.selectedYear);
+  if (period.filterType === "month") return monthKey === period.selectedMonth;
+  if (period.filterType === "year") return monthKey.startsWith(period.selectedYear);
+  return monthKey >= (period.fromMonth || period.selectedMonth) && monthKey <= (period.toMonth || period.selectedMonth);
 }
 
 function dealHasFinancialMovementInPeriod(deal: Deal, period: FinancePeriod): boolean {
@@ -1173,7 +1176,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         </div>
       )}
 
-      <FutureProjectionsAccumulatedCard projections={futureProjections} position={position} onSelectMonth={setSelectedMonth} />
+      <FutureProjectionsAccumulatedCard projections={futureProjections} position={position} onSelectMonth={selectFinanceMonth} />
 
       <div className="space-y-5">
         <div id="commissions-period" className="bg-card rounded-xl border border-border/60 overflow-hidden">
@@ -1267,16 +1270,52 @@ function FinanceiroContent() {
 
   const currentMonthKey = getMonthKey(new Date());
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const now = new Date();
+    return {
+      from: new Date(now.getFullYear(), now.getMonth(), 1),
+      to: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59),
+    };
+  });
+  const [periodLabel, setPeriodLabel] = useState(formatMonthLabel(currentMonthKey));
+  const [availableYears, setAvailableYears] = useState<number[]>([]);
   const [filtroOperacao, setFiltroOperacao] = useState("Todas");
   const [filtroFuncionario, setFiltroFuncionario] = useState("Todos");
   const [filtroStatus, setFiltroStatus] = useState("Todos Status");
   
-  const [filterType, setFilterType] = useState<"month" | "year">("month");
+  const [filterType, setFilterType] = useState<PeriodType>("month");
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [kpiModalType, setKpiModalType] = useState<"volume" | "pago" | "projetado" | "fixo" | null>(null);
   const [processingSalaryKeys, setProcessingSalaryKeys] = useState<Set<string>>(() => new Set());
   
-  const monthOptions = useMemo(() => buildMonthOptions(), []);
+  const period = useMemo<FinancePeriod>(() => ({
+    filterType,
+    selectedMonth,
+    selectedYear,
+    fromMonth: getMonthKey(dateRange.from),
+    toMonth: getMonthKey(dateRange.to),
+  }), [dateRange, filterType, selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    fetchAvailableYears().then(setAvailableYears);
+  }, []);
+
+  const handlePeriodChange = (range: DateRange, label: string, type: PeriodType) => {
+    setDateRange(range);
+    setPeriodLabel(label);
+    setFilterType(type);
+    setSelectedMonth(getMonthKey(range.from));
+    setSelectedYear(String(range.from.getFullYear()));
+  };
+
+  const selectFinanceMonth = (monthKey: string) => {
+    const [year, month] = monthKey.split("-").map(Number);
+    const range = {
+      from: new Date(year, month - 1, 1),
+      to: new Date(year, month, 0, 23, 59, 59),
+    };
+    handlePeriodChange(range, formatMonthLabel(monthKey), "month");
+  };
 
   const { data, isLoading: loading } = useQuery({
     queryKey: ["finance-data", role, user?.id, filterType, selectedYear],
@@ -1332,7 +1371,7 @@ function FinanceiroContent() {
   const filteredDeals = useMemo(() => {
     return activeDeals.filter((d) => {
       // Time filtering: deal entra no mês se mensalidade OU implantação cai nele
-      const passTime = dealHasFinancialMovementInPeriod(d, { filterType, selectedMonth, selectedYear });
+      const passTime = dealHasFinancialMovementInPeriod(d, period);
 
       // Operation
       const passOp = filtroOperacao === "Todas" || d.operation === filtroOperacao;
@@ -1343,26 +1382,21 @@ function FinanceiroContent() {
       // Status
       let passStatus = true;
       if (filtroStatus === "Finalizados") {
-        const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
+        const parts = getCommissionPeriodParts(d, presentations, settings, period);
         passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments, false) === "done";
       } else if (filtroStatus === "Pendentes") {
-        const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
+        const parts = getCommissionPeriodParts(d, presentations, settings, period);
         passStatus = parts.total > 0 && getCommissionStatusForPayments(d, parts, commissionPayments, false) !== "done";
       }
 
       return passTime && passOp && passUser && passStatus;
     });
-  }, [activeDeals, selectedMonth, filterType, selectedYear, filtroOperacao, filtroFuncionario, filtroStatus, presentations, settings, commissionPayments]);
+  }, [activeDeals, period, filtroOperacao, filtroFuncionario, filtroStatus, presentations, settings, commissionPayments]);
 
   const filteredSalaries = useMemo(() => {
     return activeSalaries.filter((s) => {
       const salaryMonthKey = getMonthKey(s.reference_month);
-      let passTime = false;
-      if (filterType === "month") {
-        passTime = salaryMonthKey === selectedMonth;
-      } else {
-        passTime = salaryMonthKey.startsWith(selectedYear);
-      }
+      const passTime = monthKeyInPeriod(salaryMonthKey, period);
 
       const passUser = filtroFuncionario === "Todos" || s.user_id === filtroFuncionario;
       let passStatus = true;
@@ -1370,7 +1404,7 @@ function FinanceiroContent() {
       if (filtroStatus === "Pendentes") passStatus = !s.is_paid_by_gestor;
       return passTime && passUser && passStatus;
     });
-  }, [activeSalaries, selectedMonth, filterType, selectedYear, filtroFuncionario, filtroStatus]);
+  }, [activeSalaries, period, filtroFuncionario, filtroStatus]);
 
   const kpis = useMemo(() => {
     // Soma pagamentos explícitos de salary_payments
@@ -1390,8 +1424,6 @@ function FinanceiroContent() {
     let totalProjetado = 0;
     let totalPago = 0;
     let volumeTotal = 0;
-    const period = { filterType, selectedMonth, selectedYear };
-
     commissionPayments
       .filter((cp) => filtroFuncionario === "Todos" || cp.recipientUserId === filtroFuncionario)
       .forEach((cp) => {
@@ -1404,26 +1436,15 @@ function FinanceiroContent() {
 
     filteredDeals.forEach((deal) => {
       const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
-      const baseParts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
+      const baseParts = getCommissionPeriodParts(deal, presentations, settings, period);
       // Conta apenas a parte que pertence ao período filtrado
-      if (filterType === "month") {
-        const mensalidadeInMonth = mensalidadeMonthKey === selectedMonth;
-        const implantacaoInMonth = deal.isInstallment ? baseParts.installmentItems.length > 0 : implantacaoMonthKey === selectedMonth;
-        if (mensalidadeInMonth) volumeTotal += deal.monthlyValue || 0;
-        if (implantacaoInMonth) {
-          volumeTotal += deal.isInstallment
-            ? baseParts.installmentItems.reduce((acc, item) => acc + item.value, 0)
-            : deal.implantationValue || 0;
-        }
-      } else {
-        const mensalidadeInYear = mensalidadeMonthKey?.startsWith(selectedYear) ?? false;
-        const implantacaoInYear = deal.isInstallment ? baseParts.installmentItems.length > 0 : (implantacaoMonthKey?.startsWith(selectedYear) ?? false);
-        if (mensalidadeInYear) volumeTotal += deal.monthlyValue || 0;
-        if (implantacaoInYear) {
-          volumeTotal += deal.isInstallment
-            ? baseParts.installmentItems.reduce((acc, item) => acc + item.value, 0)
-            : deal.implantationValue || 0;
-        }
+      const mensalidadeInPeriod = monthKeyInPeriod(mensalidadeMonthKey, period);
+      const implantacaoInPeriod = deal.isInstallment ? baseParts.installmentItems.length > 0 : monthKeyInPeriod(implantacaoMonthKey, period);
+      if (mensalidadeInPeriod) volumeTotal += deal.monthlyValue || 0;
+      if (implantacaoInPeriod) {
+        volumeTotal += deal.isInstallment
+          ? baseParts.installmentItems.reduce((acc, item) => acc + item.value, 0)
+          : deal.implantationValue || 0;
       }
 
       const recipients = [
@@ -1432,7 +1453,7 @@ function FinanceiroContent() {
       ].filter(Boolean) as string[];
 
       recipients.forEach((recipientUserId) => {
-        const recipientParts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, { filterType, selectedMonth, selectedYear }, profiles, recipientUserId);
+        const recipientParts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles, recipientUserId);
         const recipientPayments = getCommissionPaymentsForParts(deal.id, recipientParts, commissionPayments)
           .filter((cp) => cp.recipientUserId === recipientUserId);
         const addLegacy = (amount: number) => {
@@ -1467,7 +1488,7 @@ function FinanceiroContent() {
     const totalPagoGeral = totalPago + totalSalariosPagos;
 
     return { totalFixo, totalProjetado, totalPago, totalSalariosPagos, totalPagoGeral, volumeTotal };
-  }, [filteredDeals, filteredSalaries, filterType, selectedMonth, selectedYear, presentations, settings, commissionPayments, filtroFuncionario, profiles]);
+  }, [filteredDeals, filteredSalaries, period, presentations, settings, commissionPayments, filtroFuncionario, profiles]);
 
   // Rows para modal e Contas a Pagar: salary_payments explícitos + fallback de profiles
   const salaryModalRows = useMemo(() => {
@@ -1481,9 +1502,9 @@ function FinanceiroContent() {
       rows.push({
         id: `fallback-${uid}`,
         user_id: uid,
-        reference_month: filterType === "month" ? selectedMonth + "-01" : selectedYear + "-01-01",
+        reference_month: filterType === "year" ? selectedYear + "-01-01" : selectedMonth + "-01",
         amount: fixedSal,
-        expected_payment_date: (filterType === "month" ? selectedMonth : selectedYear + "-01") + "-20",
+        expected_payment_date: (filterType === "year" ? selectedYear + "-01" : selectedMonth) + "-20",
         is_paid_by_gestor: false,
         user_confirmed_receipt: false,
         payment_date: null,
@@ -1516,7 +1537,8 @@ function FinanceiroContent() {
       const mensalidadeComm = comm.monthlyCommission + comm.superMetaBonus;
       const futureInstallments = getInstallmentItems(deal, comm.implantationCommission);
 
-      const isFutureMes = (mk: string | null) => mk && (filterType === "month" ? mk > selectedMonth : mk.split("-")[0] > selectedYear);
+      const comparisonMonth = period.toMonth || selectedMonth;
+      const isFutureMes = (mk: string | null) => mk && mk > comparisonMonth;
 
       const executivoMensalidadePaid = mensalidadeMonthKey ? paidCpKeys.has(`${deal.id}:mensalidade:${mensalidadeMonthKey}:${deal.userId || ""}:`) : false;
       const executivoImplantacaoPaid = implantacaoMonthKey ? paidCpKeys.has(`${deal.id}:implantacao:${implantacaoMonthKey}:${deal.userId || ""}:`) : false;
@@ -1543,7 +1565,7 @@ function FinanceiroContent() {
       .map(([key, vals]) => ({ monthKey: key, ...vals }))
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
       .slice(0, 6);
-  }, [activeDeals, selectedMonth, filterType, selectedYear, filtroOperacao, filtroFuncionario, presentations, settings, commissionPayments]);
+  }, [activeDeals, selectedMonth, period, filtroOperacao, filtroFuncionario, presentations, settings, commissionPayments]);
 
   const handleToggleMensalidade = async (dealId: string, currentStatus: boolean) => {
     if (currentStatus) {
@@ -1614,7 +1636,6 @@ function FinanceiroContent() {
     const deal = activeDeals.find((d) => d.id === dealId);
 
     if (newStatus && deal) {
-      const period = { filterType, selectedMonth, selectedYear };
       const executivoParts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles, deal.userId);
       const sdrParts = deal.sdrUserId && deal.sdrUserId !== deal.userId
         ? getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles, deal.sdrUserId)
@@ -1689,7 +1710,7 @@ function FinanceiroContent() {
 
     } else if (!newStatus && deal) {
       // Reversão: apaga apenas o componente/mês do período atual (não afeta outros meses)
-      const parts = getCommissionPeriodParts(deal, presentations, settings, { filterType, selectedMonth, selectedYear });
+      const parts = getCommissionPeriodParts(deal, presentations, settings, period);
       try {
         if (parts.mensalidadeInPeriod && parts.mensalidadeMonthKey) {
           await clearCommissionPaymentForComponent(dealId, "mensalidade", parts.mensalidadeMonthKey, targetRecipientUserId);
@@ -1834,40 +1855,7 @@ function FinanceiroContent() {
             </SelectContent>
           </Select>
 
-          <Select value={filterType} onValueChange={(v: any) => setFilterType(v)}>
-            <SelectTrigger className="w-[100px] h-8 text-xs font-medium">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="month">Mensal</SelectItem>
-              <SelectItem value="year">Anual</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {filterType === "month" ? (
-            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-              <SelectTrigger className="w-[140px] md:w-[160px] h-8 text-xs">
-                <SelectValue placeholder="Mês Referência" />
-              </SelectTrigger>
-              <SelectContent>
-                {monthOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <Select value={selectedYear} onValueChange={setSelectedYear}>
-              <SelectTrigger className="w-[100px] h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="2025">2025</SelectItem>
-                <SelectItem value="2026">2026</SelectItem>
-              </SelectContent>
-            </Select>
-          )}
+          <PeriodFilter onPeriodChange={handlePeriodChange} availableYears={availableYears} />
 
           <Select value={filtroStatus} onValueChange={setFiltroStatus}>
             <SelectTrigger className="w-[140px] md:w-[160px] h-8 text-xs">
@@ -1892,7 +1880,7 @@ function FinanceiroContent() {
           tooltip="Soma comissões confirmadas e salários transferidos no período. Para antecipações, usa a data real da confirmação."
         />
         <KpiCard
-          title={`Volume com Recebimento (${filterType === "month" ? "Mês" : "Ano"})`}
+          title={`Volume com Recebimento (${periodLabel})`}
           value={formatCurrency(kpis.volumeTotal)}
           icon={BarChart3}
           variant="default"
@@ -1963,7 +1951,7 @@ function FinanceiroContent() {
             presentations={presentations}
             settings={settings}
             commissionPayments={commissionPayments}
-            period={{ filterType, selectedMonth, selectedYear }}
+            period={period}
             processingSalaryKeys={processingSalaryKeys}
             onToggleCommissionPayment={handleToggleCommissionPayment}
             onToggleSalaryPayment={handleToggleSalaryPayment}
@@ -2053,14 +2041,14 @@ function FinanceiroContent() {
                 <TableBody>
                   {filteredDeals
                     .filter((d) => {
-                      const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
+                      const parts = getCommissionPeriodParts(d, presentations, settings, period);
                       const status = getCommissionStatusForPayments(d, parts, commissionPayments);
                       if (kpiModalType === "pago") return status === "done";
                       if (kpiModalType === "projetado") return status !== "done";
                       return false;
                     })
                     .map((d) => {
-                      const parts = getCommissionPeriodParts(d, presentations, settings, { filterType, selectedMonth, selectedYear });
+                      const parts = getCommissionPeriodParts(d, presentations, settings, period);
                       const status = getCommissionStatusForPayments(d, parts, commissionPayments);
                       return (
                         <TableRow key={d.id} className="border-border/25 hover:bg-[#242842]/40">

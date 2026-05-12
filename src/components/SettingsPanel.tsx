@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,13 @@ export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals, read
   const [superMetaThreshold, setSuperMetaThreshold] = useState((settings.superMetaThreshold || 30).toString());
   const [superMetaMultiplier, setSuperMetaMultiplier] = useState(((settings.superMetaMultiplier || 2) * 100).toString());
 
+  useEffect(() => {
+    setSalary(settings.fixedSalary.toString());
+    setCommissionRate(((settings.commissionRate || 0.20) * 100).toString());
+    setSuperMetaThreshold((settings.superMetaThreshold || 30).toString());
+    setSuperMetaMultiplier(((settings.superMetaMultiplier || 2) * 100).toString());
+  }, [settings]);
+
   const handleSave = () => {
     const newSettings = {
       fixedSalary:         parseFloat(salary) || 0,
@@ -41,7 +48,14 @@ export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals, read
           <div className="h-8 w-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
             <Settings2 className="h-4 w-4 text-primary" />
           </div>
-          <span className="section-label">Parâmetros de Comissão</span>
+          <div>
+            <span className="section-label">{readOnly ? "Minha Remuneração" : "Parâmetros de Comissão"}</span>
+            <p className="text-xs text-muted-foreground/60 mt-0.5">
+              {readOnly
+                ? "Valores definidos pelo Diretor e regras usadas nos cálculos."
+                : "Defina os valores padrão usados no comissionamento."}
+            </p>
+          </div>
         </div>
 
         {/* Salário */}
@@ -82,14 +96,15 @@ export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals, read
         <div className="rounded-xl bg-muted/30 border border-border/40 p-4 space-y-1.5">
           <div className="flex items-center gap-1.5 mb-2">
             <Info className="h-3.5 w-3.5 text-muted-foreground/60" />
-            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Regras de Comissionamento</span>
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Como o cálculo funciona</span>
           </div>
           <ul className="text-xs text-muted-foreground/70 space-y-1">
-            <li>• Taxa: <strong className="text-foreground">{((settings.commissionRate || 0.20) * 100).toFixed(0)}%</strong></li>
-            <li>• ≥ 15 apresentações → base = <strong className="text-foreground">100%</strong> da mensalidade</li>
-            <li>• &lt; 15 apresentações → base = <strong className="text-foreground">70%</strong> da mensalidade</li>
-            <li>• Implantação: base = <strong className="text-foreground">40%</strong> do valor (independente)</li>
-            <li>• Comissões pagas até o <strong className="text-foreground">dia 20</strong> do mês subsequente</li>
+            <li>• Taxa do usuário: <strong className="text-foreground">{((settings.commissionRate || 0.20) * 100).toFixed(0)}%</strong></li>
+            <li>• 15 apresentações ou mais: comissão sobre <strong className="text-foreground">100%</strong> da mensalidade.</li>
+            <li>• Abaixo de 15 apresentações: comissão sobre <strong className="text-foreground">70%</strong> da mensalidade.</li>
+            <li>• Implantação: comissão sobre <strong className="text-foreground">40%</strong> do valor.</li>
+            <li>• Regra do dia 07: primeiro pagamento após o dia 07 entra financeiramente no mês seguinte.</li>
+            <li>• Super meta: com 30 apresentações, a comissão de mensalidade dobra.</li>
           </ul>
         </div>
 

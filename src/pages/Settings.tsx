@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,7 @@ import { useAppData } from "@/hooks/useAppData";
 import { useAppLogo } from "@/hooks/useAppLogo";
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 import { getCurrentUserContext } from "@/lib/supabase-env";
+import { formatMonthLabel, getMonthKey } from "@/lib/commission";
 
 type InviteRow = {
   id: string;
@@ -64,18 +65,16 @@ export default function Settings() {
         </p>
       </div>
 
-      <Tabs defaultValue={pureAdmin ? "invites" : "profile"}>
+      <Tabs defaultValue={pureAdmin ? "appearance" : "profile"}>
         <TabsList className="h-9 mb-6 bg-muted/40 border border-border/40">
+          <TabsTrigger value="profile" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
+            <User className="h-3.5 w-3.5" />
+            Meu Perfil
+          </TabsTrigger>
           {!pureAdmin && (
-            <TabsTrigger value="profile" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
-              <User className="h-3.5 w-3.5" />
-              Meu Perfil
-            </TabsTrigger>
-          )}
-          {isDirector && (
             <TabsTrigger value="comissions" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <SlidersHorizontal className="h-3.5 w-3.5" />
-              Metas e Comissões
+              {isDirector ? "Metas e Comissões" : "Minha Remuneração"}
             </TabsTrigger>
           )}
           {isDirector && (
@@ -90,7 +89,7 @@ export default function Settings() {
               Gestão de Equipe
             </TabsTrigger>
           )}
-          {role === "admin" && (
+          {pureAdmin && (
             <TabsTrigger value="appearance" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <ImageIcon className="h-3.5 w-3.5" />
               Aparência
@@ -98,14 +97,16 @@ export default function Settings() {
           )}
         </TabsList>
 
-        {!pureAdmin && (
         <TabsContent value="profile">
           <ProfileTab />
         </TabsContent>
-        )}
-        {isDirector && (
+        {!pureAdmin && (
         <TabsContent value="comissions">
-          <SettingsPanel settings={settings} onUpdate={updateSettings} readOnly={false} />
+          <SettingsPanel
+            settings={settings}
+            onUpdate={isDirector ? updateSettings : undefined}
+            readOnly={!isDirector}
+          />
         </TabsContent>
         )}
         {isDirector && (
@@ -118,7 +119,7 @@ export default function Settings() {
             <TeamTab />
           </TabsContent>
         )}
-        {role === "admin" && (
+        {pureAdmin && (
           <TabsContent value="appearance">
             <AppearanceTab />
           </TabsContent>
@@ -465,7 +466,20 @@ function InvitesTab() {
 
 function TeamTab() {
   const [profiles, setProfiles] = useState<any[]>([]);
+  const [salaryBaseline, setSalaryBaseline] = useState<Record<string, number>>({});
+  const [salaryEffectiveMode, setSalaryEffectiveMode] = useState<Record<string, "current" | "next" | "custom">>({});
+  const [salaryCustomMonth, setSalaryCustomMonth] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const currentSalaryMonth = getMonthKey(new Date());
+  const nextSalaryMonth = getMonthKey(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1));
+  const salaryMonthOptions = useMemo(() => {
+    const now = new Date();
+    return Array.from({ length: 13 }, (_, index) => {
+      const date = new Date(now.getFullYear(), now.getMonth() + index, 1);
+      const value = getMonthKey(date);
+      return { value, label: formatMonthLabel(value) };
+    });
+  }, []);
 
   useEffect(() => {
     const loadTeam = async () => {
@@ -479,7 +493,10 @@ function TeamTab() {
 
       const { data, error } = await query;
 
-      if (data) setProfiles(data);
+      if (data) {
+        setProfiles(data);
+        setSalaryBaseline(Object.fromEntries(data.map((p: any) => [p.user_id, Number(p.fixed_salary || 0)])));
+      }
       if (error) toast.error("Erro ao carregar usuários: " + error.message);
       setLoading(false);
     };
@@ -491,7 +508,103 @@ function TeamTab() {
     setProfiles((prev) => prev.map((p) => (p.user_id === userId ? { ...p, [field]: value } : p)));
   };
 
+  const getSalaryEffectiveMonth = (userId: string) => {
+    const mode = salaryEffectiveMode[userId] || "current";
+    if (mode === "next") return nextSalaryMonth;
+    if (mode === "custom") return salaryCustomMonth[userId] || nextSalaryMonth;
+    return currentSalaryMonth;
+  };
+
+  const monthRange = (fromMonth: string, toBeforeMonth: string) => {
+    const months: string[] = [];
+    const [fromYear, fromM] = fromMonth.split("-").map(Number);
+    const [toYear, toM] = toBeforeMonth.split("-").map(Number);
+    const cursor = new Date(fromYear, fromM - 1, 1);
+    const end = new Date(toYear, toM - 1, 1);
+    while (cursor < end) {
+      months.push(getMonthKey(cursor));
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return months;
+  };
+
+  const upsertSalaryPayment = async (userId: string, amount: number, monthKey: string, isTestEnv: boolean, preservePaid = true) => {
+    const referenceMonth = `${monthKey}-01`;
+    const { data: existing, error: existingError } = await (supabase as any)
+      .from("salary_payments")
+      .select("id, is_paid_by_gestor, confirmed_by_user_at")
+      .eq("user_id", userId)
+      .eq("reference_month", referenceMonth)
+      .eq("is_test_data", isTestEnv)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+    if (preservePaid && (existing?.is_paid_by_gestor || existing?.confirmed_by_user_at)) return false;
+
+    const { error } = await (supabase as any)
+      .from("salary_payments")
+      .upsert(
+        {
+          user_id: userId,
+          amount,
+          reference_month: referenceMonth,
+          expected_payment_date: `${monthKey}-20`,
+          is_paid_by_gestor: false,
+          payment_date: null,
+          user_confirmed_receipt: false,
+          confirmed_by_user_at: null,
+          rejected_by_user_at: null,
+          is_test_data: isTestEnv,
+        },
+        { onConflict: "user_id,reference_month,is_test_data" }
+      );
+    if (error) throw error;
+    return true;
+  };
+
+  const handleUpdateSalary = async (userId: string, value: number) => {
+    const amount = Number(value || 0);
+    const effectiveMonth = getSalaryEffectiveMonth(userId);
+    const previousAmount = salaryBaseline[userId] ?? 0;
+    const { isTestEnv } = await getCurrentUserContext();
+
+    try {
+      if (effectiveMonth === currentSalaryMonth) {
+        const changed = await upsertSalaryPayment(userId, amount, effectiveMonth, isTestEnv);
+        if (!changed) {
+          toast.error("O salário deste mês já foi pago ou confirmado. Escolha próximo mês ou outro mês.");
+          handleLocalFieldChange(userId, "fixed_salary", previousAmount);
+          return;
+        }
+      } else {
+        for (const monthKey of monthRange(currentSalaryMonth, effectiveMonth)) {
+          await upsertSalaryPayment(userId, previousAmount, monthKey, isTestEnv);
+        }
+        await upsertSalaryPayment(userId, amount, effectiveMonth, isTestEnv);
+      }
+
+      const { error } = await (supabase as any)
+        .from("profiles")
+        .update({ fixed_salary: amount })
+        .eq("user_id", userId);
+
+      if (error) throw error;
+
+      setSalaryBaseline((prev) => ({ ...prev, [userId]: amount }));
+      setProfiles((prev) => prev.map((p) => (p.user_id === userId ? { ...p, fixed_salary: amount } : p)));
+      toast.success(`Salário atualizado com vigência em ${formatMonthLabel(effectiveMonth)}.`);
+    } catch (err: any) {
+      toast.error("Erro ao atualizar salário: " + (err?.message || "tente novamente."));
+      handleLocalFieldChange(userId, "fixed_salary", previousAmount);
+    }
+  };
+
   const handleUpdateField = async (userId: string, field: "position" | "fixed_salary" | "commission_percent", value: string | number | null) => {
+    if (field === "fixed_salary") {
+      await handleUpdateSalary(userId, Number(value || 0));
+      return;
+    }
+
     const normalizedValue = field === "position" && value === "none" ? null : value;
     const updatePayload: Record<string, string | number | null> = { [field]: normalizedValue };
 
@@ -536,7 +649,7 @@ function TeamTab() {
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Cargo Descritivo</TableHead>
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Desde</TableHead>
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[170px]">Função na Empresa</TableHead>
-            <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[140px]">Salário</TableHead>
+            <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[320px]">Salário e vigência</TableHead>
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[120px]">Comissão</TableHead>
           </TableRow>
         </TableHeader>
@@ -575,14 +688,46 @@ function TeamTab() {
                 </Select>
               </TableCell>
               <TableCell className="px-4 py-3">
-                <Input
-                  type="number"
-                  min="0"
-                  value={Number(p.fixed_salary || 0)}
-                  onChange={(e) => handleLocalFieldChange(p.user_id, "fixed_salary", Number(e.target.value))}
-                  onBlur={(e) => handleUpdateField(p.user_id, "fixed_salary", Number(e.target.value || 0))}
-                  className="h-8 text-xs w-[120px] bg-muted/30 border-border/40 font-mono"
-                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={Number(p.fixed_salary || 0)}
+                    onChange={(e) => handleLocalFieldChange(p.user_id, "fixed_salary", Number(e.target.value))}
+                    onBlur={(e) => handleUpdateField(p.user_id, "fixed_salary", Number(e.target.value || 0))}
+                    className="h-8 text-xs w-[110px] bg-muted/30 border-border/40 font-mono"
+                  />
+                  <Select
+                    value={salaryEffectiveMode[p.user_id] || "current"}
+                    onValueChange={(val: "current" | "next" | "custom") =>
+                      setSalaryEffectiveMode((prev) => ({ ...prev, [p.user_id]: val }))
+                    }
+                  >
+                    <SelectTrigger className="h-8 text-xs w-[120px] bg-muted/30 border-border/40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="current">Mês atual</SelectItem>
+                      <SelectItem value="next">Próximo mês</SelectItem>
+                      <SelectItem value="custom">Outro mês</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {(salaryEffectiveMode[p.user_id] || "current") === "custom" && (
+                    <Select
+                      value={salaryCustomMonth[p.user_id] || nextSalaryMonth}
+                      onValueChange={(val) => setSalaryCustomMonth((prev) => ({ ...prev, [p.user_id]: val }))}
+                    >
+                      <SelectTrigger className="h-8 text-xs w-[130px] bg-muted/30 border-border/40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {salaryMonthOptions.map((month) => (
+                          <SelectItem key={month.value} value={month.value}>{month.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
               </TableCell>
               <TableCell className="px-4 py-3">
                 <Input

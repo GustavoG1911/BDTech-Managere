@@ -15,6 +15,7 @@ import {
   Home,
   Landmark,
   Loader2,
+  LogOut,
   Save,
   Settings,
   ShieldCheck,
@@ -24,20 +25,81 @@ import {
 import { InfoHint } from "@/components/InfoHint";
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 
-const PRODUCT_AREAS = [
-  { icon: Home, title: "Dashboard", text: "Acompanhe fechamentos, receita prevista, metas e comissoes do periodo." },
-  { icon: Target, title: "Prospeccao", text: "Registre oportunidades, status e notas para manter o funil organizado." },
-  { icon: CalendarDays, title: "Agenda", text: "Visualize reunioes e compromissos comerciais em um calendario compartilhado." },
-  { icon: Landmark, title: "Financeiro", text: "Controle recebiveis, salarios, baixas, comissoes e regra do dia 07." },
-  { icon: Settings, title: "Configuracoes", text: "Ajuste perfil, equipe, metas, comissoes, logo e dados de teste." },
-];
+function getTourAreas(cargo: string, pureAdmin: boolean) {
+  if (pureAdmin) {
+    return [
+      { icon: Settings, title: "Configurações do sistema", text: "Ajuste logo, aparência e pré-requisitos técnicos sem acessar dados comerciais." },
+      { icon: User, title: "Meu perfil", text: "Mantenha seu nome e cargo descritivo atualizados para identificação no sistema." },
+      { icon: ShieldCheck, title: "Acesso separado", text: "Admin puro cuida da plataforma; Diretor cuida de equipe, metas e operação." },
+      { icon: CheckCircle2, title: "Suporte ao time", text: "Use essa conta para preparar o ambiente e orientar quem opera o dia a dia." },
+    ];
+  }
 
-const ROLE_GUIDES = [
-  "Diretor ve a operacao consolidada, equipe, filtros avancados e controles financeiros.",
-  "Executivo de Negócios acompanha os proprios fechamentos e comissoes.",
-  "SDR acompanha os Executivos de Negócios, apresentacoes e pipeline compartilhado.",
-  "Dados de teste usam ambiente separado quando o email termina com @teste.com.",
-];
+  if (cargo === "Diretor") {
+    return [
+      { icon: Home, title: "Dashboard", text: "Acompanhe o resultado consolidado, filtre por operação e veja alertas de transbordo." },
+      { icon: Landmark, title: "Financeiro", text: "Dê baixa em recebíveis, salários e comissões, preservando a regra do dia 07." },
+      { icon: Settings, title: "Equipe", text: "Libere cargo, salário, comissão e convites para cada usuário da operação." },
+      { icon: CalendarDays, title: "Agenda e prospecção", text: "Acompanhe o trabalho comercial sem tirar a liberdade de edição do time." },
+    ];
+  }
+
+  if (cargo === "SDR") {
+    return [
+      { icon: Target, title: "Apresentações", text: "Atualize BluePex e Opus Tech no mês correto para ativar metas e super meta." },
+      { icon: CalendarDays, title: "Agenda", text: "Use a agenda compartilhada para acompanhar reuniões e compromissos comerciais." },
+      { icon: Home, title: "Dashboard", text: "Veja a evolução de apresentações e como isso afeta os aceleradores." },
+      { icon: Landmark, title: "Financeiro", text: "Confirme recebimentos quando o Diretor marcar comissões ou salário como pagos." },
+    ];
+  }
+
+  return [
+    { icon: Target, title: "Prospecção", text: "Registre oportunidades, status e notas para manter seu funil atualizado." },
+    { icon: CalendarDays, title: "Agenda", text: "Organize reuniões e acompanhe os próximos compromissos comerciais." },
+    { icon: Home, title: "Dashboard", text: "Veja seus fechamentos, receita prevista e comissão estimada do período." },
+    { icon: Landmark, title: "Financeiro", text: "Acompanhe comissões liberadas e confirme recebimentos quando forem pagos." },
+  ];
+}
+
+function getWorkflowGuides(cargo: string, pureAdmin: boolean) {
+  if (pureAdmin) {
+    return [
+      "Sua conta administra a plataforma, aparência e ajustes técnicos.",
+      "Você não precisa operar funil, baixas financeiras ou metas comerciais.",
+      "Se também for atuar na operação, peça a um Diretor para definir uma função comercial separada.",
+    ];
+  }
+
+  if (!cargo) {
+    return [
+      "Complete seu nome para o Diretor identificar sua conta.",
+      "Depois da aprovação, seu cargo libera automaticamente as telas certas para sua rotina.",
+      "Você pode sair desta tela a qualquer momento pelo botão Sair, útil em testes.",
+    ];
+  }
+
+  if (cargo === "Diretor") {
+    return [
+      "Comece pelo Dashboard para entender o mês e os filtros.",
+      "Use Configurações para liberar equipe, salário, comissão e convites.",
+      "No Financeiro, faça baixas somente quando a empresa ou o usuário confirmar o pagamento.",
+    ];
+  }
+
+  if (cargo === "SDR") {
+    return [
+      "Seu foco é manter apresentações e agenda atualizadas.",
+      "As metas de 15 e 30 apresentações impactam os aceleradores de comissão.",
+      "No Financeiro, você acompanha pagamentos próprios e confirma recebimento.",
+    ];
+  }
+
+  return [
+    "Seu foco é manter oportunidades, agenda e fechamentos atualizados.",
+    "A comissão usa sua taxa configurada pelo Diretor e as apresentações do mês.",
+    "No Financeiro, acompanhe valores liberados e confirme recebimentos.",
+  ];
+}
 
 interface ProfileData {
   full_name: string;
@@ -63,7 +125,7 @@ function hasCompletedOnboarding(profile: any, role: string) {
 }
 
 export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
-  const { user, role, position, refreshProfile } = useAuth();
+  const { user, role, position, refreshProfile, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const [isForced, setIsForced] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -83,6 +145,8 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
   const hasRequiredProfileData = pureAdmin
     ? Boolean(form.full_name.trim())
     : Boolean(form.full_name.trim() && hasOperationalCargo);
+  const tourAreas = getTourAreas(form.cargo, pureAdmin);
+  const workflowGuides = getWorkflowGuides(form.cargo, pureAdmin);
   const totalSteps = 3;
   const isLastStep = step === totalSteps - 1;
 
@@ -279,8 +343,8 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
                   {onboardingCompletedAt && forceOpen ? "Meu perfil" : "Primeiros passos no BD Tech"}
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-xs leading-relaxed">
-                  {step === 0 && "Conheca as areas principais antes de comecar a usar o sistema."}
-                  {step === 1 && "Entenda o fluxo de trabalho e como seu cargo muda a visao dos dados."}
+                  {step === 0 && "Veja o que importa para sua rotina dentro do sistema."}
+                  {step === 1 && "Entenda o caminho recomendado para o seu cargo."}
                   {step === 2 && "Confirme os dados obrigatorios para liberar sua experiencia."}
                 </DialogDescription>
               </div>
@@ -302,7 +366,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
           {step === 0 && (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
-                {PRODUCT_AREAS.map((area) => (
+                {tourAreas.map((area) => (
                   <div key={area.title} className="rounded-lg border border-border/60 bg-card p-3">
                     <div className="flex items-start gap-3">
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
@@ -334,7 +398,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
               </div>
 
               <div className="space-y-2">
-                {ROLE_GUIDES.map((item) => (
+                {workflowGuides.map((item) => (
                   <div key={item} className="flex items-start gap-2 rounded-md bg-muted/30 px-3 py-2">
                     <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
                     <p className="text-xs leading-relaxed text-muted-foreground">{item}</p>
@@ -348,7 +412,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
             <div className="space-y-4">
               {!profileExists && (
                 <div className="rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-muted-foreground">
-                  Seu perfil sera criado agora. Permissoes sensiveis continuam protegidas pelo Diretor/Admin.
+                  Seu perfil sera criado agora. Permissoes sensiveis continuam protegidas pelo Diretor.
                 </div>
               )}
 
@@ -376,7 +440,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
                     {hasOperationalCargo ? (
                       <span className="font-medium text-foreground">{form.cargo}</span>
                     ) : (
-                      <span className="text-muted-foreground">Pendente de liberacao por Diretor/Admin</span>
+                      <span className="text-muted-foreground">Pendente de liberacao por Diretor</span>
                     )}
                   </div>
                   {!hasOperationalCargo && (
@@ -406,7 +470,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
                     </div>
                   </div>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    Esses valores sao definidos pelo Diretor/Admin e podem ser revisados em Configuracoes.
+                    Esses valores sao definidos pelo Diretor e podem ser revisados em Configuracoes.
                   </p>
                 </div>
               )}
@@ -415,10 +479,16 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-muted/10 px-5 py-4">
-          <Button variant="outline" onClick={goBack} disabled={step === 0 || saving} className="gap-2">
-            <ArrowLeft className="h-4 w-4" />
-            Voltar
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={signOut} disabled={saving} className="gap-2 text-muted-foreground">
+              <LogOut className="h-4 w-4" />
+              Sair
+            </Button>
+            <Button variant="outline" onClick={goBack} disabled={step === 0 || saving} className="gap-2">
+              <ArrowLeft className="h-4 w-4" />
+              Voltar
+            </Button>
+          </div>
 
           <div className="text-xs text-muted-foreground">
             Etapa {step + 1} de {totalSteps}
