@@ -19,6 +19,7 @@ import {
   Send,
   ImageIcon,
   Upload,
+  CheckCircle2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -488,7 +489,7 @@ function TeamTab() {
 
       const query = (supabase as any)
         .from("profiles")
-        .select("id, user_id, display_name, full_name, role, job_title, position, fixed_salary, commission_percent, created_at, is_test_data")
+        .select("id, user_id, display_name, full_name, role, job_title, position, fixed_salary, commission_percent, onboarding_completed_at, created_at, is_test_data")
         .eq("is_test_data", isTestEnv)
         .order("created_at", { ascending: true });
 
@@ -501,7 +502,7 @@ function TeamTab() {
       if (error) {
         const fallback = await (supabase as any)
           .from("profiles")
-          .select("id, user_id, display_name, full_name, role, job_title, position, fixed_salary, commission_percent, created_at")
+          .select("id, user_id, display_name, full_name, role, job_title, position, fixed_salary, commission_percent, onboarding_completed_at, created_at")
           .order("created_at", { ascending: true });
 
         if (fallback.data) {
@@ -611,6 +612,37 @@ function TeamTab() {
     }
   };
 
+  const isAdminProfile = (profile: any) => isPureSystemAdmin(profile.role, profile.position);
+  const isApprovedProfile = (profile: any) =>
+    isAdminProfile(profile) || (isOperationalPosition(profile.position) && Boolean(profile.onboarding_completed_at));
+
+  const handleApproveUser = async (profile: any) => {
+    if (!isOperationalPosition(profile.position)) {
+      toast.error("Escolha a função da pessoa antes de aprovar.");
+      return;
+    }
+
+    const approvedAt = new Date().toISOString();
+    const updatePayload = {
+      role: "user",
+      onboarding_completed_at: approvedAt,
+      job_title: profile.job_title || profile.position,
+    };
+
+    const { error } = await (supabase as any)
+      .from("profiles")
+      .update(updatePayload)
+      .eq("user_id", profile.user_id);
+
+    if (error) {
+      toast.error("Erro ao aprovar usuário: " + error.message);
+      return;
+    }
+
+    setProfiles((prev) => prev.map((p) => (p.user_id === profile.user_id ? { ...p, ...updatePayload } : p)));
+    toast.success("Usuário aprovado e liberado para acessar o sistema.");
+  };
+
   const handleUpdateField = async (userId: string, field: "position" | "fixed_salary" | "commission_percent", value: string | number | null) => {
     if (field === "fixed_salary") {
       await handleUpdateSalary(userId, Number(value || 0));
@@ -663,10 +695,17 @@ function TeamTab() {
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[170px]">Função na Empresa</TableHead>
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[320px]">Salário e vigência</TableHead>
             <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[120px]">Comissão</TableHead>
+            <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase w-[120px]">Status</TableHead>
+            <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right w-[130px]">Ação</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {profiles.map((p) => (
+          {profiles.map((p) => {
+            const approved = isApprovedProfile(p);
+            const adminProfile = isAdminProfile(p);
+            const readyToApprove = isOperationalPosition(p.position);
+
+            return (
             <TableRow key={p.id} className="border-border/25 hover:bg-[#242842]/40">
               <TableCell className="px-4 py-3 text-sm">
                 <div className="flex items-center gap-2.5">
@@ -752,11 +791,44 @@ function TeamTab() {
                   className="h-8 text-xs w-[100px] bg-muted/30 border-border/40 font-mono"
                 />
               </TableCell>
+              <TableCell className="px-4 py-3">
+                <Badge
+                  variant={approved ? "default" : "secondary"}
+                  className={
+                    approved
+                      ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/25"
+                      : readyToApprove
+                        ? "bg-amber-500/15 text-amber-300 border-amber-500/25"
+                        : "bg-muted/50 text-muted-foreground border-border/50"
+                  }
+                >
+                  {adminProfile ? "Admin" : approved ? "Aprovado" : readyToApprove ? "Pronto" : "Pendente"}
+                </Badge>
+              </TableCell>
+              <TableCell className="px-4 py-3 text-right">
+                {adminProfile || approved ? (
+                  <Button disabled variant="outline" size="sm" className="h-8 text-xs">
+                    {adminProfile ? "Liberado" : "Aprovado"}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!readyToApprove}
+                    onClick={() => handleApproveUser(p)}
+                    className="h-8 text-xs gap-1.5"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Aprovar
+                  </Button>
+                )}
+              </TableCell>
             </TableRow>
-          ))}
+            );
+          })}
           {profiles.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-10">
+              <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-10">
                 Nenhum usuário encontrado.
               </TableCell>
             </TableRow>

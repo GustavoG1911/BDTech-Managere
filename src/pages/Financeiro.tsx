@@ -1176,7 +1176,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         </div>
       )}
 
-      <FutureProjectionsAccumulatedCard projections={futureProjections} position={position} onSelectMonth={selectFinanceMonth} />
+      <FutureProjectionsAccumulatedCard projections={futureProjections} position={position} onSelectMonth={setSelectedMonth} />
 
       <div className="space-y-5">
         <div id="commissions-period" className="bg-card rounded-xl border border-border/60 overflow-hidden">
