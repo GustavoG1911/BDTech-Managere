@@ -24,7 +24,6 @@ dist-ssr
 *.sw?
 
 # Environment variables
-.env
 .claude/settings.local.json 
 
 # Legacy nested copy kept out of the production/Lovable project
