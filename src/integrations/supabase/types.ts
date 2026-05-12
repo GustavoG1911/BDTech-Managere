@@ -334,6 +334,7 @@ export type Database = {
           is_sandbox: boolean | null
           is_test_data: boolean | null
           job_title: string | null
+          onboarding_completed_at: string | null
           position: string | null
           role: string | null
           updated_at: string
@@ -350,6 +351,7 @@ export type Database = {
           is_sandbox?: boolean | null
           is_test_data?: boolean | null
           job_title?: string | null
+          onboarding_completed_at?: string | null
           position?: string | null
           role?: string | null
           updated_at?: string
@@ -366,6 +368,7 @@ export type Database = {
           is_sandbox?: boolean | null
           is_test_data?: boolean | null
           job_title?: string | null
+          onboarding_completed_at?: string | null
           position?: string | null
           role?: string | null
           updated_at?: string
