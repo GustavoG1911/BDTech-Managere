@@ -495,7 +495,7 @@ function TeamTab() {
     const normalizedValue = field === "position" && value === "none" ? null : value;
     const updatePayload: Record<string, string | number | null> = { [field]: normalizedValue };
 
-    if (field === "position" && isOperationalPosition(normalizedValue)) {
+    if (field === "position" && typeof normalizedValue === "string" && isOperationalPosition(normalizedValue)) {
       updatePayload.role = "user";
     }
 
