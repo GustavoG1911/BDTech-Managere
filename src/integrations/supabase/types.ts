@@ -14,38 +14,153 @@ export type Database = {
   }
   public: {
     Tables: {
-      calendar_events: {
+      admin_calendar_config: {
         Row: {
-          created_at: string | null
-          event_date: string
+          google_access_token: string | null
+          google_email: string | null
+          google_refresh_token: string | null
+          google_token_expiry: string | null
           id: string
-          is_sandbox: boolean | null
-          meeting_link: string | null
-          operation: string | null
-          status: string | null
-          title: string
+          sync_enabled: boolean
+          updated_at: string | null
         }
         Insert: {
-          created_at?: string | null
-          event_date: string
+          google_access_token?: string | null
+          google_email?: string | null
+          google_refresh_token?: string | null
+          google_token_expiry?: string | null
           id?: string
-          is_sandbox?: boolean | null
-          meeting_link?: string | null
-          operation?: string | null
-          status?: string | null
-          title: string
+          sync_enabled?: boolean
+          updated_at?: string | null
         }
         Update: {
-          created_at?: string | null
-          event_date?: string
+          google_access_token?: string | null
+          google_email?: string | null
+          google_refresh_token?: string | null
+          google_token_expiry?: string | null
           id?: string
-          is_sandbox?: boolean | null
-          meeting_link?: string | null
-          operation?: string | null
-          status?: string | null
-          title?: string
+          sync_enabled?: boolean
+          updated_at?: string | null
         }
         Relationships: []
+      }
+      calendar_events: {
+        Row: {
+          created_at: string
+          description: string | null
+          end_time: string
+          google_event_id: string | null
+          id: string
+          is_test_data: boolean
+          meeting_link: string | null
+          operation: string | null
+          prospect_id: string | null
+          source: string
+          start_time: string
+          status: string
+          title: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          end_time: string
+          google_event_id?: string | null
+          id?: string
+          is_test_data?: boolean
+          meeting_link?: string | null
+          operation?: string | null
+          prospect_id?: string | null
+          source?: string
+          start_time: string
+          status?: string
+          title: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          end_time?: string
+          google_event_id?: string | null
+          id?: string
+          is_test_data?: boolean
+          meeting_link?: string | null
+          operation?: string | null
+          prospect_id?: string | null
+          source?: string
+          start_time?: string
+          status?: string
+          title?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_events_prospect_id_fkey"
+            columns: ["prospect_id"]
+            isOneToOne: false
+            referencedRelation: "prospects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commission_payments: {
+        Row: {
+          amount: number
+          competence_month: string
+          component: string
+          confirmed_by_user_at: string | null
+          created_at: string
+          deal_id: string
+          id: string
+          installment_index: number | null
+          installment_index_key: number | null
+          is_test_data: boolean
+          paid_by_director_at: string | null
+          recipient_user_id: string | null
+          rejected_by_user_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          competence_month: string
+          component: string
+          confirmed_by_user_at?: string | null
+          created_at?: string
+          deal_id: string
+          id?: string
+          installment_index?: number | null
+          installment_index_key?: number | null
+          is_test_data?: boolean
+          paid_by_director_at?: string | null
+          recipient_user_id?: string | null
+          rejected_by_user_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          competence_month?: string
+          component?: string
+          confirmed_by_user_at?: string | null
+          created_at?: string
+          deal_id?: string
+          id?: string
+          installment_index?: number | null
+          installment_index_key?: number | null
+          is_test_data?: boolean
+          paid_by_director_at?: string | null
+          recipient_user_id?: string | null
+          rejected_by_user_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commission_payments_deal_id_fkey"
+            columns: ["deal_id"]
+            isOneToOne: false
+            referencedRelation: "deals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       deals: {
         Row: {
@@ -293,7 +408,15 @@ export type Database = {
           title?: string
           user_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "notifications_deal_id_fkey"
+            columns: ["deal_id"]
+            isOneToOne: false
+            referencedRelation: "deals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       presentations: {
         Row: {
@@ -376,54 +499,266 @@ export type Database = {
         }
         Relationships: []
       }
+      prospect_notes: {
+        Row: {
+          created_at: string
+          id: string
+          note_text: string
+          prospect_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          note_text: string
+          prospect_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          note_text?: string
+          prospect_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prospect_notes_prospect_id_fkey"
+            columns: ["prospect_id"]
+            isOneToOne: false
+            referencedRelation: "prospects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prospects: {
+        Row: {
+          company: string
+          company_email: string | null
+          company_phone: string | null
+          contact_email: string | null
+          contact_name: string
+          contact_phone: string | null
+          created_at: string
+          has_scheduled_meeting: boolean | null
+          id: string
+          is_test_data: boolean
+          linkedin_url: string | null
+          owner_id: string
+          qualification_notes: string | null
+          role: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          company: string
+          company_email?: string | null
+          company_phone?: string | null
+          contact_email?: string | null
+          contact_name: string
+          contact_phone?: string | null
+          created_at?: string
+          has_scheduled_meeting?: boolean | null
+          id?: string
+          is_test_data?: boolean
+          linkedin_url?: string | null
+          owner_id: string
+          qualification_notes?: string | null
+          role?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          company?: string
+          company_email?: string | null
+          company_phone?: string | null
+          contact_email?: string | null
+          contact_name?: string
+          contact_phone?: string | null
+          created_at?: string
+          has_scheduled_meeting?: boolean | null
+          id?: string
+          is_test_data?: boolean
+          linkedin_url?: string | null
+          owner_id?: string
+          qualification_notes?: string | null
+          role?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       salary_payments: {
         Row: {
           amount: number
+          confirmed_by_user_at: string | null
           created_at: string | null
           expected_payment_date: string
           id: string
           is_paid_by_gestor: boolean | null
+          is_test_data: boolean | null
           payment_date: string | null
           reference_month: string
+          rejected_by_user_at: string | null
           user_confirmed_receipt: boolean | null
           user_id: string
         }
         Insert: {
           amount: number
+          confirmed_by_user_at?: string | null
           created_at?: string | null
           expected_payment_date: string
           id?: string
           is_paid_by_gestor?: boolean | null
+          is_test_data?: boolean | null
           payment_date?: string | null
           reference_month: string
+          rejected_by_user_at?: string | null
           user_confirmed_receipt?: boolean | null
           user_id: string
         }
         Update: {
           amount?: number
+          confirmed_by_user_at?: string | null
           created_at?: string | null
           expected_payment_date?: string
           id?: string
           is_paid_by_gestor?: boolean | null
+          is_test_data?: boolean | null
           payment_date?: string | null
           reference_month?: string
+          rejected_by_user_at?: string | null
           user_confirmed_receipt?: boolean | null
           user_id?: string
         }
         Relationships: []
       }
+      user_invitations: {
+        Row: {
+          accepted_at: string | null
+          accepted_by: string | null
+          commission_percent: number | null
+          created_at: string
+          email: string
+          fixed_salary: number | null
+          id: string
+          invited_by: string | null
+          is_test_data: boolean
+          position: string | null
+          role: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          commission_percent?: number | null
+          created_at?: string
+          email: string
+          fixed_salary?: number | null
+          id?: string
+          invited_by?: string | null
+          is_test_data?: boolean
+          position?: string | null
+          role?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          commission_percent?: number | null
+          created_at?: string
+          email?: string
+          fixed_salary?: number | null
+          id?: string
+          invited_by?: string | null
+          is_test_data?: boolean
+          position?: string | null
+          role?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
-      [_ in never]: never
+      admin_calendar_status: {
+        Row: {
+          google_email: string | null
+          id: string | null
+          sync_enabled: boolean | null
+          updated_at: string | null
+        }
+        Insert: {
+          google_email?: string | null
+          id?: string | null
+          sync_enabled?: boolean | null
+          updated_at?: string | null
+        }
+        Update: {
+          google_email?: string | null
+          id?: string | null
+          sync_enabled?: boolean | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       calculate_commission_date: {
         Args: { payment_date: string }
         Returns: string
       }
+      can_select_deal: {
+        Args: { _deal_user_id: string; _is_test_data: boolean }
+        Returns: boolean
+      }
+      can_write_deal: {
+        Args: { _deal_user_id: string; _is_test_data: boolean }
+        Returns: boolean
+      }
+      current_profile_matches_env: {
+        Args: { _is_test_data: boolean }
+        Returns: boolean
+      }
+      current_profile_position: { Args: never; Returns: string }
+      current_user_is_director_for_env: {
+        Args: { _is_test_data: boolean }
+        Returns: boolean
+      }
+      deal_user_is_executivo_for_env: {
+        Args: { _is_test_data: boolean; _user_id: string }
+        Returns: boolean
+      }
       get_user_role: { Args: { user_id_param: string }; Returns: string }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       is_gestor: { Args: { _user_id: string }; Returns: boolean }
+      profile_has_position_for_env: {
+        Args: { _is_test_data: boolean; _position: string; _user_id: string }
+        Returns: boolean
+      }
+      profile_has_role_for_env: {
+        Args: { _is_test_data: boolean; _role: string; _user_id: string }
+        Returns: boolean
+      }
+      profile_is_director_for_env: {
+        Args: { _is_test_data: boolean; _user_id: string }
+        Returns: boolean
+      }
+      profile_is_executivo_for_env: {
+        Args: { _is_test_data: boolean; _user_id: string }
+        Returns: boolean
+      }
+      profile_is_operational_for_env: {
+        Args: { _is_test_data: boolean; _user_id: string }
+        Returns: boolean
+      }
+      profile_is_platform_admin_for_env: {
+        Args: { _is_test_data: boolean; _user_id: string }
+        Returns: boolean
+      }
+      profile_matches_env: {
+        Args: { _is_test_data: boolean; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
