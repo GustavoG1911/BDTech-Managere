@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,6 +58,7 @@ function isProfileComplete(profile: any, role: string) {
 }
 
 function hasCompletedOnboarding(profile: any, role: string) {
+  if (!("onboarding_completed_at" in (profile || {}))) return true;
   return isProfileComplete(profile, role) && Boolean(profile?.onboarding_completed_at);
 }
 
@@ -112,41 +113,69 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
   };
 
   const checkProfile = async () => {
-    const { data, error } = await (supabase as any)
-      .from("profiles")
-      .select("full_name, display_name, role, position, job_title, fixed_salary, commission_percent, onboarding_completed_at")
-      .eq("user_id", user!.id)
-      .maybeSingle();
+    try {
+      let { data, error } = await (supabase as any)
+        .from("profiles")
+        .select("full_name, display_name, role, position, job_title, fixed_salary, commission_percent, onboarding_completed_at")
+        .eq("user_id", user!.id)
+        .maybeSingle();
 
-    if (error) {
-      console.error("[Onboarding] Erro ao verificar perfil:", error.message);
-      return;
-    }
+      if (error && error.message?.toLowerCase().includes("onboarding_completed_at")) {
+        const fallback = await (supabase as any)
+          .from("profiles")
+          .select("full_name, display_name, role, position, job_title, fixed_salary, commission_percent")
+          .eq("user_id", user!.id)
+          .maybeSingle();
+        data = fallback.data;
+        error = fallback.error;
+      }
 
-    if (data) {
-      hydrateForm(data);
-      if (!hasCompletedOnboarding(data, data.role || role)) {
+      if (error) {
+        console.error("[Onboarding] Erro ao verificar perfil:", error.message);
+        return;
+      }
+
+      if (data) {
+        hydrateForm(data);
+        if (!hasCompletedOnboarding(data, data.role || role)) {
+          setStep(0);
+          setIsForced(true);
+          setOpen(true);
+        }
+      } else {
+        hydrateForm(null);
         setStep(0);
         setIsForced(true);
         setOpen(true);
       }
-    } else {
-      hydrateForm(null);
-      setStep(0);
-      setIsForced(true);
-      setOpen(true);
+    } catch (err) {
+      console.error("[Onboarding] Falha inesperada ao verificar perfil:", err);
     }
   };
 
   const loadProfile = async () => {
     if (!user) return;
-    const { data } = await (supabase as any)
-      .from("profiles")
-      .select("full_name, display_name, role, position, job_title, fixed_salary, commission_percent, onboarding_completed_at")
-      .eq("user_id", user.id)
-      .maybeSingle();
+    try {
+      const result = await (supabase as any)
+        .from("profiles")
+        .select("full_name, display_name, role, position, job_title, fixed_salary, commission_percent, onboarding_completed_at")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      let data = result.data;
 
-    hydrateForm(data);
+      if (result.error && result.error.message?.toLowerCase().includes("onboarding_completed_at")) {
+        const fallback = await (supabase as any)
+          .from("profiles")
+          .select("full_name, display_name, role, position, job_title, fixed_salary, commission_percent")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        data = fallback.data;
+      }
+
+      hydrateForm(data);
+    } catch (err) {
+      console.error("[Onboarding] Falha inesperada ao carregar perfil:", err);
+    }
   };
 
   const handleSave = async () => {
@@ -162,7 +191,7 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
     const completedAt = hasRequiredProfileData ? new Date().toISOString() : null;
 
     setSaving(true);
-    const { error: profileError } = await (supabase as any)
+    let { error: profileError } = await (supabase as any)
       .from("profiles")
       .upsert(
         {
@@ -173,6 +202,20 @@ export function OnboardingModal({ forceOpen, onClose }: OnboardingModalProps) {
         },
         { onConflict: "user_id" }
       );
+
+    if (profileError && profileError.message?.toLowerCase().includes("onboarding_completed_at")) {
+      const fallback = await (supabase as any)
+        .from("profiles")
+        .upsert(
+          {
+            user_id: user.id,
+            full_name: form.full_name.trim(),
+            display_name: displayName,
+          },
+          { onConflict: "user_id" }
+        );
+      profileError = fallback.error;
+    }
 
     if (profileError) {
       setSaving(false);
