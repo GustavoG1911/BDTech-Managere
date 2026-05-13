@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { isOperationalPosition } from "@/lib/roles";
@@ -32,8 +32,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole>("user");
   const [position, setPosition] = useState<string>("");
+  const profileTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  const fetchRole = async (userId: string) => {
+  const fetchRole = useCallback(async (userId: string) => {
     try {
       // Tenta buscar o perfil do usuário
       const { data: profile, error } = await supabase
@@ -60,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     // Safety Force - Libera em no máximo 4 segundos
@@ -92,7 +93,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       subscription.unsubscribe();
       clearTimeout(safety);
     };
-  }, []);
+  }, [fetchRole]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId) return;
+
+    const channel = supabase
+      .channel(`auth-profile-${userId.slice(0, 8)}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `user_id=eq.${userId}` },
+        () => {
+          clearTimeout(profileTimer.current);
+          profileTimer.current = setTimeout(() => fetchRole(userId), 300);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      clearTimeout(profileTimer.current);
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id, fetchRole]);
 
   const signOut = async () => {
     setLoading(true);

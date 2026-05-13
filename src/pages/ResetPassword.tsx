@@ -12,11 +12,12 @@ export default function ResetPassword() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const isInvite = window.location.search.includes("invite=1") || window.location.hash.includes("type=invite");
 
   useEffect(() => {
     // Check for recovery token in URL
     const hash = window.location.hash;
-    if (hash && hash.includes("type=recovery")) {
+    if (hash && (hash.includes("type=recovery") || hash.includes("type=invite"))) {
       // Supabase handles the session automatically
     }
   }, []);
@@ -41,12 +42,12 @@ export default function ResetPassword() {
           <div className="h-10 w-10 rounded-lg bg-primary flex items-center justify-center">
             <DollarSign className="h-5 w-5 text-primary-foreground" />
           </div>
-          <h1 className="text-xl font-bold tracking-tight">Redefinir Senha</h1>
+          <h1 className="text-xl font-bold tracking-tight">{isInvite ? "Criar Senha" : "Redefinir Senha"}</h1>
         </div>
 
         <Card className="glass-card">
           <CardHeader className="pb-4">
-            <CardTitle className="text-center text-base">Nova senha</CardTitle>
+            <CardTitle className="text-center text-base">{isInvite ? "Defina sua senha" : "Nova senha"}</CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleReset} className="space-y-3">

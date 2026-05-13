@@ -102,17 +102,19 @@ export function NotificationBell() {
                     <p className="text-[10px] text-muted-foreground/50 mt-1">
                       {formatTime(n.createdAt)}
                     </p>
-                    <div className="flex gap-2 mt-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 text-[10px] px-2 border-border/50 hover:border-primary/50 hover:text-primary"
-                        onClick={() => handleViewDetails(n.id, n.dealId)}
-                      >
-                        <ExternalLink className="h-3 w-3 mr-1" />
-                        {n.dealId ? "Ver e Confirmar" : "Ver Detalhes"}
-                      </Button>
-                    </div>
+                    {n.dealId && (
+                      <div className="flex gap-2 mt-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-[10px] px-2 border-border/50 hover:border-primary/50 hover:text-primary"
+                          onClick={() => handleViewDetails(n.id, n.dealId)}
+                        >
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          Ver e Confirmar
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

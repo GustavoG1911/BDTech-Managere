@@ -20,6 +20,7 @@ import {
   ImageIcon,
   Upload,
   CheckCircle2,
+  Trash2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -299,9 +300,13 @@ function ProfileTab() {
 function InvitesTab() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [deletingInviteId, setDeletingInviteId] = useState<string | null>(null);
   const [invites, setInvites] = useState<InviteRow[]>([]);
   const [form, setForm] = useState({
     email: "",
+    position: "",
+    fixed_salary: 0,
+    commission_percent: 20,
   });
 
   const loadInvites = async () => {
@@ -327,48 +332,59 @@ function InvitesTab() {
 
   const handleInvite = async () => {
     const email = form.email.trim().toLowerCase();
+    if (!isOperationalPosition(form.position)) {
+      toast.error("Escolha o cargo do convite.");
+      return;
+    }
+    if (form.fixed_salary < 0 || form.commission_percent < 0 || form.commission_percent > 100) {
+      toast.error("Revise salário e comissão antes de enviar.");
+      return;
+    }
     if (!email || !email.includes("@")) {
       toast.error("Informe um e-mail válido.");
       return;
     }
     setSending(true);
-    const { user, isTestEnv } = await getCurrentUserContext();
-
-    const { error } = await (supabase as any)
-      .from("user_invitations")
-      .insert({
-        email,
-        position: null,
-        role: "user",
-        fixed_salary: null,
-        commission_percent: null,
-        invited_by: user?.id,
-        is_test_data: isTestEnv,
-      });
-
-    if (error) {
-      setSending(false);
-      toast.error("Erro ao salvar convite: " + error.message);
-      return;
-    }
-
     const { error: functionError } = await supabase.functions.invoke("invite-user", {
       body: {
         email,
-        redirectTo: window.location.origin,
+        position: form.position,
+        fixedSalary: form.fixed_salary,
+        commissionPercent: form.commission_percent,
+        redirectTo: `${window.location.origin}/reset-password?invite=1`,
       },
     });
 
     setSending(false);
-    setForm({ email: "" });
-    await loadInvites();
 
     if (functionError) {
-      toast.warning("Convite salvo. Falta publicar a função invite-user para o e-mail sair automaticamente.");
+      toast.error("Erro ao enviar convite: " + functionError.message);
       return;
     }
 
+    setForm({ email: "", position: "", fixed_salary: 0, commission_percent: 20 });
+    await loadInvites();
     toast.success("Convite enviado com sucesso!");
+  };
+
+  const handleDeleteInvite = async (invite: InviteRow) => {
+    const confirmed = window.confirm(`Excluir o convite enviado para ${invite.email}?`);
+    if (!confirmed) return;
+
+    setDeletingInviteId(invite.id);
+    const { error } = await (supabase as any)
+      .from("user_invitations")
+      .delete()
+      .eq("id", invite.id);
+    setDeletingInviteId(null);
+
+    if (error) {
+      toast.error("Erro ao excluir convite: " + error.message);
+      return;
+    }
+
+    setInvites((prev) => prev.filter((item) => item.id !== invite.id));
+    toast.success("Convite excluido.");
   };
 
   return (
@@ -381,12 +397,12 @@ function InvitesTab() {
           <div>
             <p className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Novo Convite</p>
             <p className="text-xs text-muted-foreground/70 mt-0.5">
-              O Diretor configura cargo, salário e comissão na gestão de equipe após o cadastro.
+              O convite já define cargo, salário e comissão. A permissão de sistema entra como user.
             </p>
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_120px_auto] pt-4">
+        <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_110px_100px_90px_90px] pt-4">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground uppercase tracking-wide">E-mail</Label>
             <Input
@@ -395,6 +411,46 @@ function InvitesTab() {
               onChange={(e) => setForm({ ...form, email: e.target.value })}
               placeholder="usuario@empresa.com"
               className="bg-muted/30 border-border/50"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Cargo</Label>
+            <Select
+              value={form.position}
+              onValueChange={(val) => setForm({ ...form, position: val })}
+            >
+              <SelectTrigger className="bg-muted/30 border-border/50">
+                <SelectValue placeholder="Selecione" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="SDR">SDR</SelectItem>
+                <SelectItem value="Executivo de Negócios">Executivo de Negócios</SelectItem>
+                <SelectItem value="Diretor">Diretor</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Salário</Label>
+            <Input
+              type="number"
+              min="0"
+              value={form.fixed_salary}
+              onChange={(e) => setForm({ ...form, fixed_salary: Number(e.target.value || 0) })}
+              className="bg-muted/30 border-border/50 font-mono"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Comissão</Label>
+            <Input
+              type="number"
+              min="0"
+              max="100"
+              value={form.commission_percent}
+              onChange={(e) => setForm({ ...form, commission_percent: Math.round(Number(e.target.value || 0)) })}
+              className="bg-muted/30 border-border/50 font-mono"
             />
           </div>
 
@@ -430,9 +486,11 @@ function InvitesTab() {
               <TableRow className="border-border/30 hover:bg-transparent">
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">E-mail</TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Cargo</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Salário</TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Permissão</TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Comissão</TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Status</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Ação</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -440,6 +498,9 @@ function InvitesTab() {
                 <TableRow key={invite.id} className="border-border/25 hover:bg-[#242842]/40">
                   <TableCell className="px-4 py-3 text-sm font-medium">{invite.email}</TableCell>
                   <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.position || "A configurar"}</TableCell>
+                  <TableCell className="px-4 py-3 text-xs font-mono">
+                    {invite.fixed_salary == null ? "-" : Number(invite.fixed_salary).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  </TableCell>
                   <TableCell className="px-4 py-3 text-xs text-muted-foreground">{invite.role}</TableCell>
                   <TableCell className="px-4 py-3 text-xs font-mono">
                     {invite.commission_percent == null ? "-" : `${Number(invite.commission_percent)}%`}
@@ -449,11 +510,28 @@ function InvitesTab() {
                       {invite.status === "accepted" ? "Aceito" : "Pendente"}
                     </Badge>
                   </TableCell>
+                  <TableCell className="px-4 py-3 text-right">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      title="Excluir convite"
+                      disabled={deletingInviteId === invite.id}
+                      onClick={() => handleDeleteInvite(invite)}
+                    >
+                      {deletingInviteId === invite.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
               {invites.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-10">
+                  <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-10">
                     Nenhum convite encontrado.
                   </TableCell>
                 </TableRow>
@@ -467,11 +545,13 @@ function InvitesTab() {
 }
 
 function TeamTab() {
+  const { user } = useAuth();
   const [profiles, setProfiles] = useState<any[]>([]);
   const [salaryBaseline, setSalaryBaseline] = useState<Record<string, number>>({});
   const [salaryEffectiveMode, setSalaryEffectiveMode] = useState<Record<string, "current" | "next" | "custom">>({});
   const [salaryCustomMonth, setSalaryCustomMonth] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const currentSalaryMonth = getMonthKey(new Date());
   const nextSalaryMonth = getMonthKey(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1));
   const salaryMonthOptions = useMemo(() => {
@@ -727,6 +807,31 @@ function TeamTab() {
     setProfiles((prev) => prev.map((p) => (p.user_id === userId ? { ...p, ...updatePayload } : p)));
   };
 
+  const handleDeleteUser = async (profile: any) => {
+    if (profile.user_id === user?.id) {
+      toast.error("Voce nao pode excluir seu proprio usuario.");
+      return;
+    }
+
+    const label = profile.full_name || profile.display_name || profile.job_title || "este usuario";
+    const confirmed = window.confirm(`Excluir ${label}? Esta acao remove o acesso e os dados vinculados a este usuario.`);
+    if (!confirmed) return;
+
+    setDeletingUserId(profile.user_id);
+    const { error } = await supabase.functions.invoke("delete-user", {
+      body: { userId: profile.user_id },
+    });
+    setDeletingUserId(null);
+
+    if (error) {
+      toast.error("Erro ao excluir usuario: " + error.message);
+      return;
+    }
+
+    setProfiles((prev) => prev.filter((p) => p.user_id !== profile.user_id));
+    toast.success("Usuario excluido.");
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-10">
@@ -862,23 +967,40 @@ function TeamTab() {
                 </Badge>
               </TableCell>
               <TableCell className="px-4 py-3 text-right">
-                {adminProfile || approvalState.approved ? (
-                  <Button disabled variant="outline" size="sm" className="h-8 text-xs">
-                    {approvalState.buttonLabel}
-                  </Button>
-                ) : (
+                <div className="flex items-center justify-end gap-2">
+                  {adminProfile || approvalState.approved ? (
+                    <Button disabled variant="outline" size="sm" className="h-8 text-xs">
+                      {approvalState.buttonLabel}
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!approvalState.ready}
+                      title={approvalState.disabledReason || undefined}
+                      onClick={() => handleApproveUser(p)}
+                      className="h-8 text-xs gap-1.5"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      {approvalState.buttonLabel}
+                    </Button>
+                  )}
                   <Button
                     type="button"
-                    size="sm"
-                    disabled={!approvalState.ready}
-                    title={approvalState.disabledReason || undefined}
-                    onClick={() => handleApproveUser(p)}
-                    className="h-8 text-xs gap-1.5"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                    title={p.user_id === user?.id ? "Voce nao pode excluir seu proprio usuario" : "Excluir usuario"}
+                    disabled={p.user_id === user?.id || deletingUserId === p.user_id}
+                    onClick={() => handleDeleteUser(p)}
                   >
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    {approvalState.buttonLabel}
+                    {deletingUserId === p.user_id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
                   </Button>
-                )}
+                </div>
               </TableCell>
             </TableRow>
             );

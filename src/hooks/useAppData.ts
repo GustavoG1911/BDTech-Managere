@@ -67,9 +67,28 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
     }
   }, [role, userId, position]);
 
+  const silentRefreshSettings = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const [commRate, fixedSalary] = await Promise.all([
+        fetchUserCommissionRate(userId),
+        fetchUserFixedSalary(userId),
+      ]);
+      setSettings((prev) => {
+        const next = { ...prev };
+        if (commRate !== null) next.commissionRate = commRate;
+        if (fixedSalary !== null) next.fixedSalary = fixedSalary;
+        return next;
+      });
+    } catch (err: unknown) {
+      console.error("[Realtime] settings refresh error:", err instanceof Error ? err.message : err);
+    }
+  }, [userId]);
+
   // ─── Timers de debounce para não refazer fetch a cada evento ─────────────
   const dealsTimer = useRef<ReturnType<typeof setTimeout>>();
   const presTimer = useRef<ReturnType<typeof setTimeout>>();
+  const settingsTimer = useRef<ReturnType<typeof setTimeout>>();
 
   // ─── Supabase Realtime — sincronização multi-usuário ─────────────────────
   useEffect(() => {
@@ -96,6 +115,14 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
           presTimer.current = setTimeout(silentRefreshPresentations, 400);
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `user_id=eq.${userId}` },
+        () => {
+          clearTimeout(settingsTimer.current);
+          settingsTimer.current = setTimeout(silentRefreshSettings, 400);
+        }
+      )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
           isRealtimeActive = true;
@@ -111,16 +138,18 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
       if (!isRealtimeActive) {
         silentRefreshDeals();
         silentRefreshPresentations();
+        silentRefreshSettings();
       }
     }, 30_000);
 
     return () => {
       clearTimeout(dealsTimer.current);
       clearTimeout(presTimer.current);
+      clearTimeout(settingsTimer.current);
       clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
-  }, [userId, silentRefreshDeals, silentRefreshPresentations]);
+  }, [userId, silentRefreshDeals, silentRefreshPresentations, silentRefreshSettings]);
 
   // ─── Mutações ─────────────────────────────────────────────────────────────
   const addOrUpdateDeal = useCallback(async (deal: Deal) => {

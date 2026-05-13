@@ -76,6 +76,9 @@ const App = () => {
               <Routes>
                 <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
                 <Route path="/auth" element={<PublicRoute><Auth /></PublicRoute>} />
+                <Route path="/auth/callback" element={<PublicRoute><Auth /></PublicRoute>} />
+                <Route path="/invite" element={<PublicRoute><Auth /></PublicRoute>} />
+                <Route path="/accept-invite" element={<PublicRoute><Auth /></PublicRoute>} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
                 <Route path="/financeiro" element={<ProtectedRoute><Financeiro /></ProtectedRoute>} />
