@@ -16,12 +16,15 @@ import {
   Loader2,
   SlidersHorizontal,
   MailPlus,
+  Mail,
   Send,
   ImageIcon,
   Upload,
   CheckCircle2,
   Trash2,
   X,
+  CalendarDays,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsPanel } from "@/components/SettingsPanel";
@@ -31,6 +34,7 @@ import { useAppLogo } from "@/hooks/useAppLogo";
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 import { getCurrentUserContext } from "@/lib/supabase-env";
 import { formatMonthLabel, getMonthKey } from "@/lib/commission";
+import { fetchAdminCalendarStatus, startGoogleCalendarConnection, syncGoogleCalendar } from "@/lib/google-calendar";
 
 type InviteRow = {
   id: string;
@@ -50,6 +54,8 @@ export default function Settings() {
   const pureAdmin = isPureSystemAdmin(role, position);
   const isDirector = position === "Diretor";
   const canManageUsers = isDirector || pureAdmin;
+  const requestedTab = new URLSearchParams(window.location.search).get("tab");
+  const defaultTab = requestedTab === "calendar" && pureAdmin ? "calendar" : pureAdmin ? "team" : "profile";
 
   if (authLoading) {
     return (
@@ -68,7 +74,7 @@ export default function Settings() {
         </p>
       </div>
 
-      <Tabs defaultValue={pureAdmin ? "team" : "profile"}>
+      <Tabs defaultValue={defaultTab}>
         <TabsList className="h-9 mb-6 bg-muted/40 border border-border/40">
           <TabsTrigger value="profile" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
             <User className="h-3.5 w-3.5" />
@@ -90,6 +96,12 @@ export default function Settings() {
             <TabsTrigger value="team" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <Users className="h-3.5 w-3.5" />
               Gestão de Equipe
+            </TabsTrigger>
+          )}
+          {pureAdmin && (
+            <TabsTrigger value="calendar" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
+              <CalendarDays className="h-3.5 w-3.5" />
+              Calendario
             </TabsTrigger>
           )}
           {pureAdmin && (
@@ -123,11 +135,142 @@ export default function Settings() {
           </TabsContent>
         )}
         {pureAdmin && (
+          <TabsContent value="calendar">
+            <AdminCalendarTab />
+          </TabsContent>
+        )}
+        {pureAdmin && (
           <TabsContent value="appearance">
             <AppearanceTab />
           </TabsContent>
         )}
       </Tabs>
+    </div>
+  );
+}
+
+function AdminCalendarTab() {
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [syncEnabled, setSyncEnabled] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+
+  const loadStatus = async () => {
+    setLoading(true);
+    try {
+      const status = await fetchAdminCalendarStatus();
+      setGoogleEmail(status?.google_email ?? null);
+      setSyncEnabled(Boolean(status?.sync_enabled));
+      setUpdatedAt(status?.updated_at ?? null);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error("Erro ao carregar calendario: " + msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadStatus();
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("google_connected") === "1") {
+      toast.success("Conta Google conectada com sucesso!");
+      window.history.replaceState({}, "", "/settings?tab=calendar");
+    } else if (params.get("google_error")) {
+      toast.error("Erro ao conectar conta Google. Tente novamente.");
+      window.history.replaceState({}, "", "/settings?tab=calendar");
+    }
+  }, []);
+
+  const handleConnect = async () => {
+    setConnecting(true);
+    try {
+      await startGoogleCalendarConnection("/settings?tab=calendar");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Erro ao iniciar conexao";
+      toast.error(msg);
+      setConnecting(false);
+    }
+  };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const result = await syncGoogleCalendar();
+      await loadStatus();
+      toast.success(`Calendario sincronizado: ${result.created} novo(s), ${result.updated} atualizado(s).`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Erro ao sincronizar";
+      toast.error(msg);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl bg-card rounded-xl border border-border/60 p-5 space-y-5">
+      <div className="flex items-center gap-2 pb-4 border-b border-border/40">
+        <div className="h-8 w-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
+          <CalendarDays className="h-4 w-4 text-primary" />
+        </div>
+        <div>
+          <p className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Calendario central</p>
+          <p className="text-xs text-muted-foreground/70 mt-0.5">
+            O admin conecta a conta padrao. Todos os usuarios veem e sincronizam a mesma agenda.
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Carregando configuracao...
+        </div>
+      ) : (
+        <>
+          <div className="rounded-lg border border-border/50 bg-muted/20 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">Conta base do calendario</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {syncEnabled && googleEmail ? googleEmail : "Nenhuma conta conectada"}
+                </p>
+              </div>
+              {syncEnabled ? (
+                <Badge className="text-xs bg-emerald-500/15 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/15">Ativo</Badge>
+              ) : (
+                <Badge variant="secondary" className="text-xs">Nao configurado</Badge>
+              )}
+            </div>
+
+            {updatedAt && (
+              <p className="text-xs text-muted-foreground">
+                Ultima atualizacao da configuracao: {new Date(updatedAt).toLocaleString("pt-BR")}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button onClick={handleConnect} disabled={connecting} className="sm:w-auto">
+              {connecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}
+              {syncEnabled ? "Trocar conta Google" : "Conectar conta Google"}
+            </Button>
+            <Button variant="outline" onClick={handleSync} disabled={!syncEnabled || syncing}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Sincronizando..." : "Sincronizar agora"}
+            </Button>
+          </div>
+
+          <div className="rounded-lg border border-border/50 bg-muted/20 p-4 text-xs text-muted-foreground space-y-2">
+            <p className="font-medium text-foreground">Como fica para o time</p>
+            <p>Todos veem os eventos importados dessa mesma conta central na pagina Agenda.</p>
+            <p>Qualquer usuario pode apertar sincronizar manualmente na Agenda; isso atualiza os eventos existentes pelo ID do Google e evita duplicidade.</p>
+          </div>
+        </>
+      )}
     </div>
   );
 }

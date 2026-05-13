@@ -40,6 +40,22 @@ serve(async (req) => {
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID");
     if (!clientId) throw new Error("GOOGLE_CLIENT_ID não configurado.");
 
+    const sanitizeReturnTo = (value: unknown) => {
+      if (typeof value !== "string") return "/agenda";
+      if (!value.startsWith("/") || value.startsWith("//")) return "/agenda";
+      return value;
+    };
+
+    let returnTo = "/agenda";
+    if (req.method !== "GET") {
+      try {
+        const body = await req.json();
+        returnTo = sanitizeReturnTo(body?.returnTo);
+      } catch {
+        returnTo = "/agenda";
+      }
+    }
+
     // Verify caller is authenticated
     const token = req.headers.get("Authorization")?.replace("Bearer ", "");
     if (!token) return new Response(JSON.stringify({ error: "Não autenticado." }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -58,7 +74,7 @@ serve(async (req) => {
     const callbackUrl = `${supabaseUrl}/functions/v1/google-oauth-callback`;
 
     // State encodes adminSetup flag so callback knows to save to admin_calendar_config
-    const payload = JSON.stringify({ userId: user.id, adminSetup: true, ts: Date.now() });
+    const payload = JSON.stringify({ userId: user.id, adminSetup: true, returnTo, ts: Date.now() });
     const state = await signState(payload, Deno.env.get("GOOGLE_OAUTH_STATE_SECRET") ?? serviceRoleKey);
 
     const params = new URLSearchParams({

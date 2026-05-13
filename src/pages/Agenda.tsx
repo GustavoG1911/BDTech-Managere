@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { fetchCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
+import { fetchAdminCalendarStatus, startGoogleCalendarConnection } from "@/lib/google-calendar";
 import { supabase } from "@/integrations/supabase/client";
 import { CalendarEvent, CalendarEventStatus } from "@/lib/types";
 
@@ -70,10 +71,7 @@ export default function Agenda() {
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
-      const { data } = await (supabase as any)
-        .from("admin_calendar_status")
-        .select("sync_enabled, google_email")
-        .single();
+      const data = await fetchAdminCalendarStatus();
       if (data?.sync_enabled) {
         setGoogleConnected(true);
         setGoogleEmail(data.google_email ?? null);
@@ -94,14 +92,7 @@ export default function Agenda() {
   const handleConnectGoogle = async () => {
     setIsConnecting(true);
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-oauth-initiate`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      const { url, error } = await res.json();
-      if (error) throw new Error(error);
-      window.location.href = url;
+      await startGoogleCalendarConnection("/agenda");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao iniciar conexão";
       toast.error(msg);
@@ -129,13 +120,13 @@ export default function Agenda() {
     }
   }, [queryClient]);
 
-  // Auto-sync on page mount and every 15 minutes when admin calendar is connected
+  // Auto-sync on page mount and every 15 minutes when the centralized calendar is connected
   useEffect(() => {
-    if (!googleConnected || !isAdmin) return;
+    if (!googleConnected) return;
     handleSyncNow(true);
     const interval = setInterval(() => handleSyncNow(true), 15 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [googleConnected, handleSyncNow, isAdmin]);
+  }, [googleConnected, handleSyncNow]);
 
   const { data: events, isLoading } = useQuery({
     queryKey: ["calendar-events"],
@@ -237,7 +228,7 @@ export default function Agenda() {
       <div className="flex items-center justify-between space-y-2">
         <h2 className="text-3xl font-bold tracking-tight">Agenda de Reuniões</h2>
         <div className="flex gap-2">
-          {isAdmin && googleConnected && (
+          {googleConnected && (
             <Button variant="ghost" size="icon" onClick={() => handleSyncNow(false)} disabled={isSyncing} title="Sincronizar Google Calendar">
               <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />
             </Button>

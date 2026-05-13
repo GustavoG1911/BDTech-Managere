@@ -21,9 +21,25 @@ async function verifyState(state: string, secret: string) {
   const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signature = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
   if (base64Url(new Uint8Array(signature)) !== signaturePart) throw new Error("Assinatura OAuth inválida.");
-  const parsed = JSON.parse(payload) as { userId: string; adminSetup?: boolean; ts?: number };
+  const parsed = JSON.parse(payload) as { userId: string; adminSetup?: boolean; returnTo?: string; ts?: number };
   if (!parsed.ts || Date.now() - parsed.ts > 10 * 60 * 1000) throw new Error("Estado OAuth expirado.");
   return parsed;
+}
+
+function appendQuery(path: string, key: string, value: string) {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function sanitizeReturnTo(value?: string) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/agenda";
+  return value;
+}
+
+function calendarConfigId(isTestEnv: boolean) {
+  return isTestEnv
+    ? "00000000-0000-0000-0000-000000000002"
+    : "00000000-0000-0000-0000-000000000001";
 }
 
 serve(async (req) => {
@@ -43,10 +59,12 @@ serve(async (req) => {
     const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
     const clientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET")!;
 
-    const { userId } = await verifyState(state, Deno.env.get("GOOGLE_OAUTH_STATE_SECRET") ?? serviceRoleKey);
+    const { userId, returnTo } = await verifyState(state, Deno.env.get("GOOGLE_OAUTH_STATE_SECRET") ?? serviceRoleKey);
+    const safeReturnTo = sanitizeReturnTo(returnTo);
     const supabase = createClient(supabaseUrl, serviceRoleKey);
-    const { data: profile } = await supabase.from("profiles").select("role").eq("user_id", userId).single();
+    const { data: profile } = await supabase.from("profiles").select("role, is_test_data").eq("user_id", userId).single();
     if (profile?.role !== "admin") throw new Error("Apenas admin pode conectar Google Calendar.");
+    const isTestEnv = Boolean(profile?.is_test_data);
 
     const callbackUrl = `${supabaseUrl}/functions/v1/google-oauth-callback`;
 
@@ -69,7 +87,9 @@ serve(async (req) => {
 
     // Save into the single centralized admin_calendar_config row (fixed UUID for upsert)
     await supabase.from("admin_calendar_config").upsert({
-      id: "00000000-0000-0000-0000-000000000001",
+      id: calendarConfigId(isTestEnv),
+      connected_by_user_id: userId,
+      is_test_data: isTestEnv,
       google_refresh_token: tokens.refresh_token,
       google_access_token: tokens.access_token,
       google_token_expiry: expiry,
@@ -78,10 +98,17 @@ serve(async (req) => {
       updated_at: new Date().toISOString(),
     });
 
-    return redirect("/agenda?google_connected=1");
+    return redirect(appendQuery(safeReturnTo, "google_connected", "1"));
 
   } catch (err) {
     console.error("[google-oauth-callback]", err);
-    return redirect("/agenda?google_error=callback_failed");
+    let fallback = "/agenda";
+    try {
+      const parsed = await verifyState(state, Deno.env.get("GOOGLE_OAUTH_STATE_SECRET") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      fallback = sanitizeReturnTo(parsed.returnTo);
+    } catch {
+      fallback = "/agenda";
+    }
+    return redirect(appendQuery(fallback, "google_error", "callback_failed"));
   }
 });

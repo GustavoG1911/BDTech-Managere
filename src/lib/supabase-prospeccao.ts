@@ -2,6 +2,22 @@ import { supabase } from "@/integrations/supabase/client";
 import { Prospect, ProspectNote, ProspectStatus } from "./types";
 import { getCurrentUserContext } from "./supabase-env";
 
+export type ProspectImportItem = Partial<Prospect> & {
+  importRowNumber: number;
+};
+
+export type ProspectImportError = {
+  rowNumber: number;
+  company?: string;
+  contactName?: string;
+  message: string;
+};
+
+export type ProspectImportReport = {
+  created: Prospect[];
+  errors: ProspectImportError[];
+};
+
 const getIsTestEnv = async () => {
   const { isTestEnv } = await getCurrentUserContext();
   return isTestEnv;
@@ -38,6 +54,68 @@ export const createProspect = async (prospect: Partial<Prospect>): Promise<Prosp
   }
 
   return data as Prospect;
+};
+
+export const bulkCreateProspects = async (prospects: Partial<Prospect>[]): Promise<Prospect[]> => {
+  const isTestEnv = await getIsTestEnv();
+  const rows = prospects.map((prospect) => ({ ...prospect, is_test_data: isTestEnv }));
+  const { data, error } = await (supabase as any)
+    .from("prospects")
+    .insert(rows)
+    .select();
+
+  if (error) {
+    console.error("Error bulk creating prospects:", error);
+    throw error;
+  }
+
+  return (data || []) as Prospect[];
+};
+
+export const importProspectsWithReport = async (prospects: ProspectImportItem[]): Promise<ProspectImportReport> => {
+  const isTestEnv = await getIsTestEnv();
+  const created: Prospect[] = [];
+  const errors: ProspectImportError[] = [];
+
+  for (const item of prospects) {
+    const { importRowNumber, ...prospect } = item;
+    const { data, error } = await (supabase as any)
+      .from("prospects")
+      .insert([{ ...prospect, is_test_data: isTestEnv }])
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error importing prospect row:", error);
+      errors.push({
+        rowNumber: importRowNumber,
+        company: prospect.company,
+        contactName: prospect.contact_name,
+        message: error.message || "Erro ao salvar esta linha.",
+      });
+      continue;
+    }
+
+    created.push(data as Prospect);
+  }
+
+  return { created, errors };
+};
+
+export const deleteProspectsByIds = async (ids: string[]): Promise<void> => {
+  if (!ids.length) return;
+
+  const isTestEnv = await getIsTestEnv();
+  const { error } = await (supabase as any)
+    .from("prospects")
+    .delete()
+    .in("id", ids)
+    .eq("is_test_data", isTestEnv);
+
+  if (error) {
+    console.error("Error deleting imported prospects:", error);
+    throw error;
+  }
 };
 
 export const updateProspectStatus = async (id: string, status: ProspectStatus): Promise<void> => {

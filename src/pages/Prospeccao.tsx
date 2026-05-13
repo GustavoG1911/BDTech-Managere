@@ -1,20 +1,52 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { fetchProspects, createProspect, updateProspect, updateProspectStatus, fetchProspectNotes, createProspectNote } from "@/lib/supabase-prospeccao";
+import {
+  fetchProspects,
+  createProspect,
+  deleteProspectsByIds,
+  importProspectsWithReport,
+  ProspectImportError,
+  ProspectImportItem,
+  ProspectImportReport,
+  updateProspect,
+  updateProspectStatus,
+  fetchProspectNotes,
+  createProspectNote,
+} from "@/lib/supabase-prospeccao";
 import { createCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
 import { CalendarEvent, Prospect, ProspectStatus } from "@/lib/types";
+import {
+  buildProspectFromImportRow,
+  emptyImportMapping,
+  guessProspectImportMapping,
+  IMPORT_FIELDS,
+  ImportFieldMapping,
+  ImportRow,
+  NO_IMPORT_FIELD,
+  normalizeImportKey,
+  parseProspectImportText,
+} from "@/lib/prospect-import";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, MessageSquare, Linkedin, Calendar, Building2, UserCircle2, Settings2, X, GripVertical, Phone, Pencil, ClipboardList, Mail } from "lucide-react";
+import { Plus, MessageSquare, Linkedin, Calendar, Building2, UserCircle2, Settings2, X, GripVertical, Phone, Pencil, ClipboardList, Mail, Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
+
+const buildDuplicateKey = (company?: string | null, contactName?: string | null) =>
+  `${normalizeImportKey(company)}|${normalizeImportKey(contactName)}`;
+
+type ImportUiReport = ProspectImportReport & {
+  skipped: ProspectImportError[];
+};
 
 export default function Prospeccao() {
   const { user, position } = useAuth();
@@ -28,6 +60,17 @@ export default function Prospeccao() {
   const [isSheetEditMode, setIsSheetEditMode] = useState(false);
   const [editFormData, setEditFormData] = useState<Partial<Prospect>>({});
   const [draggedProspectId, setDraggedProspectId] = useState<string | null>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [importFileName, setImportFileName] = useState("");
+  const [importHeaders, setImportHeaders] = useState<string[]>([]);
+  const [importRows, setImportRows] = useState<ImportRow[]>([]);
+  const [fieldMapping, setFieldMapping] = useState<ImportFieldMapping>(() => emptyImportMapping());
+  const [defaultImportStatus, setDefaultImportStatus] = useState("Mapeamento");
+  const [skipImportDuplicates, setSkipImportDuplicates] = useState(true);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importReport, setImportReport] = useState<ImportUiReport | null>(null);
+  const [isRollingBackImport, setIsRollingBackImport] = useState(false);
+  const [importRollbackDone, setImportRollbackDone] = useState(false);
 
   React.useEffect(() => {
     if (selectedProspect) {
@@ -41,6 +84,10 @@ export default function Prospeccao() {
     const saved = localStorage.getItem('prospect_columns');
     return saved ? JSON.parse(saved) : ["Mapeamento", "Em Contato", "Agendado", "Perdido"];
   });
+
+  React.useEffect(() => {
+    setDefaultImportStatus((current) => (columns.includes(current) ? current : columns[0] || "Mapeamento"));
+  }, [columns]);
 
   const saveColumns = (newCols: string[]) => {
     setColumns(newCols);
@@ -88,6 +135,28 @@ export default function Prospeccao() {
     onError: (error: unknown) => {
       const msg = error instanceof Error ? error.message : "Erro desconhecido";
       toast.error(`Erro ao criar lead: ${msg}`);
+    }
+  });
+
+  const importProspectsMutation = useMutation({
+    mutationFn: (items: ProspectImportItem[]) => importProspectsWithReport(items),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["prospects"] });
+    },
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao importar leads: ${msg}`);
+    }
+  });
+
+  const rollbackImportMutation = useMutation({
+    mutationFn: (ids: string[]) => deleteProspectsByIds(ids),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["prospects"] });
+    },
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao apagar importação: ${msg}`);
     }
   });
 
@@ -175,6 +244,181 @@ export default function Prospeccao() {
     });
   };
 
+  const existingProspectKeys = React.useMemo(() => {
+    return new Set((prospects || []).map((prospect) => buildDuplicateKey(prospect.company, prospect.contact_name)));
+  }, [prospects]);
+
+  const importAnalysis = React.useMemo(() => {
+    const seen = new Set<string>();
+    let missingRequired = 0;
+    let duplicates = 0;
+
+    const analyzedRows = importRows.map((row, index) => {
+      const prospect = buildProspectFromImportRow(row, fieldMapping, defaultImportStatus, columns);
+      const key = buildDuplicateKey(prospect.company, prospect.contact_name);
+      const hasRequiredFields = Boolean(prospect.company && prospect.contact_name);
+      const isDuplicate = hasRequiredFields && (existingProspectKeys.has(key) || seen.has(key));
+      const skippedMessage = !hasRequiredFields
+        ? "Faltam empresa ou nome do contato."
+        : isDuplicate
+          ? "Duplicado por empresa + contato."
+          : "";
+
+      if (!hasRequiredFields) {
+        missingRequired += 1;
+      } else {
+        seen.add(key);
+      }
+
+      if (isDuplicate) duplicates += 1;
+
+      return {
+        index,
+        rowNumber: index + 2,
+        prospect: { ...prospect, owner_id: user?.id || "", importRowNumber: index + 2 },
+        hasRequiredFields,
+        isDuplicate,
+        skippedMessage,
+      };
+    });
+
+    const validRows = analyzedRows
+      .filter((row) => row.hasRequiredFields && (!skipImportDuplicates || !row.isDuplicate))
+      .map((row) => row.prospect);
+    const skipped = analyzedRows
+      .filter((row) => !row.hasRequiredFields || (skipImportDuplicates && row.isDuplicate))
+      .map((row) => ({
+        rowNumber: row.rowNumber,
+        company: row.prospect.company,
+        contactName: row.prospect.contact_name,
+        message: row.skippedMessage,
+      }));
+
+    const skippedRows = analyzedRows.length - validRows.length;
+
+    return {
+      rows: analyzedRows,
+      validRows,
+      skipped,
+      missingRequired,
+      duplicates,
+      skippedRows,
+    };
+  }, [columns, defaultImportStatus, existingProspectKeys, fieldMapping, importRows, skipImportDuplicates, user?.id]);
+
+  const isImportMappingReady = fieldMapping.company !== NO_IMPORT_FIELD && fieldMapping.contact_name !== NO_IMPORT_FIELD;
+  const autoDetectedFields = React.useMemo(() => {
+    return IMPORT_FIELDS.filter((field) => fieldMapping[field.key] !== NO_IMPORT_FIELD);
+  }, [fieldMapping]);
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImportReport(null);
+    setImportRollbackDone(false);
+    const supportedFile = /\.(csv|tsv|txt)$/i.test(file.name);
+    if (!supportedFile) {
+      toast.error("Por enquanto, exporte a planilha como CSV ou TSV antes de importar.");
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = parseProspectImportText(text);
+
+      if (!parsed.headers.length || !parsed.rows.length) {
+        toast.error("Não encontrei linhas válidas nessa planilha.");
+        return;
+      }
+
+      setImportFileName(file.name);
+      setImportHeaders(parsed.headers);
+      setImportRows(parsed.rows);
+      const guessedMapping = guessProspectImportMapping(parsed.headers);
+      const detectedCount = IMPORT_FIELDS.filter((field) => guessedMapping[field.key] !== NO_IMPORT_FIELD).length;
+      setFieldMapping(guessedMapping);
+      setDefaultImportStatus(columns[0] || "Mapeamento");
+      toast.success(`${parsed.rows.length} linhas lidas. ${detectedCount} campos identificados automaticamente.`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao ler a planilha: ${msg}`);
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const handleImportMappingChange = (field: keyof ImportFieldMapping, value: string) => {
+    setImportReport(null);
+    setImportRollbackDone(false);
+    setFieldMapping((current) => ({ ...current, [field]: value }));
+  };
+
+  const resetImportState = () => {
+    setImportFileName("");
+    setImportHeaders([]);
+    setImportRows([]);
+    setFieldMapping(emptyImportMapping());
+    setSkipImportDuplicates(true);
+    setIsImporting(false);
+    setImportReport(null);
+    setImportRollbackDone(false);
+    setIsRollingBackImport(false);
+  };
+
+  const handleConfirmImport = async () => {
+    if (!user?.id) {
+      toast.error("Você precisa estar logado para importar leads.");
+      return;
+    }
+
+    if (!isImportMappingReady) {
+      toast.error("Marque pelo menos os campos Empresa e Nome do contato.");
+      return;
+    }
+
+    if (!importAnalysis.validRows.length) {
+      toast.error("Nenhuma linha válida para importar.");
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const report = await importProspectsMutation.mutateAsync(importAnalysis.validRows as ProspectImportItem[]);
+      const fullReport = { ...report, skipped: importAnalysis.skipped };
+      setImportReport(fullReport);
+      setImportRollbackDone(false);
+
+      if (report.created.length > 0 && report.errors.length === 0) {
+        toast.success(`${report.created.length} leads importados com sucesso!`);
+      } else if (report.created.length > 0) {
+        toast.warning(`${report.created.length} leads importados, com ${report.errors.length} erro(s).`);
+      } else {
+        toast.error("Nenhum lead foi importado. Confira os erros no resumo.");
+      }
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleRollbackImport = async () => {
+    const ids = importReport?.created.map((prospect) => prospect.id).filter(Boolean) || [];
+    if (!ids.length) return;
+
+    const confirmed = window.confirm(`Apagar os ${ids.length} leads criados por esta importação?`);
+    if (!confirmed) return;
+
+    setIsRollingBackImport(true);
+    try {
+      await rollbackImportMutation.mutateAsync(ids);
+      setImportRollbackDone(true);
+      toast.success(`${ids.length} leads desta importação foram apagados.`);
+    } finally {
+      setIsRollingBackImport(false);
+    }
+  };
+
   const handleAddNote = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -248,6 +492,9 @@ export default function Prospeccao() {
           <p className="text-muted-foreground mt-1">Gerencie seu funil de prospecção fria até o agendamento da apresentação.</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setIsImportOpen(true)}>
+            <Upload className="mr-2 h-4 w-4" /> Importar Planilha
+          </Button>
           <Button variant="outline" onClick={() => setIsConfigOpen(true)}>
             <Settings2 className="mr-2 h-4 w-4" /> Configurar Funil
           </Button>
@@ -296,6 +543,270 @@ export default function Prospeccao() {
             <p className="text-xs text-muted-foreground mt-4">
               Dica: O status "Agendado" é utilizado para integração com a Agenda.
             </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isImportOpen} onOpenChange={(open) => {
+        setIsImportOpen(open);
+        if (!open && !isImporting && !isRollingBackImport) resetImportState();
+      }}>
+        <DialogContent className="max-w-4xl max-h-[88vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Importar Planilha de Prospecção</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5 pt-2">
+            <div className="rounded-lg border border-dashed border-border bg-muted/20 p-4">
+              <Label
+                htmlFor="prospect-import-file"
+                className="flex cursor-pointer flex-col items-center justify-center gap-2 text-center"
+              >
+                <FileSpreadsheet className="h-8 w-8 text-muted-foreground" />
+                <span className="text-sm font-medium">
+                  {importFileName || "Escolher arquivo CSV ou TSV"}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Exporte a planilha do Google como CSV e confira os campos antes de importar.
+                </span>
+              </Label>
+              <Input
+                id="prospect-import-file"
+                type="file"
+                accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values"
+                className="hidden"
+                onChange={handleImportFile}
+              />
+            </div>
+
+            {importHeaders.length > 0 && (
+              <>
+                <div className="flex items-start gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3">
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                  <div>
+                    <p className="text-sm font-medium">Campos identificados automaticamente</p>
+                    <p className="text-xs text-muted-foreground">
+                      Encontramos {autoDetectedFields.length} correspondências. Confirme abaixo ou altere qualquer campo antes de importar.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold">Marcação de campos</h3>
+                        <p className="text-xs text-muted-foreground">
+                          Escolha qual coluna da planilha corresponde a cada campo do sistema.
+                        </p>
+                      </div>
+                      <Badge variant="outline">{importRows.length} linhas</Badge>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {IMPORT_FIELDS.map((field) => (
+                        <div key={field.key} className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <Label className="text-xs">
+                              {field.label}{field.required ? " *" : ""}
+                            </Label>
+                            {fieldMapping[field.key] !== NO_IMPORT_FIELD && (
+                              <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+                                Detectado
+                              </Badge>
+                            )}
+                          </div>
+                          <Select
+                            value={fieldMapping[field.key]}
+                            onValueChange={(value) => handleImportMappingChange(field.key, value)}
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue placeholder="Ignorar" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NO_IMPORT_FIELD}>Ignorar</SelectItem>
+                              {importHeaders.map((header) => (
+                                <SelectItem key={`${field.key}-${header}`} value={header}>
+                                  {header}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Etapa padrão</Label>
+                      <Select value={defaultImportStatus} onValueChange={(value) => {
+                        setImportReport(null);
+                        setImportRollbackDone(false);
+                        setDefaultImportStatus(value);
+                      }}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {columns.map((column) => (
+                            <SelectItem key={column} value={column}>
+                              {column}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Usada quando a planilha não tem etapa ou quando a etapa não existe no funil.
+                      </p>
+                    </div>
+
+                    <label className="flex items-start gap-2 rounded-md border border-border/60 p-3 text-sm">
+                      <Checkbox
+                        checked={skipImportDuplicates}
+                        onCheckedChange={(checked) => {
+                          setImportReport(null);
+                          setImportRollbackDone(false);
+                          setSkipImportDuplicates(checked === true);
+                        }}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        Ignorar duplicados
+                        <span className="block text-xs text-muted-foreground">
+                          Compara empresa + contato com os leads já cadastrados e com a própria planilha.
+                        </span>
+                      </span>
+                    </label>
+
+                    <div className="rounded-md border border-border/60 p-3 text-sm">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Prontos</p>
+                          <p className="text-lg font-semibold">{importAnalysis.validRows.length}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Ignorados</p>
+                          <p className="text-lg font-semibold">{importAnalysis.skippedRows}</p>
+                        </div>
+                      </div>
+                      {(importAnalysis.missingRequired > 0 || importAnalysis.duplicates > 0) && (
+                        <div className="mt-3 flex gap-2 text-xs text-amber-600 dark:text-amber-400">
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>
+                            {importAnalysis.missingRequired > 0 && `${importAnalysis.missingRequired} sem empresa ou contato. `}
+                            {importAnalysis.duplicates > 0 && `${importAnalysis.duplicates} duplicados encontrados.`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold">Prévia</h3>
+                  <div className="overflow-hidden rounded-md border border-border/60">
+                    <div className="grid grid-cols-[1fr_1fr_0.8fr_0.8fr] bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground">
+                      <span>Empresa</span>
+                      <span>Contato</span>
+                      <span>Etapa</span>
+                      <span>Situação</span>
+                    </div>
+                    {importAnalysis.rows.slice(0, 6).map((row) => (
+                      <div
+                        key={row.index}
+                        className="grid grid-cols-[1fr_1fr_0.8fr_0.8fr] gap-2 border-t border-border/50 px-3 py-2 text-xs"
+                      >
+                        <span className="truncate">{row.prospect.company || "-"}</span>
+                        <span className="truncate">{row.prospect.contact_name || "-"}</span>
+                        <span className="truncate">{row.prospect.status || defaultImportStatus}</span>
+                        <span className={row.hasRequiredFields && !row.isDuplicate ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                          {!row.hasRequiredFields ? "Faltam campos" : row.isDuplicate ? "Duplicado" : "Pronto"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {importReport && (
+              <div className="rounded-md border border-border/60 bg-muted/20 p-4">
+                <div className="flex items-start gap-3">
+                  {importReport.errors.length === 0 ? (
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <AlertCircle className="mt-0.5 h-5 w-5 text-amber-600 dark:text-amber-400" />
+                  )}
+                  <div className="flex-1 space-y-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">Resultado da importação</h3>
+                      <p className="text-xs text-muted-foreground">
+                        {importReport.created.length} importados, {importReport.skipped.length} ignorados e {importReport.errors.length} com erro.
+                      </p>
+                      {importRollbackDone && (
+                        <p className="mt-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                          Os leads criados por esta importação foram apagados.
+                        </p>
+                      )}
+                    </div>
+
+                    {(importReport.skipped.length > 0 || importReport.errors.length > 0) && (
+                      <div className="max-h-36 overflow-y-auto rounded border border-border/50 bg-background/60">
+                        {importReport.skipped.slice(0, 12).map((item) => (
+                          <div key={`skipped-${item.rowNumber}`} className="border-b border-border/40 px-3 py-2 text-xs last:border-b-0">
+                            <span className="font-medium">Linha {item.rowNumber} ignorada:</span>{" "}
+                            <span className="text-muted-foreground">
+                              {item.message} {item.company ? `Empresa: ${item.company}.` : ""}
+                            </span>
+                          </div>
+                        ))}
+                        {importReport.errors.slice(0, 12).map((item) => (
+                          <div key={`error-${item.rowNumber}`} className="border-b border-border/40 px-3 py-2 text-xs last:border-b-0">
+                            <span className="font-medium text-destructive">Linha {item.rowNumber} com erro:</span>{" "}
+                            <span className="text-muted-foreground">
+                              {item.message} {item.company ? `Empresa: ${item.company}.` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {importReport.created.length > 0 && !importRollbackDone && (
+                      <div className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-muted-foreground">
+                          Se algo ficou errado, apague apenas os leads criados nesta importação.
+                        </p>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={handleRollbackImport}
+                          disabled={isRollingBackImport}
+                          className="shrink-0"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          {isRollingBackImport ? "Apagando..." : "Apagar esta importação"}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsImportOpen(false)} disabled={isImporting || isRollingBackImport}>
+                {importReport ? "Concluir" : "Cancelar"}
+              </Button>
+              {!importReport && (
+                <Button
+                  onClick={handleConfirmImport}
+                  disabled={!importHeaders.length || !isImportMappingReady || !importAnalysis.validRows.length || isImporting}
+                >
+                  {isImporting ? "Importando..." : "Confirmar e Importar Leads"}
+                </Button>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>

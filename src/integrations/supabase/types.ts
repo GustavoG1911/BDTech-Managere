@@ -16,29 +16,35 @@ export type Database = {
     Tables: {
       admin_calendar_config: {
         Row: {
+          connected_by_user_id: string | null
           google_access_token: string | null
           google_email: string | null
           google_refresh_token: string | null
           google_token_expiry: string | null
           id: string
+          is_test_data: boolean
           sync_enabled: boolean
           updated_at: string | null
         }
         Insert: {
+          connected_by_user_id?: string | null
           google_access_token?: string | null
           google_email?: string | null
           google_refresh_token?: string | null
           google_token_expiry?: string | null
           id?: string
+          is_test_data?: boolean
           sync_enabled?: boolean
           updated_at?: string | null
         }
         Update: {
+          connected_by_user_id?: string | null
           google_access_token?: string | null
           google_email?: string | null
           google_refresh_token?: string | null
           google_token_expiry?: string | null
           id?: string
+          is_test_data?: boolean
           sync_enabled?: boolean
           updated_at?: string | null
         }
@@ -682,20 +688,26 @@ export type Database = {
     Views: {
       admin_calendar_status: {
         Row: {
+          connected_by_user_id: string | null
           google_email: string | null
           id: string | null
+          is_test_data: boolean | null
           sync_enabled: boolean | null
           updated_at: string | null
         }
         Insert: {
+          connected_by_user_id?: string | null
           google_email?: string | null
           id?: string | null
+          is_test_data?: boolean | null
           sync_enabled?: boolean | null
           updated_at?: string | null
         }
         Update: {
+          connected_by_user_id?: string | null
           google_email?: string | null
           id?: string | null
+          is_test_data?: boolean | null
           sync_enabled?: boolean | null
           updated_at?: string | null
         }

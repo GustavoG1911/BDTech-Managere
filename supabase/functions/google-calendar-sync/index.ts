@@ -31,6 +31,12 @@ function getMeetingLink(event: GoogleEvent): string {
   return entry?.uri ?? "";
 }
 
+function calendarConfigId(isTestEnv: boolean) {
+  return isTestEnv
+    ? "00000000-0000-0000-0000-000000000002"
+    : "00000000-0000-0000-0000-000000000001";
+}
+
 async function refreshAccessToken(clientId: string, clientSecret: string, refreshToken: string) {
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -57,19 +63,22 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
     if (authErr || !user) return new Response(JSON.stringify({ error: "Sessão inválida." }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    const { data: profile } = await supabase.from("profiles").select("role").eq("user_id", user.id).single();
-    if (profile?.role !== "admin") {
-      return new Response(JSON.stringify({ error: "Apenas o administrador pode sincronizar o Google Calendar centralizado." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
     const isTestEnv = user.email?.endsWith("@teste.com") || false;
 
     // Load centralized admin Google tokens (single row, independent of calling user)
     const { data: adminConfig } = await (supabase as any)
       .from("admin_calendar_config")
-      .select("google_refresh_token, google_access_token, google_token_expiry, sync_enabled, google_email")
+      .select("google_refresh_token, google_access_token, google_token_expiry, sync_enabled, google_email, connected_by_user_id")
+      .eq("id", calendarConfigId(isTestEnv))
+      .eq("is_test_data", isTestEnv)
       .single();
     if (!adminConfig?.sync_enabled || !adminConfig.google_refresh_token) {
       return new Response(JSON.stringify({ error: "Conta Google centralizada não configurada. Peça ao administrador para conectar." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const centralOwnerUserId = adminConfig.connected_by_user_id;
+    if (!centralOwnerUserId) {
+      return new Response(JSON.stringify({ error: "Conta Google centralizada sem administrador responsavel. Reconecte a conta no painel admin." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // Refresh access token if expired (with 60s buffer)
@@ -81,7 +90,7 @@ serve(async (req) => {
       const newExpiry = new Date(Date.now() + refreshed.expiresIn * 1000).toISOString();
       await (supabase as any).from("admin_calendar_config")
         .update({ google_access_token: accessToken, google_token_expiry: newExpiry })
-        .eq("id", "00000000-0000-0000-0000-000000000001");
+        .eq("id", calendarConfigId(isTestEnv));
     }
 
     // Fetch Google Calendar events (primary calendar, next 60 days)
@@ -115,7 +124,7 @@ serve(async (req) => {
       const operation = classifyOperation(meetingLink, ev.description ?? "");
 
       const payload = {
-        user_id: user.id,
+        user_id: centralOwnerUserId,
         google_event_id: ev.id,
         source: "google",
         title: ev.summary ?? "(Sem título)",
@@ -132,8 +141,9 @@ serve(async (req) => {
       const { data: existing } = await (supabase as any)
         .from("calendar_events")
         .select("id")
-        .eq("user_id", user.id)
+        .eq("user_id", centralOwnerUserId)
         .eq("google_event_id", ev.id)
+        .eq("is_test_data", isTestEnv)
         .maybeSingle();
 
       if (existing) {
@@ -145,7 +155,7 @@ serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, created, updated, total: accepted.length }), {
+    return new Response(JSON.stringify({ ok: true, created, updated, total: accepted.length, googleEmail: adminConfig.google_email }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
