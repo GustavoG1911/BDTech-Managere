@@ -61,6 +61,8 @@ export interface AppSettings {
   commissionRate: number;
   superMetaThreshold: number;
   superMetaMultiplier: number;
+  salaryDueDay: number;
+  commissionDueDay: number;
 }
 
 export interface GlobalParameters {

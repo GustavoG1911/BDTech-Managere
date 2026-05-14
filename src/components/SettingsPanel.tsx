@@ -20,12 +20,16 @@ export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals, read
   const [commissionRate, setCommissionRate] = useState(((settings.commissionRate || 0.20) * 100).toString());
   const [superMetaThreshold, setSuperMetaThreshold] = useState((settings.superMetaThreshold || 30).toString());
   const [superMetaMultiplier, setSuperMetaMultiplier] = useState(((settings.superMetaMultiplier || 2) * 100).toString());
+  const [salaryDueDay, setSalaryDueDay] = useState((settings.salaryDueDay || 1).toString());
+  const [commissionDueDay, setCommissionDueDay] = useState((settings.commissionDueDay || 20).toString());
 
   useEffect(() => {
     setSalary(settings.fixedSalary.toString());
     setCommissionRate(((settings.commissionRate || 0.20) * 100).toString());
     setSuperMetaThreshold((settings.superMetaThreshold || 30).toString());
     setSuperMetaMultiplier(((settings.superMetaMultiplier || 2) * 100).toString());
+    setSalaryDueDay((settings.salaryDueDay || 1).toString());
+    setCommissionDueDay((settings.commissionDueDay || 20).toString());
   }, [settings]);
 
   const handleSave = () => {
@@ -34,6 +38,8 @@ export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals, read
       commissionRate:      (parseFloat(commissionRate) || 20) / 100,
       superMetaThreshold:  parseInt(superMetaThreshold) || 30,
       superMetaMultiplier: (parseFloat(superMetaMultiplier) || 200) / 100,
+      salaryDueDay:        Math.min(31, Math.max(1, parseInt(salaryDueDay) || 1)),
+      commissionDueDay:    Math.min(31, Math.max(1, parseInt(commissionDueDay) || 20)),
     };
     onSave?.(newSettings);
     onUpdate?.(newSettings);
@@ -90,6 +96,38 @@ export function SettingsPanel({ settings, onSave, onUpdate, onRefreshDeals, read
           <p className="text-[11px] text-muted-foreground/50">
             Atual: {((settings.commissionRate || 0.20) * 100).toFixed(0)}%
           </p>
+        </div>
+
+        {/* Vencimentos */}
+        <div className="rounded-xl border border-border/40 p-4 space-y-3">
+          <div className="flex items-center gap-1.5">
+            <Info className="h-3.5 w-3.5 text-muted-foreground/60" />
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Vencimentos padrão</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Salários</Label>
+              <Input
+                type="number" min="1" max="31" step="1"
+                value={salaryDueDay}
+                onChange={(e) => setSalaryDueDay(e.target.value)}
+                className="font-mono bg-muted/30 border-border/50"
+                disabled={readOnly}
+              />
+              <p className="text-[11px] text-muted-foreground/50">Dia {settings.salaryDueDay || 1}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Comissões</Label>
+              <Input
+                type="number" min="1" max="31" step="1"
+                value={commissionDueDay}
+                onChange={(e) => setCommissionDueDay(e.target.value)}
+                className="font-mono bg-muted/30 border-border/50"
+                disabled={readOnly}
+              />
+              <p className="text-[11px] text-muted-foreground/50">Dia {settings.commissionDueDay || 20}</p>
+            </div>
+          </div>
         </div>
 
         {/* Regras */}

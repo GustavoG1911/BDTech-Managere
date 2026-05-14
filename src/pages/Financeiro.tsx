@@ -15,7 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, BadgeDollarSign, Calendar, ChevronDown, ChevronUp, Clock, FileText, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, Check, Loader2, Wallet, Plus, CalendarDays, FileDown, Printer, HelpCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
-import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
+import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getDueDateForMonth, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
 import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, confirmCommissionPaymentById, rejectCommissionPaymentById, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, fetchAvailableYears, CommissionPayment } from "@/lib/supabase-deals";
 import { getCurrentUserContext } from "@/lib/supabase-env";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -125,6 +125,10 @@ function salaryActionKey(row: { id: string; user_id: string; reference_month: an
   return row.isFallback
     ? `fallback:${row.user_id}:${salaryReferenceKey(row.reference_month)}`
     : `salary:${row.id}`;
+}
+
+function getSalaryExpectedPaymentDate(monthKey: string, salaryDueDay?: number): string {
+  return getDueDateForMonth(monthKey, salaryDueDay || 1);
 }
 
 function getSalaryRowPriority(row: {
@@ -563,7 +567,7 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
   );
 }
 
-function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, onConfirmSalary }: any) {
+function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, salaryDueDay = 1, onConfirmSalary }: any) {
   const [expanded, setExpanded] = useState(false);
   const amount = salary?.amount ?? profiles?.[userId]?.fixed_salary ?? 0;
   const expectedDate = salary?.expected_payment_date;
@@ -586,7 +590,7 @@ function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, onCo
         </TableCell>
         <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold">{formatCurrency(amount)}</TableCell>
         <TableCell className="px-4 py-3 text-sm text-muted-foreground">
-          {expectedDate ? formatSafeDate(expectedDate) : `Recorrente (20/${selectedMonth.split("-")[1]})`}
+          {expectedDate ? formatSafeDate(expectedDate) : formatSafeDate(getSalaryExpectedPaymentDate(selectedMonth, salaryDueDay))}
         </TableCell>
         <TableCell className="px-4 py-3 text-center">
           {isConfirmed ? (
@@ -617,7 +621,7 @@ function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, onCo
               <div className="p-3 rounded-lg bg-muted/30 border border-border/30 space-y-1">
                 <p className="text-muted-foreground">Vencimento Previsto</p>
                 <p className="font-mono font-semibold text-foreground/90">
-                  {expectedDate ? formatSafeDate(expectedDate) : `Dia 20 de ${formatMonthLabel(selectedMonth)}`}
+                  {expectedDate ? formatSafeDate(expectedDate) : formatSafeDate(getSalaryExpectedPaymentDate(selectedMonth, salaryDueDay))}
                 </p>
               </div>
               {paymentDate && (
@@ -760,11 +764,11 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         const baseDate = cp.component === "mensalidade"
           ? deal.firstPaymentDate || deal.closingDate
           : deal.implantationPaymentDate || deal.firstPaymentDate || deal.closingDate;
-        const expectedDate = baseDate ? getPaymentDateInfo(baseDate).expectedPaymentDate : null;
+        const expectedDate = baseDate ? getPaymentDateInfo(baseDate, settings.commissionDueDay).expectedPaymentDate : null;
         return { cp, deal, expectedDate };
       })
       .filter(Boolean) as Array<{ cp: CommissionPayment; deal: Deal; expectedDate: string | null }>;
-  }, [commissionPayments, scopedDeals]);
+  }, [commissionPayments, scopedDeals, settings.commissionDueDay]);
 
   useEffect(() => {
     if (!pendingScroll) return;
@@ -1241,6 +1245,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                   profiles={profiles}
                   userId={userId}
                   selectedMonth={selectedMonth}
+                  salaryDueDay={settings.salaryDueDay}
                   onConfirmSalary={handleConfirmSalaryReceipt}
                 />
               ) : (
@@ -1251,6 +1256,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                     profiles={profiles}
                     userId={userId}
                     selectedMonth={selectedMonth}
+                    salaryDueDay={settings.salaryDueDay}
                     onConfirmSalary={handleConfirmSalaryReceipt}
                   />
                 ))
@@ -1504,7 +1510,7 @@ function FinanceiroContent() {
         user_id: uid,
         reference_month: filterType === "year" ? selectedYear + "-01-01" : selectedMonth + "-01",
         amount: fixedSal,
-        expected_payment_date: (filterType === "year" ? selectedYear + "-01" : selectedMonth) + "-20",
+        expected_payment_date: getSalaryExpectedPaymentDate(filterType === "year" ? selectedYear + "-01" : selectedMonth, settings.salaryDueDay),
         is_paid_by_gestor: false,
         user_confirmed_receipt: false,
         payment_date: null,
@@ -1512,7 +1518,7 @@ function FinanceiroContent() {
       });
     });
     return rows;
-  }, [filteredSalaries, profiles, filtroFuncionario, filterType, selectedMonth, selectedYear]);
+  }, [filteredSalaries, profiles, filtroFuncionario, filterType, selectedMonth, selectedYear, settings.salaryDueDay]);
 
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number, projectedOut: number }> = {};
@@ -1761,7 +1767,7 @@ function FinanceiroContent() {
     const processingKey = `fallback:${userId}:${referenceKey}`;
     if (processingSalaryKeys.has(processingKey)) return;
     setProcessingSalaryKeys((prev) => new Set(prev).add(processingKey));
-    const dateStr = referenceMonth.slice(0, 7) + "-20";
+    const dateStr = getSalaryExpectedPaymentDate(referenceMonth.slice(0, 7), settings.salaryDueDay);
     const referenceDate = referenceMonth.slice(0, 7) + "-01";
     const { isTestEnv } = await getCurrentUserContext();
     const payload = {
@@ -1935,6 +1941,7 @@ function FinanceiroContent() {
           <ReceivablesTab
             deals={filteredDeals}
             selectedMonth={selectedMonth}
+            settings={settings}
             getUserName={getUserName}
             onToggleMensalidade={handleToggleMensalidade}
             onToggleImplantacao={handleToggleImplantacao}
@@ -2083,27 +2090,29 @@ function FinanceiroContent() {
 interface ReceivablesTabProps {
   deals: Deal[];
   selectedMonth: string;
+  settings: any;
   getUserName: (id: string) => string;
   onToggleMensalidade: (id: string, currentStatus: boolean) => void;
   onToggleImplantacao: (id: string, currentStatus: boolean) => void;
   onConfirmInstallment: (id: string, index: number, checked: boolean) => void;
 }
 
-function ExpandableReceivablesRow({ deal, selectedMonth, getUserName, onToggleMensalidade, onToggleImplantacao, onConfirmInstallment }: any) {
+function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, onToggleMensalidade, onToggleImplantacao, onConfirmInstallment }: any) {
   const [expanded, setExpanded] = useState(false);
   const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
+  const commissionDueDay = settings?.commissionDueDay || 20;
   
   const expectMensalidade = deal.monthlyValue > 0 && mensalidadeMonthKey === selectedMonth;
   const expectImplantacao = deal.implantationValue > 0 && !deal.isInstallment && implantacaoMonthKey === selectedMonth;
   const expectedDateParts = [
-    expectMensalidade && deal.firstPaymentDate ? `Mens.: ${formatSafeDate(getPaymentDateInfo(deal.firstPaymentDate).expectedPaymentDate)}` : null,
-    expectImplantacao && deal.implantationPaymentDate ? `Impl.: ${formatSafeDate(getPaymentDateInfo(deal.implantationPaymentDate).expectedPaymentDate)}` : null,
+    expectMensalidade && deal.firstPaymentDate ? `Mens.: ${formatSafeDate(getPaymentDateInfo(deal.firstPaymentDate, commissionDueDay).expectedPaymentDate)}` : null,
+    expectImplantacao && deal.implantationPaymentDate ? `Impl.: ${formatSafeDate(getPaymentDateInfo(deal.implantationPaymentDate, commissionDueDay).expectedPaymentDate)}` : null,
   ].filter(Boolean) as string[];
   const fallbackDate = deal.firstPaymentDate || deal.implantationPaymentDate || deal.closingDate;
   if (!fallbackDate) return null;
   const expectedPaymentDateStr = expectedDateParts.length > 0
     ? expectedDateParts.join(" / ")
-    : formatSafeDate(getPaymentDateInfo(fallbackDate).expectedPaymentDate);
+    : formatSafeDate(getPaymentDateInfo(fallbackDate, commissionDueDay).expectedPaymentDate);
 
   // isPaid só é true quando o usuário clicou explicitamente no botão de confirmação
   let isPaid = false;
@@ -2243,7 +2252,7 @@ function ExpandableReceivablesRow({ deal, selectedMonth, getUserName, onToggleMe
   );
 }
 
-function ReceivablesTab({ deals, selectedMonth, getUserName, onToggleMensalidade, onToggleImplantacao, onConfirmInstallment }: ReceivablesTabProps) {
+function ReceivablesTab({ deals, selectedMonth, settings, getUserName, onToggleMensalidade, onToggleImplantacao, onConfirmInstallment }: ReceivablesTabProps) {
   if (deals.length === 0) {
     return (
       <div className="bg-card rounded-xl border border-border/60 py-12 text-center text-muted-foreground text-sm">
@@ -2279,6 +2288,7 @@ function ReceivablesTab({ deals, selectedMonth, getUserName, onToggleMensalidade
                 key={deal.id}
                 deal={deal}
                 selectedMonth={selectedMonth}
+                settings={settings}
                 getUserName={getUserName}
                 onToggleMensalidade={onToggleMensalidade}
                 onToggleImplantacao={onToggleImplantacao}
@@ -2322,7 +2332,7 @@ function ExpandableCommissionRow({ deal, recipientUserId, settings, profiles, ge
   let expectedPaymentDateStr = "Data Pendente";
 
   if (baseDate) {
-    const info = getPaymentDateInfo(baseDate);
+    const info = getPaymentDateInfo(baseDate, settings?.commissionDueDay || 20);
     expectedPaymentDateStr = formatSafeDate(info.expectedPaymentDate);
   }
 

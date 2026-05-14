@@ -25,6 +25,7 @@ import {
   X,
   CalendarDays,
   RefreshCw,
+  CalendarClock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsPanel } from "@/components/SettingsPanel";
@@ -33,8 +34,9 @@ import { useAppData } from "@/hooks/useAppData";
 import { useAppLogo } from "@/hooks/useAppLogo";
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 import { getCurrentUserContext } from "@/lib/supabase-env";
-import { formatMonthLabel, getMonthKey } from "@/lib/commission";
+import { formatMonthLabel, getDueDateForMonth, getMonthKey } from "@/lib/commission";
 import { fetchAdminCalendarStatus, startGoogleCalendarConnection, syncGoogleCalendar } from "@/lib/google-calendar";
+import { fetchPaymentDueSettings } from "@/lib/payment-settings";
 
 type InviteRow = {
   id: string;
@@ -50,7 +52,7 @@ type InviteRow = {
 
 export default function Settings() {
   const { role, user, loading: authLoading, position } = useAuth();
-  const { settings, updateSettings } = useAppData(role, user?.id, position);
+  const { settings, updateSettings, updatePaymentDueSettings } = useAppData(role, user?.id, position);
   const pureAdmin = isPureSystemAdmin(role, position);
   const isDirector = position === "Diretor";
   const canManageUsers = isDirector || pureAdmin;
@@ -105,6 +107,12 @@ export default function Settings() {
             </TabsTrigger>
           )}
           {pureAdmin && (
+            <TabsTrigger value="payments" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
+              <CalendarClock className="h-3.5 w-3.5" />
+              Pagamentos
+            </TabsTrigger>
+          )}
+          {pureAdmin && (
             <TabsTrigger value="appearance" className="text-xs gap-1.5 data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <ImageIcon className="h-3.5 w-3.5" />
               Aparência
@@ -140,11 +148,96 @@ export default function Settings() {
           </TabsContent>
         )}
         {pureAdmin && (
+          <TabsContent value="payments">
+            <PaymentDueDatesPanel settings={settings} onUpdate={updatePaymentDueSettings} />
+          </TabsContent>
+        )}
+        {pureAdmin && (
           <TabsContent value="appearance">
             <AppearanceTab />
           </TabsContent>
         )}
       </Tabs>
+    </div>
+  );
+}
+
+function PaymentDueDatesPanel({
+  settings,
+  onUpdate,
+}: {
+  settings: { salaryDueDay?: number; commissionDueDay?: number };
+  onUpdate?: (salaryDueDay: number, commissionDueDay: number) => Promise<void>;
+}) {
+  const [salaryDueDay, setSalaryDueDay] = useState(String(settings.salaryDueDay || 1));
+  const [commissionDueDay, setCommissionDueDay] = useState(String(settings.commissionDueDay || 20));
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setSalaryDueDay(String(settings.salaryDueDay || 1));
+    setCommissionDueDay(String(settings.commissionDueDay || 20));
+  }, [settings.salaryDueDay, settings.commissionDueDay]);
+
+  const normalizeDay = (value: string, fallback: number) => Math.min(31, Math.max(1, Math.round(Number(value || fallback))));
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onUpdate?.(
+        normalizeDay(salaryDueDay, 1),
+        normalizeDay(commissionDueDay, 20),
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="max-w-lg bg-card rounded-xl border border-border/60 p-5 space-y-5">
+      <div className="flex items-center gap-2 pb-4 border-b border-border/40">
+        <div className="h-8 w-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
+          <CalendarClock className="h-4 w-4 text-primary" />
+        </div>
+        <div>
+          <p className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Vencimentos padrão</p>
+          <p className="text-xs text-muted-foreground/70 mt-0.5">
+            Defina o dia em que salários e comissões vencem no Financeiro.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground uppercase tracking-wide">Salários</Label>
+          <Input
+            type="number"
+            min="1"
+            max="31"
+            value={salaryDueDay}
+            onChange={(e) => setSalaryDueDay(e.target.value)}
+            className="font-mono text-lg bg-muted/30 border-border/50"
+          />
+          <p className="text-[11px] text-muted-foreground/50">Padrão atual: dia {settings.salaryDueDay || 1}</p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground uppercase tracking-wide">Comissões</Label>
+          <Input
+            type="number"
+            min="1"
+            max="31"
+            value={commissionDueDay}
+            onChange={(e) => setCommissionDueDay(e.target.value)}
+            className="font-mono text-lg bg-muted/30 border-border/50"
+          />
+          <p className="text-[11px] text-muted-foreground/50">Padrão atual: dia {settings.commissionDueDay || 20}</p>
+        </div>
+      </div>
+
+      <Button onClick={handleSave} disabled={saving} className="w-full gap-2">
+        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+        {saving ? "Salvando..." : "Salvar Vencimentos"}
+      </Button>
     </div>
   );
 }
@@ -693,6 +786,7 @@ function TeamTab() {
   const [salaryBaseline, setSalaryBaseline] = useState<Record<string, number>>({});
   const [salaryEffectiveMode, setSalaryEffectiveMode] = useState<Record<string, "current" | "next" | "custom">>({});
   const [salaryCustomMonth, setSalaryCustomMonth] = useState<Record<string, string>>({});
+  const [salaryDueDay, setSalaryDueDay] = useState(1);
   const [loading, setLoading] = useState(true);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const currentSalaryMonth = getMonthKey(new Date());
@@ -709,6 +803,8 @@ function TeamTab() {
   useEffect(() => {
     const loadTeam = async () => {
       const { isTestEnv } = await getCurrentUserContext();
+      const dueSettings = await fetchPaymentDueSettings();
+      setSalaryDueDay(dueSettings.salaryDueDay);
 
       const query = (supabase as any)
         .from("profiles")
@@ -784,7 +880,7 @@ function TeamTab() {
           user_id: userId,
           amount,
           reference_month: referenceMonth,
-          expected_payment_date: `${monthKey}-20`,
+          expected_payment_date: getDueDateForMonth(monthKey, salaryDueDay),
           is_paid_by_gestor: false,
           payment_date: null,
           user_confirmed_receipt: false,

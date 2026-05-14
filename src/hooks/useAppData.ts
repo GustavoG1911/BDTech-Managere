@@ -5,6 +5,7 @@ import { fetchDeals, upsertDeal, deleteDealFromDb, fetchPresentations, savePrese
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { UserRole } from "./useAuth";
+import { fetchPaymentDueSettings, savePaymentDueSettings } from "@/lib/payment-settings";
 
 export function useAppData(role: UserRole = "user", userId?: string, position?: string) {
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -18,11 +19,12 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [dealsData, presData, commRate, fixedSalary] = await Promise.all([
+      const [dealsData, presData, commRate, fixedSalary, paymentDueSettings] = await Promise.all([
         fetchDeals(role, userId, position),
         fetchPresentations(role, userId, position),
         userId ? fetchUserCommissionRate(userId) : Promise.resolve(null),
         userId ? fetchUserFixedSalary(userId) : Promise.resolve(null),
+        fetchPaymentDueSettings(),
       ]);
       setDeals(dealsData);
       setPresentations(presData);
@@ -31,6 +33,8 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
         const next = { ...prev };
         if (commRate !== null) next.commissionRate = commRate;
         if (fixedSalary !== null) next.fixedSalary = fixedSalary;
+        next.salaryDueDay = paymentDueSettings.salaryDueDay;
+        next.commissionDueDay = paymentDueSettings.commissionDueDay;
         return next;
       });
     } catch (err: unknown) {
@@ -70,14 +74,17 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
   const silentRefreshSettings = useCallback(async () => {
     if (!userId) return;
     try {
-      const [commRate, fixedSalary] = await Promise.all([
+      const [commRate, fixedSalary, paymentDueSettings] = await Promise.all([
         fetchUserCommissionRate(userId),
         fetchUserFixedSalary(userId),
+        fetchPaymentDueSettings(),
       ]);
       setSettings((prev) => {
         const next = { ...prev };
         if (commRate !== null) next.commissionRate = commRate;
         if (fixedSalary !== null) next.fixedSalary = fixedSalary;
+        next.salaryDueDay = paymentDueSettings.salaryDueDay;
+        next.commissionDueDay = paymentDueSettings.commissionDueDay;
         return next;
       });
     } catch (err: unknown) {
@@ -118,6 +125,14 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "profiles", filter: `user_id=eq.${userId}` },
+        () => {
+          clearTimeout(settingsTimer.current);
+          settingsTimer.current = setTimeout(silentRefreshSettings, 400);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "payment_due_settings" },
         () => {
           clearTimeout(settingsTimer.current);
           settingsTimer.current = setTimeout(silentRefreshSettings, 400);
@@ -205,12 +220,31 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
         await Promise.all([
           saveUserCommissionRate(userId, newSettings.commissionRate),
           saveUserFixedSalary(userId, newSettings.fixedSalary),
+          savePaymentDueSettings({
+            salaryDueDay: newSettings.salaryDueDay,
+            commissionDueDay: newSettings.commissionDueDay,
+          }),
         ]);
       } catch (err: unknown) {
         console.error("Error saving settings to DB:", err instanceof Error ? err.message : err);
       }
     }
   }, [userId, position]);
+
+  const updatePaymentDueSettings = useCallback(async (salaryDueDay: number, commissionDueDay: number) => {
+    if (role !== "admin" && position !== "Diretor") {
+      toast.error("Apenas Admin ou Diretor podem alterar vencimentos.");
+      return;
+    }
+
+    const saved = await savePaymentDueSettings({ salaryDueDay, commissionDueDay });
+    setSettings((prev) => {
+      const next = { ...prev, ...saved };
+      saveSettings(next);
+      return next;
+    });
+    toast.success("Vencimentos atualizados com sucesso!");
+  }, [role, position]);
 
   const toggleSuperMeta = useCallback((monthKey: string, active: boolean) => {
     const updated = { ...superMeta, [monthKey]: active };
@@ -233,6 +267,7 @@ export function useAppData(role: UserRole = "user", userId?: string, position?: 
     updatePresentations,
     settings,
     updateSettings,
+    updatePaymentDueSettings,
     superMeta,
     toggleSuperMeta,
     adjustments,

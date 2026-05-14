@@ -10,6 +10,8 @@ const defaultSettings: AppSettings = {
   commissionRate: 0.20,
   superMetaThreshold: 30,
   superMetaMultiplier: 2,
+  salaryDueDay: 1,
+  commissionDueDay: 20,
 };
 
 function load<T>(key: string, fallback: T): T {
@@ -44,7 +46,7 @@ export function savePresentations(data: MonthlyPresentations) {
 }
 
 export function getSettings(): AppSettings {
-  return load<AppSettings>(SETTINGS_KEY, defaultSettings);
+  return { ...defaultSettings, ...load<Partial<AppSettings>>(SETTINGS_KEY, defaultSettings) };
 }
 
 export function saveSettings(settings: AppSettings) {

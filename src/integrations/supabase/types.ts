@@ -50,6 +50,30 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_due_settings: {
+        Row: {
+          commission_due_day: number
+          id: string
+          is_test_data: boolean
+          salary_due_day: number
+          updated_at: string | null
+        }
+        Insert: {
+          commission_due_day?: number
+          id?: string
+          is_test_data?: boolean
+          salary_due_day?: number
+          updated_at?: string | null
+        }
+        Update: {
+          commission_due_day?: number
+          id?: string
+          is_test_data?: boolean
+          salary_due_day?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       calendar_events: {
         Row: {
           created_at: string

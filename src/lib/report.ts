@@ -31,6 +31,7 @@ function safeClassToken(value: unknown): string {
 export function generateReportHTML(data: ReportData): string {
   const { deals, presentations, salary, periodLabel, settings, superMeta } = data;
   const rate = ((settings.commissionRate || 0.20) * 100).toFixed(0);
+  const commissionDueDay = settings.commissionDueDay || 20;
 
   let totalProjected = 0;
   let totalPaid = 0;
@@ -196,7 +197,7 @@ export function generateReportHTML(data: ReportData): string {
         </tr>
       </tbody>
     </table>
-    <p style="font-size:11px;color:#94a3b8;margin-top:8px">* Estas comissões serão pagas até o dia 20 do mês subsequente.</p>
+    <p style="font-size:11px;color:#94a3b8;margin-top:8px">* Estas comissões serão pagas até o dia ${commissionDueDay} do mês subsequente.</p>
   </div>
 
   <div class="section">
@@ -204,7 +205,7 @@ export function generateReportHTML(data: ReportData): string {
     <div class="rules">
       <p><strong>Comissão sobre Mensalidade:</strong> Base 100% (≥ 15 apres.) ou 70% (&lt; 15 apres.) × ${rate}% — verificada por operação no mês de fechamento</p>
       <p style="margin-top:6px"><strong>Comissão sobre Implantação:</strong> 40% do valor × ${rate}% (independente de apresentações)</p>
-      <p style="margin-top:6px"><strong>Pagamento:</strong> Comissões pagas até o dia 20 do mês subsequente ao fechamento</p>
+      <p style="margin-top:6px"><strong>Pagamento:</strong> Comissões pagas até o dia ${commissionDueDay} do mês subsequente ao fechamento</p>
       <p style="margin-top:6px"><strong>Metas por Operação:</strong> BluePex e Opus Tech possuem contadores de apresentações separados</p>
     </div>
   </div>

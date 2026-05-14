@@ -97,6 +97,19 @@ export function formatMonthLabel(key: string): string {
   return `${months[parseInt(month) - 1]} ${year}`;
 }
 
+export function clampDueDay(day?: number): number {
+  const parsed = Math.round(Number(day || 1));
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(31, Math.max(1, parsed));
+}
+
+export function getDueDateForMonth(monthKey: string, dueDay = 1): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const safeDay = clampDueDay(dueDay);
+  const lastDay = new Date(year, month, 0).getDate();
+  return `${year}-${String(month).padStart(2, "0")}-${String(Math.min(safeDay, lastDay)).padStart(2, "0")}`;
+}
+
 /**
  * Given a deal's closing month, returns the month key when its commission is payable.
  */
@@ -108,10 +121,10 @@ export function getPayableMonthKey(closingDate: string): string {
 
 /**
  * Rule of the 7th (Baseado no Vencimento):
- * If paymentDate day <= 7 -> payable in the SAME month, on the 20th.
- * If paymentDate day > 7 -> payable in the NEXT month, on the 20th.
+ * If paymentDate day <= 7 -> payable in the SAME month.
+ * If paymentDate day > 7 -> payable in the NEXT month.
  */
-export function getPaymentDateInfo(paymentDateStr: string): { monthKey: string, expectedPaymentDate: string } {
+export function getPaymentDateInfo(paymentDateStr: string, commissionDueDay = 20): { monthKey: string, expectedPaymentDate: string } {
   const d = new Date(paymentDateStr + "T12:00:00");
   const day = d.getDate();
   const targetDate = new Date(paymentDateStr + "T12:00:00");
@@ -121,7 +134,7 @@ export function getPaymentDateInfo(paymentDateStr: string): { monthKey: string, 
   }
   
   const monthKey = getMonthKey(targetDate);
-  const expectedPaymentDate = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, "0")}-20`;
+  const expectedPaymentDate = getDueDateForMonth(monthKey, commissionDueDay);
   
   return { monthKey, expectedPaymentDate };
 }
