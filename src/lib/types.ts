@@ -1,4 +1,5 @@
 export type Operation = "BluePex" | "Opus Tech";
+export type ProspectOperation = Operation | "A definir";
 
 export type PaymentStatus = "Pendente" | "Pago" | "Cancelado";
 
@@ -120,6 +121,7 @@ export interface Prospect {
   id: string;
   company: string;
   contact_name: string;
+  operation?: ProspectOperation;
   role?: string;
   linkedin_url?: string;
   qualification_notes?: string;

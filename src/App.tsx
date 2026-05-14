@@ -17,6 +17,7 @@ import NotFound from "./pages/NotFound.tsx";
 import { RefreshCw } from "lucide-react";
 import { isPureSystemAdmin } from "@/lib/roles";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
+import { AppLoadingScreen } from "@/components/AppLoadingScreen";
 
 const queryClient = new QueryClient();
 
@@ -40,7 +41,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, role, position } = useAuth();
   const location = useLocation();
 
-  if (loading) return <SyncingScreen />;
+  if (loading) return <AppLoadingScreen message="Sincronizando" detail="Carregando perfil, permissões e dados." />;
   if (!user) return <Navigate to="/auth" replace />;
   if (isPureSystemAdmin(role, position) && location.pathname !== "/settings") {
     return <Navigate to="/settings" replace />;
@@ -50,7 +51,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
-  if (loading) return <SyncingScreen />;
+  if (loading) return <AppLoadingScreen message="Sincronizando" detail="Carregando perfil, permissões e dados." />;
   if (user) return <Navigate to="/" replace />;
   return <>{children}</>;
 }

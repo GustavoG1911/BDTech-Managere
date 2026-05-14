@@ -571,6 +571,7 @@ export type Database = {
           id: string
           is_test_data: boolean
           linkedin_url: string | null
+          operation: string
           owner_id: string
           qualification_notes: string | null
           role: string | null
@@ -589,6 +590,7 @@ export type Database = {
           id?: string
           is_test_data?: boolean
           linkedin_url?: string | null
+          operation?: string
           owner_id: string
           qualification_notes?: string | null
           role?: string | null
@@ -607,6 +609,7 @@ export type Database = {
           id?: string
           is_test_data?: boolean
           linkedin_url?: string | null
+          operation?: string
           owner_id?: string
           qualification_notes?: string | null
           role?: string | null

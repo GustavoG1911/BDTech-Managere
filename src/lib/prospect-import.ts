@@ -2,6 +2,7 @@ import { Prospect } from "./types";
 
 export type ImportFieldKey =
   | "company"
+  | "operation"
   | "contact_name"
   | "role"
   | "linkedin_url"
@@ -23,6 +24,7 @@ export const IMPORT_FIELDS: Array<{
   required?: boolean;
 }> = [
   { key: "company", label: "Empresa", required: true },
+  { key: "operation", label: "Operação" },
   { key: "contact_name", label: "Nome do contato", required: true },
   { key: "role", label: "Cargo" },
   { key: "linkedin_url", label: "LinkedIn" },
@@ -38,6 +40,7 @@ const HEADER_HINTS: Record<ImportFieldKey, string[]> = {
   company: ["empresa", "conta", "organizacao", "organização", "companhia", "cliente", "nome da empresa"],
   contact_name: ["contato", "nome", "decisor", "lead", "responsavel", "responsável", "pessoa"],
   role: ["cargo", "funcao", "função", "posicao", "posição"],
+  operation: ["operacao", "produto", "unidade", "empresa alvo", "bluepex", "opus"],
   linkedin_url: ["linkedin", "linked in", "perfil"],
   company_email: ["email empresa", "e-mail empresa", "email corporativo", "email da empresa"],
   company_phone: ["telefone empresa", "tel empresa", "fone empresa", "whatsapp empresa"],
@@ -55,6 +58,13 @@ export const normalizeImportKey = (value?: string | null) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ");
+
+export const normalizeProspectOperation = (value?: string | null): Prospect["operation"] => {
+  const normalized = normalizeImportKey(value);
+  if (normalized.includes("blue")) return "BluePex";
+  if (normalized.includes("opus")) return "Opus Tech";
+  return "A definir";
+};
 
 export const parseProspectImportText = (text: string) => {
   const cleanText = text.replace(/^\uFEFF/, "");
@@ -116,6 +126,7 @@ export const buildProspectFromImportRow = (
 
   return {
     company: read("company"),
+    operation: normalizeProspectOperation(read("operation")),
     contact_name: read("contact_name"),
     role: read("role") || undefined,
     linkedin_url: read("linkedin_url") || undefined,

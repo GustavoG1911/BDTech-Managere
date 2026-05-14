@@ -16,7 +16,7 @@ import {
 } from "@/lib/supabase-prospeccao";
 import { createCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
-import { CalendarEvent, Prospect, ProspectStatus } from "@/lib/types";
+import { CalendarEvent, Operation, Prospect, ProspectOperation, ProspectStatus } from "@/lib/types";
 import {
   buildProspectFromImportRow,
   emptyImportMapping,
@@ -26,6 +26,7 @@ import {
   ImportRow,
   NO_IMPORT_FIELD,
   normalizeImportKey,
+  normalizeProspectOperation,
   parseProspectImportText,
 } from "@/lib/prospect-import";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,6 +48,21 @@ const buildDuplicateKey = (company?: string | null, contactName?: string | null)
 type ImportUiReport = ProspectImportReport & {
   skipped: ProspectImportError[];
 };
+
+const PROSPECT_OPERATIONS: ProspectOperation[] = ["A definir", "BluePex", "Opus Tech"];
+const OPERATION_FILTERS: Array<ProspectOperation | "Todas"> = ["Todas", ...PROSPECT_OPERATIONS];
+
+const getProspectOperation = (prospect?: Pick<Prospect, "operation"> | null): ProspectOperation =>
+  normalizeProspectOperation(prospect?.operation);
+
+const getProspectOperationClass = (operation: ProspectOperation) => {
+  if (operation === "BluePex") return "border-blue-500/30 bg-blue-500/10 text-blue-300";
+  if (operation === "Opus Tech") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+  return "border-border/60 bg-muted/50 text-muted-foreground";
+};
+
+const toCalendarOperation = (operation: ProspectOperation): Operation | undefined =>
+  operation === "A definir" ? undefined : operation;
 
 export default function Prospeccao() {
   const { user, position } = useAuth();
@@ -71,6 +87,7 @@ export default function Prospeccao() {
   const [importReport, setImportReport] = useState<ImportUiReport | null>(null);
   const [isRollingBackImport, setIsRollingBackImport] = useState(false);
   const [importRollbackDone, setImportRollbackDone] = useState(false);
+  const [operationFilter, setOperationFilter] = useState<ProspectOperation | "Todas">("Todas");
 
   React.useEffect(() => {
     if (selectedProspect) {
@@ -198,13 +215,29 @@ export default function Prospeccao() {
     }
   });
 
+  const updateProspectOperationMutation = useMutation({
+    mutationFn: ({ id, operation }: { id: string; operation: ProspectOperation }) => updateProspect(id, { operation }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["prospects"] });
+      setSelectedProspect(prev => prev?.id === variables.id ? { ...prev, operation: variables.operation } : prev);
+      toast.success("Operação do lead atualizada!");
+    },
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao atualizar operação: ${msg}`);
+    }
+  });
+
   const createEventMutation = useMutation({
     mutationFn: async (eventData: Omit<Partial<CalendarEvent>, "user_id" | "prospect_id">) => {
       // 1. Cria evento PRIMEIRO — se falhar, prospect não muda de coluna
       const createdEvent = await createCalendarEvent({ ...eventData, user_id: user!.id, prospect_id: scheduleTargetId });
       // 2. Só então atualiza o status do prospect
       if (scheduleTargetId && scheduleTargetCol) {
-        await updateProspectStatus(scheduleTargetId, scheduleTargetCol);
+        await updateProspect(scheduleTargetId, {
+          status: scheduleTargetCol,
+          ...(eventData.operation ? { operation: eventData.operation } : {}),
+        });
       }
       return createdEvent;
     },
@@ -232,6 +265,7 @@ export default function Prospeccao() {
     const formData = new FormData(e.currentTarget);
     createProspectMutation.mutate({
       company: formData.get("company") as string,
+      operation: normalizeProspectOperation(formData.get("operation") as string),
       contact_name: formData.get("contact_name") as string,
       role: formData.get("role") as string,
       linkedin_url: formData.get("linkedin_url") as string,
@@ -242,6 +276,10 @@ export default function Prospeccao() {
       qualification_notes: formData.get("qualification_notes") as string || undefined,
       status: columns[0] || "Mapeamento",
     });
+  };
+
+  const handleProspectOperationChange = (id: string, operation: ProspectOperation) => {
+    updateProspectOperationMutation.mutate({ id, operation });
   };
 
   const existingProspectKeys = React.useMemo(() => {
@@ -433,6 +471,7 @@ export default function Prospeccao() {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const prospect = prospects?.find(p => p.id === scheduleTargetId);
+    const operation = normalizeProspectOperation(formData.get("operation") as string || prospect?.operation);
     
     createEventMutation.mutate({
       title: formData.get("title") as string || prospect?.company || "Reunião de Apresentação",
@@ -440,12 +479,13 @@ export default function Prospeccao() {
       end_time: new Date(formData.get("end_time") as string).toISOString(),
       meeting_link: formData.get("meeting_link") as string,
       description: formData.get("description") as string,
+      operation: toCalendarOperation(operation),
       status: "Agendado",
     });
   };
 
   const getProspectsByStatus = (status: string) => {
-    return prospects?.filter(p => p.status === status) || [];
+    return prospects?.filter(p => p.status === status && (operationFilter === "Todas" || getProspectOperation(p) === operationFilter)) || [];
   };
 
   // Drag and Drop Handlers
@@ -492,6 +532,18 @@ export default function Prospeccao() {
           <p className="text-muted-foreground mt-1">Gerencie seu funil de prospecção fria até o agendamento da apresentação.</p>
         </div>
         <div className="flex items-center gap-2">
+          <Select value={operationFilter} onValueChange={(value) => setOperationFilter(value as ProspectOperation | "Todas")}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="Operação" />
+            </SelectTrigger>
+            <SelectContent>
+              {OPERATION_FILTERS.map((operation) => (
+                <SelectItem key={operation} value={operation}>
+                  {operation === "Todas" ? "Todas operações" : operation}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button variant="outline" onClick={() => setIsImportOpen(true)}>
             <Upload className="mr-2 h-4 w-4" /> Importar Planilha
           </Button>
@@ -706,8 +758,9 @@ export default function Prospeccao() {
                 <div className="space-y-2">
                   <h3 className="text-sm font-semibold">Prévia</h3>
                   <div className="overflow-hidden rounded-md border border-border/60">
-                    <div className="grid grid-cols-[1fr_1fr_0.8fr_0.8fr] bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground">
+                    <div className="grid grid-cols-[1fr_0.8fr_1fr_0.8fr_0.8fr] bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground">
                       <span>Empresa</span>
+                      <span>Operação</span>
                       <span>Contato</span>
                       <span>Etapa</span>
                       <span>Situação</span>
@@ -715,9 +768,10 @@ export default function Prospeccao() {
                     {importAnalysis.rows.slice(0, 6).map((row) => (
                       <div
                         key={row.index}
-                        className="grid grid-cols-[1fr_1fr_0.8fr_0.8fr] gap-2 border-t border-border/50 px-3 py-2 text-xs"
+                        className="grid grid-cols-[1fr_0.8fr_1fr_0.8fr_0.8fr] gap-2 border-t border-border/50 px-3 py-2 text-xs"
                       >
                         <span className="truncate">{row.prospect.company || "-"}</span>
+                        <span className="truncate">{getProspectOperation(row.prospect)}</span>
                         <span className="truncate">{row.prospect.contact_name || "-"}</span>
                         <span className="truncate">{row.prospect.status || defaultImportStatus}</span>
                         <span className={row.hasRequiredFields && !row.isDuplicate ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
@@ -822,6 +876,19 @@ export default function Prospeccao() {
                 <Label htmlFor="company">Empresa *</Label>
                 <Input id="company" name="company" required />
               </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label htmlFor="operation">Operação</Label>
+                <Select name="operation" defaultValue="A definir">
+                  <SelectTrigger id="operation">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROSPECT_OPERATIONS.map((operation) => (
+                      <SelectItem key={operation} value={operation}>{operation}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="contact_name">Nome do Contato *</Label>
                 <Input id="contact_name" name="contact_name" required />
@@ -880,6 +947,19 @@ export default function Prospeccao() {
             <div className="space-y-2">
               <Label htmlFor="title">Título da Reunião</Label>
               <Input id="title" name="title" required defaultValue={prospects?.find(p => p.id === scheduleTargetId)?.company || ""} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="schedule_operation">Operação</Label>
+              <Select name="operation" defaultValue={getProspectOperation(prospects?.find(p => p.id === scheduleTargetId))}>
+                <SelectTrigger id="schedule_operation">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROSPECT_OPERATIONS.map((operation) => (
+                    <SelectItem key={operation} value={operation}>{operation}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -948,7 +1028,7 @@ export default function Prospeccao() {
                         onDragStart={(e) => handleDragStart(e, p.id)}
                         onDragEnd={handleDragEnd}
                       >
-                        <CardContent className="p-3 pointer-events-none space-y-2">
+                        <CardContent className="p-3 space-y-2">
                           <div className="flex items-start justify-between gap-2">
                             <h4 className="font-semibold text-sm leading-tight line-clamp-1 flex-1">{p.company}</h4>
                             {p.has_scheduled_meeting && (
@@ -956,6 +1036,26 @@ export default function Prospeccao() {
                                 <Calendar className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
                               </span>
                             )}
+                          </div>
+                          <div
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            draggable={false}
+                          >
+                            <Select
+                              value={getProspectOperation(p)}
+                              onValueChange={(value) => handleProspectOperationChange(p.id, value as ProspectOperation)}
+                              disabled={updateProspectOperationMutation.isPending}
+                            >
+                              <SelectTrigger className={`h-7 w-full text-[11px] border ${getProspectOperationClass(getProspectOperation(p))}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {PROSPECT_OPERATIONS.map((operation) => (
+                                  <SelectItem key={operation} value={operation}>{operation}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div className="space-y-1">
                             <p className="text-xs text-muted-foreground flex items-center gap-1.5 line-clamp-1">
@@ -1022,6 +1122,9 @@ export default function Prospeccao() {
                   </div>
                   <div className="flex items-center gap-2 mt-1.5">
                     <Badge variant="outline" className="text-[10px] h-5">{selectedProspect?.status}</Badge>
+                    <Badge className={`text-[10px] h-5 ${getProspectOperationClass(getProspectOperation(selectedProspect))}`}>
+                      {getProspectOperation(selectedProspect)}
+                    </Badge>
                     {selectedProspect?.has_scheduled_meeting && (
                       <Badge className="text-[10px] h-5 bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/15">
                         <Calendar className="h-3 w-3 mr-1" /> Reunião agendada
@@ -1083,6 +1186,22 @@ export default function Prospeccao() {
                   <Input value={editFormData.company || ''} onChange={e => setEditFormData(p => ({ ...p, company: e.target.value }))} className="h-8 text-sm" />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Operação</Label>
+                    <Select
+                      value={getProspectOperation(editFormData as Prospect)}
+                      onValueChange={(value) => setEditFormData(p => ({ ...p, operation: value as ProspectOperation }))}
+                    >
+                      <SelectTrigger className="h-8 text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROSPECT_OPERATIONS.map((operation) => (
+                          <SelectItem key={operation} value={operation}>{operation}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Contato *</Label>
                     <Input value={editFormData.contact_name || ''} onChange={e => setEditFormData(p => ({ ...p, contact_name: e.target.value }))} className="h-8 text-sm" />

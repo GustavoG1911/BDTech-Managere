@@ -18,6 +18,8 @@ export interface DateRange {
 interface PeriodFilterProps {
   onPeriodChange: (range: DateRange, label: string, periodType: PeriodType) => void;
   availableYears?: number[];
+  monthOnly?: boolean;
+  selectedMonthKey?: string;
 }
 
 function getMonthRange(year: number, month: number): DateRange {
@@ -74,7 +76,7 @@ const quarterOptions = [1, 2, 3, 4].map((q) => ({
 }));
 
 /* ─── Component ─── */
-export function PeriodFilter({ onPeriodChange, availableYears = [] }: PeriodFilterProps) {
+export function PeriodFilter({ onPeriodChange, availableYears = [], monthOnly = false, selectedMonthKey }: PeriodFilterProps) {
   const [periodType,      setPeriodType]      = useState<PeriodType>("month");
   const [selectedIdx,     setSelectedIdx]      = useState(currentMonthIdx >= 0 ? currentMonthIdx : 24);
   const [monthListOpen,   setMonthListOpen]    = useState(false);
@@ -99,6 +101,12 @@ export function PeriodFilter({ onPeriodChange, availableYears = [] }: PeriodFilt
       }, 30);
     }
   }, [monthListOpen]);
+
+  useEffect(() => {
+    if (!selectedMonthKey || periodType !== "month") return;
+    const nextIdx = monthOptions.findIndex((o) => o.value === selectedMonthKey);
+    if (nextIdx >= 0 && nextIdx !== selectedIdx) setSelectedIdx(nextIdx);
+  }, [periodType, selectedIdx, selectedMonthKey]);
 
   /* ── Month navigation (arrows) ── */
   const navigateMonth = (dir: -1 | 1) => {
@@ -175,17 +183,19 @@ export function PeriodFilter({ onPeriodChange, availableYears = [] }: PeriodFilt
   return (
     <div className="flex items-center gap-2 flex-wrap">
       {/* ── Period type selector ── */}
-      <Select value={periodType} onValueChange={handleTypeChange}>
-        <SelectTrigger className="w-[130px] h-9 text-sm">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="month">Mensal</SelectItem>
-          <SelectItem value="quarter">Trimestral</SelectItem>
-          <SelectItem value="year">Anual</SelectItem>
-          <SelectItem value="custom">Personalizado</SelectItem>
-        </SelectContent>
-      </Select>
+      {!monthOnly && (
+        <Select value={periodType} onValueChange={handleTypeChange}>
+          <SelectTrigger className="w-[130px] h-9 text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="month">Mensal</SelectItem>
+            <SelectItem value="quarter">Trimestral</SelectItem>
+            <SelectItem value="year">Anual</SelectItem>
+            <SelectItem value="custom">Personalizado</SelectItem>
+          </SelectContent>
+        </Select>
+      )}
 
       {/* ── Month navigator: [←] [Label ▼] [→] ── */}
       {periodType === "month" && (

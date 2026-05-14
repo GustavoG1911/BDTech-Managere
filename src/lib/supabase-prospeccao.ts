@@ -44,7 +44,7 @@ export const createProspect = async (prospect: Partial<Prospect>): Promise<Prosp
   const isTestEnv = await getIsTestEnv();
   const { data, error } = await (supabase as any)
     .from("prospects")
-    .insert([{ ...prospect, is_test_data: isTestEnv }])
+    .insert([{ operation: "A definir", ...prospect, is_test_data: isTestEnv }])
     .select()
     .single();
 
@@ -58,7 +58,7 @@ export const createProspect = async (prospect: Partial<Prospect>): Promise<Prosp
 
 export const bulkCreateProspects = async (prospects: Partial<Prospect>[]): Promise<Prospect[]> => {
   const isTestEnv = await getIsTestEnv();
-  const rows = prospects.map((prospect) => ({ ...prospect, is_test_data: isTestEnv }));
+  const rows = prospects.map((prospect) => ({ operation: "A definir", ...prospect, is_test_data: isTestEnv }));
   const { data, error } = await (supabase as any)
     .from("prospects")
     .insert(rows)
@@ -81,7 +81,7 @@ export const importProspectsWithReport = async (prospects: ProspectImportItem[])
     const { importRowNumber, ...prospect } = item;
     const { data, error } = await (supabase as any)
       .from("prospects")
-      .insert([{ ...prospect, is_test_data: isTestEnv }])
+      .insert([{ operation: "A definir", ...prospect, is_test_data: isTestEnv }])
       .select()
       .single();
 

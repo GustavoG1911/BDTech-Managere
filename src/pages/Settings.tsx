@@ -30,6 +30,7 @@ import {
 import { toast } from "sonner";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { AvatarUpload } from "@/components/AvatarUpload";
+import { AppLoadingScreen } from "@/components/AppLoadingScreen";
 import { useAppData } from "@/hooks/useAppData";
 import { useAppLogo } from "@/hooks/useAppLogo";
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
@@ -61,9 +62,7 @@ export default function Settings() {
 
   if (authLoading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
+      <AppLoadingScreen fullScreen={false} message="Carregando configurações" detail="Sincronizando perfil e permissões." />
     );
   }
 

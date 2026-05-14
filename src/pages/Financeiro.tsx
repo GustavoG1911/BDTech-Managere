@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Deal } from "@/lib/types";
+import { AppLoadingScreen } from "@/components/AppLoadingScreen";
 
 function FutureProjectionsAccumulatedCard({ projections, position, onSelectMonth }: { projections: any[], position: string, onSelectMonth: (m: string) => void }) {
   const [expanded, setExpanded] = useState(false);
@@ -402,9 +403,7 @@ export default function Financeiro() {
 
   if (authLoading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
+      <AppLoadingScreen fullScreen={false} message="Carregando financeiro" detail="Sincronizando perfil e permissões." />
     );
   }
 
@@ -647,11 +646,14 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
   const [filtroOperacao, setFiltroOperacao] = useState("Todas");
   const [filtroStatus, setFiltroStatus] = useState("Todos Status");
-  const monthOptions = useMemo(() => buildMonthOptions(), []);
   const [pendingScroll, setPendingScroll] = useState(false);
   const [pendingDialogOpen, setPendingDialogOpen] = useState(false);
   const pendingScrollAttempts = useRef(0);
   const focusedDealId = (location.state as any)?.dealId as string | undefined;
+
+  const handleMonthPeriodChange = (range: DateRange) => {
+    setSelectedMonth(getMonthKey(range.from));
+  };
 
   useEffect(() => {
     if ((location.state as any)?.scrollToPending) {
@@ -910,9 +912,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
+      <AppLoadingScreen fullScreen={false} message="Carregando financeiro" detail="Atualizando comissões e salários." />
     );
   }
 
@@ -1017,18 +1017,11 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
           <p className="text-xs text-muted-foreground/60 mt-0.5">Comissões e salário do período selecionado</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-            <SelectTrigger className="w-[180px] h-9 text-sm bg-card border-border/60">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {monthOptions.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <PeriodFilter
+            onPeriodChange={handleMonthPeriodChange}
+            monthOnly
+            selectedMonthKey={selectedMonth}
+          />
           <Select value={filtroOperacao} onValueChange={setFiltroOperacao}>
             <SelectTrigger className="w-[150px] h-9 text-sm bg-card border-border/60">
               <SelectValue placeholder="Operação" />
@@ -1823,9 +1816,7 @@ function FinanceiroContent() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
+      <AppLoadingScreen fullScreen={false} message="Carregando financeiro" detail="Atualizando recebíveis e pagamentos." />
     );
   }
 
@@ -1838,6 +1829,12 @@ function FinanceiroContent() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 md:gap-2 w-full md:w-auto">
+          <PeriodFilter
+            onPeriodChange={handlePeriodChange}
+            availableYears={availableYears}
+            selectedMonthKey={selectedMonth}
+          />
+
           <Select value={filtroOperacao} onValueChange={setFiltroOperacao}>
             <SelectTrigger className="w-[140px] md:w-[160px] h-8 text-xs">
               <SelectValue placeholder="Operação" />
@@ -1860,8 +1857,6 @@ function FinanceiroContent() {
               ))}
             </SelectContent>
           </Select>
-
-          <PeriodFilter onPeriodChange={handlePeriodChange} availableYears={availableYears} />
 
           <Select value={filtroStatus} onValueChange={setFiltroStatus}>
             <SelectTrigger className="w-[140px] md:w-[160px] h-8 text-xs">

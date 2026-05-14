@@ -23,6 +23,7 @@ import { Plus, DollarSign, TrendingUp, BadgeDollarSign, FileDown, Printer, BarCh
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InfoHint } from "@/components/InfoHint";
+import { AppLoadingScreen } from "@/components/AppLoadingScreen";
 
 export default function Index() {
   const queryClient = useQueryClient();
@@ -281,6 +282,15 @@ export default function Index() {
     printReport({ deals: filteredDeals, presentations: optimisticPresentations, salary: settings.fixedSalary, periodLabel, settings, superMeta });
   };
 
+  if (loading) {
+    return (
+      <AppLoadingScreen
+        fullScreen={false}
+        message="Carregando dashboard"
+        detail="Atualizando fechamentos, metas e comissões."
+      />
+    );
+  }
 
   return (
     <TooltipProvider>
@@ -315,7 +325,11 @@ export default function Index() {
 
         {/* ── Filters bar ── */}
         <div className="bg-card rounded-xl border border-border/60 px-4 py-3 flex flex-wrap items-center gap-3">
-          <PeriodFilter onPeriodChange={handlePeriodChange} availableYears={availableYears} />
+          <PeriodFilter
+            onPeriodChange={handlePeriodChange}
+            availableYears={availableYears}
+            selectedMonthKey={selectedMonthKey}
+          />
 
           <div className="h-5 w-px bg-border/60 hidden sm:block" />
               <Select value={filtroOperacao} onValueChange={setFiltroOperacao}>
