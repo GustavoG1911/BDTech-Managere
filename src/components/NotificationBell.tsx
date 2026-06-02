@@ -24,7 +24,11 @@ export function NotificationBell() {
   const handleViewDetails = (notifId: string, dealId?: string) => {
     markRead(notifId);
     setOpen(false);
-    navigate("/financeiro", { state: { scrollToPending: true, dealId } });
+    navigate("/financeiro", {
+      state: dealId
+        ? { scrollToPending: true, dealId }
+        : { scrollToPending: true, scrollToSalary: true },
+    });
   };
 
   const formatTime = (createdAt: string) => {
@@ -102,19 +106,17 @@ export function NotificationBell() {
                     <p className="text-[10px] text-muted-foreground/50 mt-1">
                       {formatTime(n.createdAt)}
                     </p>
-                    {n.dealId && (
-                      <div className="flex gap-2 mt-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-6 text-[10px] px-2 border-border/50 hover:border-primary/50 hover:text-primary"
-                          onClick={() => handleViewDetails(n.id, n.dealId)}
-                        >
-                          <ExternalLink className="h-3 w-3 mr-1" />
-                          Ver e Confirmar
-                        </Button>
-                      </div>
-                    )}
+                    <div className="flex gap-2 mt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] px-2 border-border/50 hover:border-primary/50 hover:text-primary"
+                        onClick={() => handleViewDetails(n.id, n.dealId)}
+                      >
+                        <ExternalLink className="h-3 w-3 mr-1" />
+                        {n.dealId ? "Ver e Confirmar" : "Abrir Financeiro"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -103,6 +103,22 @@ interface SalaryRow {
   updated_at?: string | null;
 }
 
+interface ManualPaymentRow {
+  id: string;
+  user_id: string;
+  payment_type: string;
+  description: string;
+  reference_month: string;
+  amount: number;
+  is_paid_by_gestor: boolean;
+  payment_date: string | null;
+  confirmed_by_user_at?: string | null;
+  rejected_by_user_at?: string | null;
+  is_test_data?: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 interface ProfileMap {
   [userId: string]: { full_name: string; display_name: string; commission_percent: number; fixed_salary: number; position?: string };
 }
@@ -130,6 +146,30 @@ function salaryActionKey(row: { id: string; user_id: string; reference_month: an
 
 function getSalaryExpectedPaymentDate(monthKey: string, salaryDueDay?: number): string {
   return getDueDateForMonth(monthKey, salaryDueDay || 1);
+}
+
+function toDateInputValue(value?: string | null): string {
+  if (!value) return "";
+  const str = typeof value === "string" && !value.includes("T") ? value + "T12:00:00" : value;
+  const d = new Date(str);
+  if (isNaN(d.getTime())) return "";
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function todayDateInputValue(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dateInputToIso(value?: string | null): string {
+  const safeValue = value || todayDateInputValue();
+  return new Date(`${safeValue}T12:00:00`).toISOString();
 }
 
 function getSalaryRowPriority(row: {
@@ -214,6 +254,14 @@ function normalizeSalaryRows<T extends { amount?: any; is_paid_by_gestor?: any; 
     amount: Number(row.amount ?? 0),
     is_paid_by_gestor: Boolean(row.is_paid_by_gestor),
     user_confirmed_receipt: Boolean(row.user_confirmed_receipt),
+  }));
+}
+
+function normalizeManualPayments(rows: any[]): ManualPaymentRow[] {
+  return rows.map((row) => ({
+    ...row,
+    amount: Number(row.amount ?? 0),
+    is_paid_by_gestor: Boolean(row.is_paid_by_gestor),
   }));
 }
 
@@ -579,7 +627,13 @@ function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, sala
     <>
       <TableRow
         onClick={() => setExpanded(!expanded)}
-        className={`border-border/25 cursor-pointer transition-colors ${isPaid ? "bg-success/5 hover:bg-success/10" : "hover:bg-[#242842]/40"}`}
+        className={`border-border/25 cursor-pointer transition-colors ${
+          isConfirmed
+            ? "bg-success/5 hover:bg-success/10"
+            : isPaid
+              ? "bg-warning/5 hover:bg-warning/10"
+              : "hover:bg-[#242842]/40"
+        }`}
       >
         <TableCell className="w-[30px] px-2 py-3">
           {expanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/50" />}
@@ -674,12 +728,21 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       if (salariesRes.error && (salariesRes.error.message?.includes("is_test_data") || salariesRes.error.message?.includes("column"))) {
         salariesRes = await (supabase.from("salary_payments") as any).select("*").eq("user_id", userId);
       }
+      let manualPaymentsRes = await (supabase.from("manual_payments") as any)
+        .select("*")
+        .eq("user_id", userId)
+        .eq("is_test_data", isTestEnv)
+        .order("created_at", { ascending: false });
+      if (manualPaymentsRes.error && (manualPaymentsRes.error.message?.includes("manual_payments") || manualPaymentsRes.error.message?.includes("schema cache"))) {
+        manualPaymentsRes = { data: [], error: null } as any;
+      }
       const [profilesRes, commissionPaymentsData] = await Promise.all([
         (supabase.from("profiles") as any).select("user_id, full_name, display_name, commission_percent, fixed_salary, position").eq("user_id", userId),
         fetchCommissionPaymentsForUser(userId),
       ]);
 
       if (salariesRes.error) throw salariesRes.error;
+      if (manualPaymentsRes.error) throw manualPaymentsRes.error;
       if (profilesRes.error) throw profilesRes.error;
 
       const map: ProfileMap = {};
@@ -695,6 +758,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
       return {
         salaries: salariesRes.data as any[],
+        manualPayments: manualPaymentsRes.data as any[],
         profiles: map,
         commissionPayments: commissionPaymentsData,
       };
@@ -702,6 +766,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   });
 
   const querySalaries = dedupeSalaryRows(normalizeSalaryRows(data?.salaries || []));
+  const manualPayments = normalizeManualPayments(data?.manualPayments || []);
   const profiles = data?.profiles || {};
   const commissionPayments: CommissionPayment[] = data?.commissionPayments || [];
   const userCommissionDealIds = useMemo(
@@ -743,6 +808,22 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     return activeSalaries.filter((s) => getMonthKey(s.reference_month) === selectedMonth);
   }, [activeSalaries, selectedMonth]);
 
+  const filteredManualPayments = useMemo(() => {
+    return manualPayments.filter((payment) => getMonthKey(payment.reference_month) === selectedMonth);
+  }, [manualPayments, selectedMonth]);
+
+  const pendingSalaryItems = useMemo(() => {
+    return filteredSalaries.filter((s: any) =>
+      s.is_paid_by_gestor && !s.confirmed_by_user_at && !s.rejected_by_user_at
+    );
+  }, [filteredSalaries]);
+
+  const pendingManualItems = useMemo(() => {
+    return filteredManualPayments.filter((payment) =>
+      payment.is_paid_by_gestor && !payment.confirmed_by_user_at && !payment.rejected_by_user_at
+    );
+  }, [filteredManualPayments]);
+
   const pendingConfirmations = useMemo(() => {
     // Usa commission_payments como fonte primária (granular por componente/mês)
     const pendingCpIds = new Set(
@@ -775,10 +856,10 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   useEffect(() => {
     if (!pendingScroll) return;
 
-    if (pendingConfirmations.length > 0) {
+    if (pendingConfirmations.length > 0 || pendingSalaryItems.length > 0 || pendingManualItems.length > 0) {
       const timer = setTimeout(() => {
         const target = focusedDealId ? document.getElementById(`pending-commission-${focusedDealId}`) : null;
-        (target || document.getElementById("pending-confirmations"))?.scrollIntoView({ behavior: "smooth", block: "start" });
+        (target || document.getElementById("pending-confirmations") || document.getElementById("manual-payments-period") || document.getElementById("salary-period"))?.scrollIntoView({ behavior: "smooth", block: "start" });
         setPendingScroll(false);
       }, 400);
       return () => clearTimeout(timer);
@@ -797,7 +878,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     }, 300);
 
     return () => clearTimeout(retryTimer);
-  }, [pendingScroll, pendingConfirmations.length, appLoading, refreshDeals, focusedDealId]);
+  }, [pendingScroll, pendingConfirmations.length, pendingSalaryItems.length, pendingManualItems.length, appLoading, refreshDeals, focusedDealId]);
 
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number }> = {};
@@ -906,9 +987,13 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
     const totalFixo = filteredSalaries.length > 0 ? filteredSalaries.reduce((acc, s) => acc + s.amount, 0) : (profiles[userId]?.fixed_salary || 0);
     const fixedConfirmed = filteredSalaries.some((s: any) => !!s.confirmed_by_user_at);
+    filteredManualPayments.forEach((payment) => {
+      if (payment.confirmed_by_user_at) paid += payment.amount;
+      else projected += payment.amount;
+    });
 
     return { projected, paid, volume, fixed: totalFixo, fixedConfirmed };
-  }, [filteredDeals, filteredSalaries, userId, selectedMonth, presentations, settings, commissionPayments]);
+  }, [filteredDeals, filteredSalaries, filteredManualPayments, userId, selectedMonth, presentations, settings, commissionPayments]);
 
   if (loading) {
     return (
@@ -995,7 +1080,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     const now = new Date().toISOString();
     const { data, error } = await (supabase as any)
       .from("salary_payments")
-      .update({ confirmed_by_user_at: now, rejected_by_user_at: null })
+      .update({ user_confirmed_receipt: true, confirmed_by_user_at: now, rejected_by_user_at: null })
       .eq("id", salaryId)
       .eq("user_id", userId)
       .eq("is_paid_by_gestor", true)
@@ -1003,8 +1088,59 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       .maybeSingle();
     if (error) { toast.error("Erro ao confirmar salario: " + error.message); return; }
     if (!data) { toast.error("Salario nao encontrado para confirmacao."); return; }
+    const { isTestEnv } = await getCurrentUserContext();
+    const { data: directors } = await (supabase as any)
+      .from("profiles")
+      .select("user_id")
+      .eq("position", "Diretor")
+      .eq("is_test_data", isTestEnv);
+    if (directors?.length) {
+      await Promise.all(directors.map((d: any) =>
+        createNotification(
+          d.user_id,
+          "Salário confirmado",
+          `${getUserName(userId)} confirmou o recebimento do salário de ${formatMonthLabel(selectedMonth)}.`
+        )
+      ));
+    }
     toast.success("Salario confirmado!");
     queryClient.invalidateQueries({ queryKey: ["user-finance-data", userId] });
+    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+  };
+
+  const handleConfirmManualPaymentReceipt = async (paymentId: string) => {
+    const now = new Date().toISOString();
+    const { data: updatedPayment, error } = await (supabase as any)
+      .from("manual_payments")
+      .update({ confirmed_by_user_at: now, rejected_by_user_at: null, updated_at: now } as any)
+      .eq("id", paymentId)
+      .eq("user_id", userId)
+      .eq("is_paid_by_gestor", true)
+      .is("confirmed_by_user_at", null)
+      .select("id, payment_type, description, amount")
+      .maybeSingle();
+    if (error) { toast.error("Erro ao confirmar lançamento: " + error.message); return; }
+    if (!updatedPayment) { toast.error("Lançamento não encontrado para confirmação."); return; }
+
+    const { isTestEnv } = await getCurrentUserContext();
+    const { data: directors } = await (supabase as any)
+      .from("profiles")
+      .select("user_id")
+      .eq("position", "Diretor")
+      .eq("is_test_data", isTestEnv);
+    if (directors?.length) {
+      await Promise.all(directors.map((d: any) =>
+        createNotification(
+          d.user_id,
+          "Lançamento confirmado",
+          `${getUserName(userId)} confirmou o recebimento de ${formatCurrency(updatedPayment.amount)} em ${updatedPayment.payment_type}: ${updatedPayment.description}.`
+        )
+      ));
+    }
+
+    toast.success("Lançamento confirmado!");
+    queryClient.invalidateQueries({ queryKey: ["user-finance-data", userId] });
+    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
   const getUserName = (id: string) => profiles[id]?.full_name || "-";
@@ -1053,7 +1189,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
 
       {(() => {
         const pendingPayment = filteredDeals.filter((d) => !d.isPaidToUser).length;
-        if (pendingCommissionItems.length === 0 && pendingPayment === 0) return null;
+        if (pendingCommissionItems.length === 0 && pendingSalaryItems.length === 0 && pendingManualItems.length === 0 && pendingPayment === 0) return null;
         return (
           <div className="flex flex-wrap gap-3 mb-5">
             {pendingCommissionItems.length > 0 && (
@@ -1064,6 +1200,30 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                 <span className="h-2 w-2 rounded-full bg-warning animate-pulse" />
                 <span className="text-xs font-semibold text-warning">
                   {pendingCommissionItems.length} comissão{pendingCommissionItems.length > 1 ? "ões" : ""} aguardando sua confirmação
+                </span>
+                <ChevronDown className="h-3 w-3 text-warning/70" />
+              </button>
+            )}
+            {pendingSalaryItems.length > 0 && (
+              <button
+                onClick={() => document.getElementById("salary-period")?.scrollIntoView({ behavior: "smooth" })}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-warning/10 border border-warning/30 hover:bg-warning/20 hover:border-warning/50 transition-colors cursor-pointer"
+              >
+                <span className="h-2 w-2 rounded-full bg-warning animate-pulse" />
+                <span className="text-xs font-semibold text-warning">
+                  {pendingSalaryItems.length} salário{pendingSalaryItems.length > 1 ? "s" : ""} aguardando sua confirmação
+                </span>
+                <ChevronDown className="h-3 w-3 text-warning/70" />
+              </button>
+            )}
+            {pendingManualItems.length > 0 && (
+              <button
+                onClick={() => document.getElementById("manual-payments-period")?.scrollIntoView({ behavior: "smooth" })}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-warning/10 border border-warning/30 hover:bg-warning/20 hover:border-warning/50 transition-colors cursor-pointer"
+              >
+                <span className="h-2 w-2 rounded-full bg-warning animate-pulse" />
+                <span className="text-xs font-semibold text-warning">
+                  {pendingManualItems.length} lançamento{pendingManualItems.length > 1 ? "s" : ""} extra{pendingManualItems.length > 1 ? "s" : ""} aguardando confirmação
                 </span>
                 <ChevronDown className="h-3 w-3 text-warning/70" />
               </button>
@@ -1216,7 +1376,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
           </Table>
         </div>
 
-        <div className="bg-card rounded-xl border border-border/60 overflow-hidden">
+        <div id="salary-period" className="bg-card rounded-xl border border-border/60 overflow-hidden">
           <div className="px-5 py-3 border-b border-border/40 flex items-center gap-2">
             <Wallet className="h-4 w-4 text-primary" />
             <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Meu Salário Fixo</span>
@@ -1252,6 +1412,57 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                     salaryDueDay={settings.salaryDueDay}
                     onConfirmSalary={handleConfirmSalaryReceipt}
                   />
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        <div id="manual-payments-period" className="bg-card rounded-xl border border-border/60 overflow-hidden">
+          <div className="px-5 py-3 border-b border-border/40 flex items-center gap-2">
+            <Plus className="h-4 w-4 text-primary" />
+            <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Lançamentos Extras</span>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border/30 hover:bg-transparent">
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Tipo</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Descrição</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Valor</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Competência</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Pago em</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredManualPayments.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
+                    Nenhum bônus ou premiação neste mês.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredManualPayments.map((payment) => (
+                  <TableRow key={payment.id} className={`border-border/25 hover:bg-[#242842]/40 ${
+                    payment.confirmed_by_user_at ? "bg-success/5" : "bg-warning/5"
+                  }`}>
+                    <TableCell className="px-4 py-3 text-sm font-medium">{payment.payment_type}</TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground">{payment.description}</TableCell>
+                    <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold">{formatCurrency(payment.amount)}</TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground">{formatMonthLabel(getMonthKey(payment.reference_month))}</TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground">{formatSafeDate(payment.payment_date)}</TableCell>
+                    <TableCell className="px-4 py-3 text-center">
+                      {payment.confirmed_by_user_at ? (
+                        <span className="pill-green">Recebido</span>
+                      ) : payment.is_paid_by_gestor ? (
+                        <Button size="sm" className="h-7 text-[10px]" onClick={() => handleConfirmManualPaymentReceipt(payment.id)}>
+                          Confirmar Recebimento
+                        </Button>
+                      ) : (
+                        <span className="pill-yellow">A Receber</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
                 ))
               )}
             </TableBody>
@@ -1335,10 +1546,18 @@ function FinanceiroContent() {
       if (salariesRes.error && (salariesRes.error.message?.includes("is_test_data") || salariesRes.error.message?.includes("column"))) {
         salariesRes = await (supabase.from("salary_payments") as any).select("*");
       }
+      let manualPaymentsRes = await (supabase.from("manual_payments") as any)
+        .select("*")
+        .eq("is_test_data", isTestEnv)
+        .order("created_at", { ascending: false });
+      if (manualPaymentsRes.error && (manualPaymentsRes.error.message?.includes("manual_payments") || manualPaymentsRes.error.message?.includes("schema cache"))) {
+        manualPaymentsRes = { data: [], error: null } as any;
+      }
       const commissionPaymentsData = await fetchCommissionPaymentsForEnvironment();
 
       if (profilesRes.error) throw profilesRes.error;
       if (salariesRes.error) throw salariesRes.error;
+      if (manualPaymentsRes.error) throw manualPaymentsRes.error;
 
       const map: ProfileMap = {};
       (profilesRes.data as any[]).forEach((p) => {
@@ -1353,6 +1572,7 @@ function FinanceiroContent() {
 
       return {
         salaries: salariesRes.data as any[],
+        manualPayments: manualPaymentsRes.data as any[],
         profiles: map,
         commissionPayments: commissionPaymentsData,
       };
@@ -1360,6 +1580,7 @@ function FinanceiroContent() {
   });
 
   const querySalaries = dedupeSalaryRows(normalizeSalaryRows(data?.salaries || []));
+  const manualPayments = normalizeManualPayments(data?.manualPayments || []);
   const profiles = data?.profiles || {};
   const commissionPayments: CommissionPayment[] = data?.commissionPayments || [];
 
@@ -1399,11 +1620,23 @@ function FinanceiroContent() {
 
       const passUser = filtroFuncionario === "Todos" || s.user_id === filtroFuncionario;
       let passStatus = true;
-      if (filtroStatus === "Finalizados") passStatus = s.is_paid_by_gestor === true;
-      if (filtroStatus === "Pendentes") passStatus = !s.is_paid_by_gestor;
+      if (filtroStatus === "Finalizados") passStatus = !!s.confirmed_by_user_at;
+      if (filtroStatus === "Pendentes") passStatus = !s.confirmed_by_user_at;
       return passTime && passUser && passStatus;
     });
   }, [activeSalaries, period, filtroFuncionario, filtroStatus]);
+
+  const filteredManualPayments = useMemo(() => {
+    return manualPayments.filter((payment) => {
+      const referenceMonthKey = getMonthKey(payment.reference_month);
+      const passTime = monthKeyInPeriod(referenceMonthKey, period);
+      const passUser = filtroFuncionario === "Todos" || payment.user_id === filtroFuncionario;
+      let passStatus = true;
+      if (filtroStatus === "Finalizados") passStatus = !!payment.confirmed_by_user_at;
+      if (filtroStatus === "Pendentes") passStatus = !payment.confirmed_by_user_at;
+      return passTime && passUser && passStatus;
+    });
+  }, [manualPayments, period, filtroFuncionario, filtroStatus]);
 
   const kpis = useMemo(() => {
     // Soma pagamentos explícitos de salary_payments
@@ -1484,10 +1717,13 @@ function FinanceiroContent() {
     const totalSalariosPagos = filteredSalaries
       .filter((s: any) => s.is_paid_by_gestor && dateInFinancePeriod(s.payment_date || s.confirmed_by_user_at, period))
       .reduce((acc: number, s: any) => acc + (s.amount || 0), 0);
-    const totalPagoGeral = totalPago + totalSalariosPagos;
+    const totalManuaisPagos = filteredManualPayments
+      .filter((payment) => payment.is_paid_by_gestor && dateInFinancePeriod(payment.payment_date || payment.confirmed_by_user_at, period))
+      .reduce((acc: number, payment) => acc + payment.amount, 0);
+    const totalPagoGeral = totalPago + totalSalariosPagos + totalManuaisPagos;
 
-    return { totalFixo, totalProjetado, totalPago, totalSalariosPagos, totalPagoGeral, volumeTotal };
-  }, [filteredDeals, filteredSalaries, period, presentations, settings, commissionPayments, filtroFuncionario, profiles]);
+    return { totalFixo, totalProjetado, totalPago, totalSalariosPagos, totalManuaisPagos, totalPagoGeral, volumeTotal };
+  }, [filteredDeals, filteredSalaries, filteredManualPayments, period, presentations, settings, commissionPayments, filtroFuncionario, profiles]);
 
   // Rows para modal e Contas a Pagar: salary_payments explícitos + fallback de profiles
   const salaryModalRows = useMemo(() => {
@@ -1732,18 +1968,26 @@ function FinanceiroContent() {
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
-  const handleToggleSalaryPayment = async (salaryId: string, currentStatus: boolean) => {
+  const handleToggleSalaryPayment = async (salaryId: string, currentStatus: boolean, paymentDate?: string) => {
     const newStatus = !currentStatus;
     let salaryUpdate = (supabase as any)
       .from("salary_payments")
-      .update({ is_paid_by_gestor: newStatus, payment_date: newStatus ? new Date().toISOString() : null, confirmed_by_user_at: null, rejected_by_user_at: null } as any)
+      .update({
+        is_paid_by_gestor: newStatus,
+        payment_date: newStatus ? dateInputToIso(paymentDate) : null,
+        user_confirmed_receipt: false,
+        confirmed_by_user_at: null,
+        rejected_by_user_at: null,
+      } as any)
       .eq("id", salaryId);
 
     if (!newStatus) {
       salaryUpdate = salaryUpdate.is("confirmed_by_user_at", null);
     }
 
-    const { data: updatedSalary, error } = await salaryUpdate.select("id").maybeSingle();
+    const { data: updatedSalary, error } = await salaryUpdate
+      .select("id, user_id, reference_month")
+      .maybeSingle();
     if (error) { toast.error("Erro: " + error.message); return; }
     if (!updatedSalary) {
       toast.error(newStatus
@@ -1751,11 +1995,19 @@ function FinanceiroContent() {
         : "Este salario ja foi confirmado pelo funcionario e nao pode ter a baixa desfeita.");
       return;
     }
-    toast.success(newStatus ? "Salário marcado como pago com sucesso!" : "Baixa de salário desmarcada");
+    if (newStatus) {
+      const referenceMonth = salaryReferenceKey(updatedSalary.reference_month);
+      await createNotification(
+        updatedSalary.user_id,
+        "Salario disponivel",
+        `Seu salario de ${formatMonthLabel(referenceMonth)} foi marcado como transferido. Acesse o Financeiro para confirmar o recebimento.`
+      );
+    }
+    toast.success(newStatus ? "Baixa enviada; aguardando confirmação do funcionário." : "Baixa de salário desmarcada");
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
-  const handleCreateAndToggleSalaryPayment = async (userId: string, amount: number, referenceMonth: string) => {
+  const handleCreateAndToggleSalaryPayment = async (userId: string, amount: number, referenceMonth: string, paymentDate?: string) => {
     const referenceKey = salaryReferenceKey(referenceMonth);
     const processingKey = `fallback:${userId}:${referenceKey}`;
     if (processingSalaryKeys.has(processingKey)) return;
@@ -1769,7 +2021,8 @@ function FinanceiroContent() {
       reference_month: referenceDate,
       expected_payment_date: dateStr,
       is_paid_by_gestor: true,
-      payment_date: new Date().toISOString(),
+      payment_date: dateInputToIso(paymentDate),
+      user_confirmed_receipt: false,
       confirmed_by_user_at: null,
       rejected_by_user_at: null,
       is_test_data: isTestEnv,
@@ -1810,6 +2063,99 @@ function FinanceiroContent() {
         return next;
       });
     }
+  };
+
+  const handleUpdateSalaryPaymentDate = async (salaryId: string, paymentDate: string) => {
+    const { data: updatedSalary, error } = await (supabase as any)
+      .from("salary_payments")
+      .update({ payment_date: dateInputToIso(paymentDate) } as any)
+      .eq("id", salaryId)
+      .eq("is_paid_by_gestor", true)
+      .is("confirmed_by_user_at", null)
+      .select("id")
+      .maybeSingle();
+    if (error) { toast.error("Erro ao atualizar data de pagamento: " + error.message); return; }
+    if (!updatedSalary) {
+      toast.error("A data só pode ser editada antes da confirmação do funcionário.");
+      return;
+    }
+    toast.success("Data real de pagamento atualizada.");
+    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+  };
+
+  const handleCreateManualPayment = async (payload: {
+    userId: string;
+    paymentType: string;
+    description: string;
+    amount: number;
+    referenceMonth: string;
+    paymentDate: string;
+  }) => {
+    if (!payload.userId) { toast.error("Selecione o funcionário."); return; }
+    if (!payload.description.trim()) { toast.error("Informe a descrição do lançamento."); return; }
+    if (!payload.amount || payload.amount <= 0) { toast.error("Informe um valor maior que zero."); return; }
+
+    const { isTestEnv } = await getCurrentUserContext();
+    const referenceMonth = `${payload.referenceMonth.slice(0, 7)}-01`;
+    const { error } = await (supabase as any)
+      .from("manual_payments")
+      .insert({
+        user_id: payload.userId,
+        payment_type: payload.paymentType || "Bônus",
+        description: payload.description.trim(),
+        reference_month: referenceMonth,
+        amount: payload.amount,
+        is_paid_by_gestor: true,
+        payment_date: dateInputToIso(payload.paymentDate),
+        confirmed_by_user_at: null,
+        rejected_by_user_at: null,
+        is_test_data: isTestEnv,
+      } as any);
+    if (error) { toast.error("Erro ao criar lançamento manual: " + error.message); return; }
+
+    await createNotification(
+      payload.userId,
+      "Lançamento extra disponível",
+      `${payload.paymentType || "Bônus"} de ${formatCurrency(payload.amount)} foi marcado como transferido. Acesse o Financeiro para confirmar o recebimento.`
+    );
+    toast.success("Lançamento manual enviado para confirmação.");
+    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+  };
+
+  const handleUpdateManualPaymentDate = async (paymentId: string, paymentDate: string) => {
+    const { data: updatedPayment, error } = await (supabase as any)
+      .from("manual_payments")
+      .update({ payment_date: dateInputToIso(paymentDate), updated_at: new Date().toISOString() } as any)
+      .eq("id", paymentId)
+      .eq("is_paid_by_gestor", true)
+      .is("confirmed_by_user_at", null)
+      .select("id")
+      .maybeSingle();
+    if (error) { toast.error("Erro ao atualizar data do lançamento: " + error.message); return; }
+    if (!updatedPayment) {
+      toast.error("A data só pode ser editada antes da confirmação do funcionário.");
+      return;
+    }
+    toast.success("Data real do lançamento atualizada.");
+    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+  };
+
+  const handleDeleteManualPayment = async (paymentId: string) => {
+    if (!confirm("Remover este lançamento manual?")) return;
+    const { data: deletedPayment, error } = await (supabase as any)
+      .from("manual_payments")
+      .delete()
+      .eq("id", paymentId)
+      .is("confirmed_by_user_at", null)
+      .select("id")
+      .maybeSingle();
+    if (error) { toast.error("Erro ao remover lançamento: " + error.message); return; }
+    if (!deletedPayment) {
+      toast.error("Lançamentos já confirmados não podem ser removidos por aqui.");
+      return;
+    }
+    toast.success("Lançamento manual removido.");
+    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
   const getUserName = (userId: string) => profiles[userId]?.full_name || "-";
@@ -1948,6 +2294,7 @@ function FinanceiroContent() {
           <PayablesTab
             deals={filteredDeals}
             salaries={salaryModalRows}
+            manualPayments={filteredManualPayments}
             profiles={profiles}
             getUserName={getUserName}
             presentations={presentations}
@@ -1958,6 +2305,10 @@ function FinanceiroContent() {
             onToggleCommissionPayment={handleToggleCommissionPayment}
             onToggleSalaryPayment={handleToggleSalaryPayment}
             onCreateAndToggleSalaryPayment={handleCreateAndToggleSalaryPayment}
+            onUpdateSalaryPaymentDate={handleUpdateSalaryPaymentDate}
+            onCreateManualPayment={handleCreateManualPayment}
+            onUpdateManualPaymentDate={handleUpdateManualPaymentDate}
+            onDeleteManualPayment={handleDeleteManualPayment}
           />
         </TabsContent>
       </Tabs>
@@ -2302,6 +2653,7 @@ function ReceivablesTab({ deals, selectedMonth, settings, getUserName, onToggleM
 interface PayablesTabProps {
   deals: Deal[];
   salaries: Array<SalaryRow & { isFallback?: boolean }>;
+  manualPayments: ManualPaymentRow[];
   profiles: ProfileMap;
   getUserName: (id: string) => string;
   presentations: any;
@@ -2310,8 +2662,12 @@ interface PayablesTabProps {
   period: FinancePeriod;
   processingSalaryKeys: Set<string>;
   onToggleCommissionPayment: (dealId: string, currentStatus: boolean, recipientUserId?: string) => void;
-  onToggleSalaryPayment: (salaryId: string, currentStatus: boolean) => void;
-  onCreateAndToggleSalaryPayment: (userId: string, amount: number, referenceMonth: string) => void;
+  onToggleSalaryPayment: (salaryId: string, currentStatus: boolean, paymentDate?: string) => void;
+  onCreateAndToggleSalaryPayment: (userId: string, amount: number, referenceMonth: string, paymentDate?: string) => void;
+  onUpdateSalaryPaymentDate: (salaryId: string, paymentDate: string) => void;
+  onCreateManualPayment: (payload: { userId: string; paymentType: string; description: string; amount: number; referenceMonth: string; paymentDate: string }) => void;
+  onUpdateManualPaymentDate: (paymentId: string, paymentDate: string) => void;
+  onDeleteManualPayment: (paymentId: string) => void;
 }
 
 function ExpandableCommissionRow({ deal, recipientUserId, settings, profiles, getUserName, presentations, commissionPayments, period, onToggleCommissionPayment }: any) {
@@ -2440,7 +2796,52 @@ function ExpandableCommissionRow({ deal, recipientUserId, settings, profiles, ge
   );
 }
 
-function PayablesTab({ deals, salaries, profiles, getUserName, presentations, settings, commissionPayments, period, processingSalaryKeys, onToggleCommissionPayment, onToggleSalaryPayment, onCreateAndToggleSalaryPayment }: PayablesTabProps) {
+function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, presentations, settings, commissionPayments, period, processingSalaryKeys, onToggleCommissionPayment, onToggleSalaryPayment, onCreateAndToggleSalaryPayment, onUpdateSalaryPaymentDate, onCreateManualPayment, onUpdateManualPaymentDate, onDeleteManualPayment }: PayablesTabProps) {
+  const [salaryPaymentDates, setSalaryPaymentDates] = useState<Record<string, string>>({});
+  const defaultManualMonth = period.filterType === "year" ? `${period.selectedYear}-01` : (period.selectedMonth || period.fromMonth || getMonthKey(new Date()));
+  const [manualForm, setManualForm] = useState({
+    userId: "",
+    paymentType: "Bônus",
+    description: "",
+    amount: "",
+    referenceMonth: defaultManualMonth,
+    paymentDate: todayDateInputValue(),
+  });
+  const [manualPaymentDates, setManualPaymentDates] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setManualForm((prev) => ({
+      ...prev,
+      referenceMonth: prev.referenceMonth || defaultManualMonth,
+    }));
+  }, [defaultManualMonth]);
+
+  const getSalaryPaymentDateValue = (salary: SalaryRow & { isFallback?: boolean }) => {
+    const key = salaryActionKey(salary);
+    return salaryPaymentDates[key] || toDateInputValue(salary.payment_date) || todayDateInputValue();
+  };
+
+  const setSalaryPaymentDateValue = (salary: SalaryRow & { isFallback?: boolean }, value: string) => {
+    const key = salaryActionKey(salary);
+    setSalaryPaymentDates((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const getManualPaymentDateValue = (payment: ManualPaymentRow) => {
+    return manualPaymentDates[payment.id] || toDateInputValue(payment.payment_date) || todayDateInputValue();
+  };
+
+  const submitManualPayment = () => {
+    onCreateManualPayment({
+      userId: manualForm.userId,
+      paymentType: manualForm.paymentType,
+      description: manualForm.description,
+      amount: Number(manualForm.amount || 0),
+      referenceMonth: manualForm.referenceMonth,
+      paymentDate: manualForm.paymentDate,
+    });
+    setManualForm((prev) => ({ ...prev, description: "", amount: "" }));
+  };
+
   return (
     <div className="space-y-5">
       {/* Commissions */}
@@ -2510,21 +2911,30 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
               <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Funcionário</TableHead>
               <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Valor</TableHead>
               <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Vencimento</TableHead>
-              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Transferido</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Pago em</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {salaries.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-8">
+                <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
                   Nenhum salário registrado para este mês.
                 </TableCell>
               </TableRow>
             ) : (
               salaries.map((s) => {
                 const isSalaryProcessing = processingSalaryKeys.has(salaryActionKey(s));
+                const paymentDateValue = getSalaryPaymentDateValue(s);
+                const canEditPaymentDate = !(s as any).confirmed_by_user_at;
                 return (
-                <TableRow key={s.id} className={`border-border/25 hover:bg-[#242842]/40 ${s.is_paid_by_gestor ? "bg-success/5" : ""}`}>
+                <TableRow key={s.id} className={`border-border/25 hover:bg-[#242842]/40 ${
+                  (s as any).confirmed_by_user_at
+                    ? "bg-success/5"
+                    : s.is_paid_by_gestor
+                      ? "bg-warning/5"
+                      : ""
+                }`}>
                   <TableCell className="px-4 py-3 text-sm font-medium">
                     {getUserName(s.user_id)}
                     {(s as any).isFallback && (
@@ -2533,25 +2943,185 @@ function PayablesTab({ deals, salaries, profiles, getUserName, presentations, se
                   </TableCell>
                   <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold">{formatCurrency(s.amount)}</TableCell>
                   <TableCell className="px-4 py-3 text-sm text-muted-foreground">{formatSafeDate(s.expected_payment_date)}</TableCell>
+                  <TableCell className="px-4 py-3">
+                    <input
+                      type="date"
+                      value={paymentDateValue}
+                      disabled={isSalaryProcessing || !canEditPaymentDate}
+                      onChange={(e) => setSalaryPaymentDateValue(s, e.target.value)}
+                      onBlur={(e) => {
+                        if ((s as any).isFallback || !s.is_paid_by_gestor || !canEditPaymentDate) return;
+                        if (e.target.value !== toDateInputValue(s.payment_date)) {
+                          onUpdateSalaryPaymentDate(s.id, e.target.value);
+                        }
+                      }}
+                      className="h-8 w-[136px] rounded-md border border-border/60 bg-card px-2 text-xs text-foreground disabled:opacity-60"
+                      title="Data real em que o pagamento foi feito. Não altera a competência."
+                    />
+                  </TableCell>
                   <TableCell className="px-4 py-3 text-center">
-                    {(s as any).isFallback ? (
-                      <Checkbox
-                        checked={false}
-                        disabled={isSalaryProcessing}
-                        onCheckedChange={() => onCreateAndToggleSalaryPayment(s.user_id, s.amount, s.reference_month)}
-                        title="Clique para registrar e marcar como pago"
-                      />
-                    ) : (
-                      <Checkbox
-                        checked={s.is_paid_by_gestor || false}
-                        disabled={isSalaryProcessing || !!(s as any).confirmed_by_user_at}
-                        title={(s as any).confirmed_by_user_at ? "Salario ja confirmado pelo funcionario" : undefined}
-                        onCheckedChange={() => onToggleSalaryPayment(s.id, s.is_paid_by_gestor || false)}
-                      />
-                    )}
+                    <div className="flex flex-col items-center gap-1.5">
+                      {(s as any).isFallback ? (
+                        <Checkbox
+                          checked={false}
+                          disabled={isSalaryProcessing}
+                          onCheckedChange={() => onCreateAndToggleSalaryPayment(s.user_id, s.amount, s.reference_month, paymentDateValue)}
+                          title="Clique para registrar e marcar como pago"
+                        />
+                      ) : (
+                        <Checkbox
+                          checked={s.is_paid_by_gestor || false}
+                          disabled={isSalaryProcessing || !!(s as any).confirmed_by_user_at}
+                          title={(s as any).confirmed_by_user_at ? "Salario ja confirmado pelo funcionario" : undefined}
+                          onCheckedChange={() => onToggleSalaryPayment(s.id, s.is_paid_by_gestor || false, paymentDateValue)}
+                        />
+                      )}
+                      {(s as any).confirmed_by_user_at ? (
+                        <span className="text-[10px] font-semibold text-success">Confirmado</span>
+                      ) : s.is_paid_by_gestor ? (
+                        <span className="text-[10px] font-semibold text-warning">Aguardando confirmação</span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground/60">A pagar</span>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* Manual payments */}
+      <div className="bg-card rounded-xl border border-border/60 overflow-hidden">
+        <div className="px-5 py-3 border-b border-border/40 flex items-center gap-2">
+          <Plus className="h-4 w-4 text-primary" />
+          <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Lançamentos Manuais</span>
+        </div>
+        <div className="px-5 py-4 border-b border-border/30 grid grid-cols-1 md:grid-cols-6 gap-3">
+          <select
+            value={manualForm.userId}
+            onChange={(e) => setManualForm((prev) => ({ ...prev, userId: e.target.value }))}
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+          >
+            <option value="">Funcionário</option>
+            {Object.entries(profiles).map(([id, profile]) => (
+              <option key={id} value={id}>{profile.full_name}</option>
+            ))}
+          </select>
+          <select
+            value={manualForm.paymentType}
+            onChange={(e) => setManualForm((prev) => ({ ...prev, paymentType: e.target.value }))}
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+          >
+            <option value="Bônus">Bônus</option>
+            <option value="Premiação">Premiação</option>
+            <option value="Ajuda de custo">Ajuda de custo</option>
+            <option value="Outro">Outro</option>
+          </select>
+          <input
+            type="month"
+            value={manualForm.referenceMonth}
+            onChange={(e) => setManualForm((prev) => ({ ...prev, referenceMonth: e.target.value }))}
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+            title="Competência do lançamento. Não muda com a data real paga."
+          />
+          <input
+            type="date"
+            value={manualForm.paymentDate}
+            onChange={(e) => setManualForm((prev) => ({ ...prev, paymentDate: e.target.value }))}
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+            title="Data real em que o valor foi pago."
+          />
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={manualForm.amount}
+            onChange={(e) => setManualForm((prev) => ({ ...prev, amount: e.target.value }))}
+            placeholder="Valor"
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+          />
+          <Button size="sm" className="h-9 text-xs" onClick={submitManualPayment}>
+            Lançar
+          </Button>
+          <input
+            value={manualForm.description}
+            onChange={(e) => setManualForm((prev) => ({ ...prev, description: e.target.value }))}
+            placeholder="Descrição do bônus, premiação ou ajuste"
+            className="md:col-span-6 h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+          />
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow className="border-border/30 hover:bg-transparent">
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Funcionário</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Tipo</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Descrição</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Competência</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Pago em</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Valor</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Status</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Ação</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {manualPayments.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
+                  Nenhum bônus, premiação ou lançamento extra neste período.
+                </TableCell>
+              </TableRow>
+            ) : (
+              manualPayments.map((payment) => {
+                const paymentDateValue = getManualPaymentDateValue(payment);
+                const canEditPaymentDate = !payment.confirmed_by_user_at;
+                return (
+                  <TableRow key={payment.id} className={`border-border/25 hover:bg-[#242842]/40 ${
+                    payment.confirmed_by_user_at ? "bg-success/5" : "bg-warning/5"
+                  }`}>
+                    <TableCell className="px-4 py-3 text-sm font-medium">{getUserName(payment.user_id)}</TableCell>
+                    <TableCell className="px-4 py-3 text-sm">{payment.payment_type}</TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground">{payment.description}</TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground">{formatMonthLabel(getMonthKey(payment.reference_month))}</TableCell>
+                    <TableCell className="px-4 py-3">
+                      <input
+                        type="date"
+                        value={paymentDateValue}
+                        disabled={!canEditPaymentDate}
+                        onChange={(e) => setManualPaymentDates((prev) => ({ ...prev, [payment.id]: e.target.value }))}
+                        onBlur={(e) => {
+                          if (!canEditPaymentDate) return;
+                          if (e.target.value !== toDateInputValue(payment.payment_date)) {
+                            onUpdateManualPaymentDate(payment.id, e.target.value);
+                          }
+                        }}
+                        className="h-8 w-[136px] rounded-md border border-border/60 bg-card px-2 text-xs text-foreground disabled:opacity-60"
+                        title="Data real em que o pagamento foi feito. Não altera a competência."
+                      />
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold">{formatCurrency(payment.amount)}</TableCell>
+                    <TableCell className="px-4 py-3 text-center">
+                      {payment.confirmed_by_user_at ? (
+                        <span className="text-[10px] font-semibold text-success">Confirmado</span>
+                      ) : (
+                        <span className="text-[10px] font-semibold text-warning">Aguardando confirmação</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-center">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!!payment.confirmed_by_user_at}
+                        className="h-7 text-[10px]"
+                        onClick={() => onDeleteManualPayment(payment.id)}
+                      >
+                        Remover
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
               })
             )}
           </TableBody>

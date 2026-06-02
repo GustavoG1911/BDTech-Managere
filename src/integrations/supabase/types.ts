@@ -618,6 +618,54 @@ export type Database = {
         }
         Relationships: []
       }
+      manual_payments: {
+        Row: {
+          amount: number
+          confirmed_by_user_at: string | null
+          created_at: string | null
+          description: string
+          id: string
+          is_paid_by_gestor: boolean
+          is_test_data: boolean
+          payment_date: string | null
+          payment_type: string
+          reference_month: string
+          rejected_by_user_at: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          confirmed_by_user_at?: string | null
+          created_at?: string | null
+          description: string
+          id?: string
+          is_paid_by_gestor?: boolean
+          is_test_data?: boolean
+          payment_date?: string | null
+          payment_type?: string
+          reference_month: string
+          rejected_by_user_at?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          confirmed_by_user_at?: string | null
+          created_at?: string | null
+          description?: string
+          id?: string
+          is_paid_by_gestor?: boolean
+          is_test_data?: boolean
+          payment_date?: string | null
+          payment_type?: string
+          reference_month?: string
+          rejected_by_user_at?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       salary_payments: {
         Row: {
           amount: number
