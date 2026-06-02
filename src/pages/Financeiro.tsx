@@ -152,6 +152,47 @@ function getSalaryExpectedPaymentDate(monthKey: string, salaryDueDay?: number): 
   return getSalaryDueDateForCompetenceMonth(monthKey, salaryDueDay || 1);
 }
 
+function shiftMonthKey(monthKey: string, offset: number): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return monthKey;
+  const d = new Date(year, month - 1 + offset, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getSalaryCompetenceMonthForPaymentMonth(paymentMonthKey: string): string {
+  return shiftMonthKey(paymentMonthKey, -1);
+}
+
+function getMonthKeysForPeriod(period: FinancePeriod): string[] {
+  if (period.filterType === "month") return [period.selectedMonth];
+  if (period.filterType === "year") {
+    return Array.from({ length: 12 }, (_, index) => `${period.selectedYear}-${String(index + 1).padStart(2, "0")}`);
+  }
+
+  const fromMonth = period.fromMonth || period.selectedMonth;
+  const toMonth = period.toMonth || period.selectedMonth;
+  const months: string[] = [];
+  let cursor = fromMonth;
+  let guard = 0;
+  while (cursor <= toMonth && guard < 120) {
+    months.push(cursor);
+    cursor = shiftMonthKey(cursor, 1);
+    guard += 1;
+  }
+  return months;
+}
+
+function getSalaryScheduledPaymentMonthKey(row: {
+  reference_month?: any;
+  expected_payment_date?: string | null;
+  payment_date?: string | null;
+}, salaryDueDay = 1): string {
+  if (row.expected_payment_date) return getMonthKey(row.expected_payment_date);
+  const referenceMonth = salaryReferenceKey(row.reference_month);
+  if (referenceMonth) return getMonthKey(getSalaryExpectedPaymentDate(referenceMonth, salaryDueDay));
+  return row.payment_date ? getMonthKey(row.payment_date) : "";
+}
+
 function toDateInputValue(value?: string | null): string {
   if (!value) return "";
   const str = typeof value === "string" && !value.includes("T") ? value + "T12:00:00" : value;
@@ -637,11 +678,13 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
 function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, salaryDueDay = 1, onConfirmSalary }: any) {
   const [expanded, setExpanded] = useState(false);
   const amount = salary?.amount ?? profiles?.[userId]?.fixed_salary ?? 0;
-  const expectedDate = salary?.expected_payment_date;
+  const fallbackReferenceMonth = getSalaryCompetenceMonthForPaymentMonth(selectedMonth);
+  const fallbackExpectedDate = getSalaryExpectedPaymentDate(fallbackReferenceMonth, salaryDueDay);
+  const expectedDate = salary?.expected_payment_date || fallbackExpectedDate;
   const isPaid = salary?.is_paid_by_gestor ?? false;
   const isConfirmed = !!salary?.confirmed_by_user_at;
   const paymentDate = salary?.payment_date;
-  const referenceMonth = salary?.reference_month;
+  const referenceMonth = salaryReferenceKey(salary?.reference_month) || fallbackReferenceMonth;
 
   return (
     <>
@@ -663,7 +706,7 @@ function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, sala
         </TableCell>
         <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold">{formatCurrency(amount)}</TableCell>
         <TableCell className="px-4 py-3 text-sm text-muted-foreground">
-          {expectedDate ? formatSafeDate(expectedDate) : formatSafeDate(getSalaryExpectedPaymentDate(selectedMonth, salaryDueDay))}
+          {formatSafeDate(expectedDate)}
         </TableCell>
         <TableCell className="px-4 py-3 text-center">
           {isConfirmed ? (
@@ -682,9 +725,9 @@ function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, sala
           <TableCell colSpan={5} className="p-0">
             <div className="px-5 py-4 bg-[#242842]/60 border-t border-border/30 grid grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
               <div className="p-3 rounded-lg bg-muted/30 border border-border/30 space-y-1">
-                <p className="text-muted-foreground">Mês de Referência</p>
+                <p className="text-muted-foreground">Competência (mês trabalhado)</p>
                 <p className="font-mono font-semibold text-foreground/90">
-                  {referenceMonth ? formatSafeDate(referenceMonth.length === 7 ? referenceMonth + "-01" : referenceMonth, "MMMM yyyy") : formatMonthLabel(selectedMonth)}
+                  {formatMonthLabel(referenceMonth)}
                 </p>
               </div>
               <div className="p-3 rounded-lg bg-muted/30 border border-border/30 space-y-1">
@@ -694,7 +737,7 @@ function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, sala
               <div className="p-3 rounded-lg bg-muted/30 border border-border/30 space-y-1">
                 <p className="text-muted-foreground">Vencimento Previsto</p>
                 <p className="font-mono font-semibold text-foreground/90">
-                  {expectedDate ? formatSafeDate(expectedDate) : formatSafeDate(getSalaryExpectedPaymentDate(selectedMonth, salaryDueDay))}
+                  {formatSafeDate(expectedDate)}
                 </p>
               </div>
               {paymentDate && (
@@ -822,8 +865,8 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   }, [scopedDeals, selectedMonth, filtroOperacao, filtroStatus, presentations, settings, commissionPayments]);
 
   const filteredSalaries = useMemo(() => {
-    return activeSalaries.filter((s) => getMonthKey(s.reference_month) === selectedMonth);
-  }, [activeSalaries, selectedMonth]);
+    return activeSalaries.filter((s) => getSalaryScheduledPaymentMonthKey(s, settings.salaryDueDay) === selectedMonth);
+  }, [activeSalaries, selectedMonth, settings.salaryDueDay]);
 
   useEffect(() => {
     if (!(location.state as any)?.scrollToSalary) return;
@@ -837,14 +880,14 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       && !payment.rejected_by_user_at
     );
     const targetMonth = pendingSalary
-      ? getMonthKey(pendingSalary.reference_month)
+      ? getSalaryScheduledPaymentMonthKey(pendingSalary, settings.salaryDueDay)
       : pendingManual
         ? getMonthKey(pendingManual.reference_month)
         : null;
     if (targetMonth && targetMonth !== selectedMonth) {
       setSelectedMonth(targetMonth);
     }
-  }, [location.state, activeSalaries, manualPayments, selectedMonth]);
+  }, [location.state, activeSalaries, manualPayments, selectedMonth, settings.salaryDueDay]);
 
   const filteredManualPayments = useMemo(() => {
     return manualPayments.filter((payment) =>
@@ -1118,6 +1161,8 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   };
 
   const handleConfirmSalaryReceipt = async (salaryId: string) => {
+    const salaryToConfirm = activeSalaries.find((s: any) => s.id === salaryId);
+    const confirmedReferenceMonth = salaryReferenceKey(salaryToConfirm?.reference_month) || getSalaryCompetenceMonthForPaymentMonth(selectedMonth);
     const now = new Date().toISOString();
     const { data, error } = await (supabase as any)
       .from("salary_payments")
@@ -1140,7 +1185,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         createNotification(
           d.user_id,
           "Salário confirmado",
-          `${getUserName(userId)} confirmou o recebimento do salário de ${formatMonthLabel(selectedMonth)}.`
+          `${getUserName(userId)} confirmou o recebimento do salário referente a ${formatMonthLabel(confirmedReferenceMonth)}.`
         )
       ));
     }
@@ -1225,7 +1270,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         <KpiCard title="Comissão Paga" value={formatCurrency(kpis.paid)} icon={BadgeDollarSign} variant="success" subtitle="Já confirmada e recebida" tooltip="Comissões que você confirmou como recebidas. Se o pagamento foi antecipado, conta no mês da confirmação." />
         <KpiCard title="Comissão Prevista" value={formatCurrency(kpis.projected)} icon={TrendingUp} variant="primary" subtitle="Esperado receber neste mês pela Regra do Dia 07" tooltip="Comissões liberadas ou previstas para o mês financeiro selecionado, respeitando a Regra do Dia 07." />
         <KpiCard title="Volume de Vendas" value={formatCurrency(kpis.volume)} icon={BarChart3} variant="warning" subtitle="Valor bruto dos contratos do período" tooltip="Soma dos valores dos contratos com competência no período. Em implantação parcelada, considera apenas a parcela do mês." />
-        <KpiCard title="Salário Fixo" value={formatCurrency(kpis.fixed)} icon={DollarSign} variant={kpis.fixedConfirmed ? "success" : "default"} subtitle={kpis.fixedConfirmed ? "Recebimento confirmado" : "Remuneração fixa mensal"} tooltip="Salário fixo cadastrado para o mês. Quando confirmado, o quadro fica marcado visualmente." />
+        <KpiCard title="Salário Fixo" value={formatCurrency(kpis.fixed)} icon={DollarSign} variant={kpis.fixedConfirmed ? "success" : "default"} subtitle={kpis.fixedConfirmed ? "Recebimento confirmado" : "Vencimento no mês selecionado"} tooltip="Salário fixo com vencimento no mês selecionado. A competência exibida na linha é o mês trabalhado." />
       </div>
 
       {(() => {
@@ -1420,7 +1465,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         <div id="salary-period" className="bg-card rounded-xl border border-border/60 overflow-hidden">
           <div className="px-5 py-3 border-b border-border/40 flex items-center gap-2">
             <Wallet className="h-4 w-4 text-primary" />
-            <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Meu Salário Fixo - Competência {formatMonthLabel(selectedMonth)}</span>
+            <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Meu Salário Fixo - Pagamentos de {formatMonthLabel(selectedMonth)}</span>
           </div>
           <Table>
             <TableHeader>
@@ -1653,7 +1698,7 @@ function FinanceiroContent() {
 
   const filteredSalaries = useMemo(() => {
     return activeSalaries.filter((s) => {
-      const salaryMonthKey = getMonthKey(s.reference_month);
+      const salaryMonthKey = getSalaryScheduledPaymentMonthKey(s, settings.salaryDueDay);
       const passTime = monthKeyInPeriod(salaryMonthKey, period);
 
       const passUser = filtroFuncionario === "Todos" || s.user_id === filtroFuncionario;
@@ -1662,7 +1707,7 @@ function FinanceiroContent() {
       if (filtroStatus === "Pendentes") passStatus = !s.confirmed_by_user_at;
       return passTime && passUser && passStatus;
     });
-  }, [activeSalaries, period, filtroFuncionario, filtroStatus]);
+  }, [activeSalaries, period, filtroFuncionario, filtroStatus, settings.salaryDueDay]);
 
   const filteredManualPayments = useMemo(() => {
     return manualPayments.filter((payment) => {
@@ -1688,16 +1733,24 @@ function FinanceiroContent() {
 
   const kpis = useMemo(() => {
     // Soma pagamentos explícitos de salary_payments
-    const usersWithPayments = new Set(filteredSalaries.map((s: any) => s.user_id));
+    const salaryMonthsInPeriod = getMonthKeysForPeriod(period);
+    const usersWithPayments = new Set(
+      activeSalaries
+        .filter((s: any) => monthKeyInPeriod(getSalaryScheduledPaymentMonthKey(s, settings.salaryDueDay), period))
+        .map((s: any) => `${s.user_id}:${getSalaryScheduledPaymentMonthKey(s, settings.salaryDueDay)}`)
+    );
     const explicitFixo = filteredSalaries.reduce((acc: number, s: any) => acc + (s.amount || 0), 0);
     // Fallback: para usuários sem registro de pagamento no período, usa fixed_salary do perfil
     let fallbackFixo = 0;
     Object.entries(profiles).forEach(([uid, profile]) => {
-      if (usersWithPayments.has(uid)) return;
+      if (filtroStatus === "Finalizados") return;
       const fixedSal = (profile as any).fixed_salary || 0;
       if (fixedSal <= 0) return;
       if (filtroFuncionario !== "Todos" && filtroFuncionario !== uid) return;
-      fallbackFixo += fixedSal;
+      salaryMonthsInPeriod.forEach((paymentMonth) => {
+        if (usersWithPayments.has(`${uid}:${paymentMonth}`)) return;
+        fallbackFixo += fixedSal;
+      });
     });
     const totalFixo = explicitFixo + fallbackFixo;
 
@@ -1778,31 +1831,45 @@ function FinanceiroContent() {
     const totalPagoGeral = totalPago + totalSalariosPagos + totalManuaisPagos;
 
     return { totalFixo, totalProjetado, totalPago, totalSalariosPagos, totalManuaisPagos, totalPagoGeral, volumeTotal };
-  }, [activeSalaries, filteredDeals, filteredSalaries, filteredManualReceivables, manualPayments, period, presentations, settings, commissionPayments, filtroFuncionario, profiles]);
+  }, [activeSalaries, filteredDeals, filteredSalaries, filteredManualReceivables, manualPayments, period, presentations, settings, commissionPayments, filtroFuncionario, filtroStatus, profiles]);
 
   // Rows para modal e Contas a Pagar: salary_payments explícitos + fallback de profiles
   const salaryModalRows = useMemo(() => {
     const rows: Array<SalaryRow & { isFallback?: boolean }> = [...filteredSalaries];
-    const usersWithPayments = new Set(filteredSalaries.map((s: any) => s.user_id));
+    const salaryMonthsInPeriod = getMonthKeysForPeriod(period);
+    const usersWithPayments = new Set(
+      activeSalaries
+        .filter((s: any) => monthKeyInPeriod(getSalaryScheduledPaymentMonthKey(s, settings.salaryDueDay), period))
+        .map((s: any) => `${s.user_id}:${getSalaryScheduledPaymentMonthKey(s, settings.salaryDueDay)}`)
+    );
     Object.entries(profiles).forEach(([uid, profile]) => {
-      if (usersWithPayments.has(uid)) return;
+      if (filtroStatus === "Finalizados") return;
       const fixedSal = (profile as any).fixed_salary || 0;
       if (fixedSal <= 0) return;
       if (filtroFuncionario !== "Todos" && filtroFuncionario !== uid) return;
-      rows.push({
-        id: `fallback-${uid}`,
-        user_id: uid,
-        reference_month: filterType === "year" ? selectedYear + "-01-01" : selectedMonth + "-01",
-        amount: fixedSal,
-        expected_payment_date: getSalaryExpectedPaymentDate(filterType === "year" ? selectedYear + "-01" : selectedMonth, settings.salaryDueDay),
-        is_paid_by_gestor: false,
-        user_confirmed_receipt: false,
-        payment_date: null,
-        isFallback: true,
+      salaryMonthsInPeriod.forEach((paymentMonth) => {
+        if (usersWithPayments.has(`${uid}:${paymentMonth}`)) return;
+        const referenceMonth = getSalaryCompetenceMonthForPaymentMonth(paymentMonth);
+        rows.push({
+          id: `fallback-${uid}-${referenceMonth}`,
+          user_id: uid,
+          reference_month: `${referenceMonth}-01`,
+          amount: fixedSal,
+          expected_payment_date: getSalaryExpectedPaymentDate(referenceMonth, settings.salaryDueDay),
+          is_paid_by_gestor: false,
+          user_confirmed_receipt: false,
+          payment_date: null,
+          isFallback: true,
+        });
       });
     });
-    return rows;
-  }, [filteredSalaries, profiles, filtroFuncionario, filterType, selectedMonth, selectedYear, settings.salaryDueDay]);
+    return rows.sort((a, b) => {
+      const monthA = getSalaryScheduledPaymentMonthKey(a, settings.salaryDueDay);
+      const monthB = getSalaryScheduledPaymentMonthKey(b, settings.salaryDueDay);
+      if (monthA !== monthB) return monthA.localeCompare(monthB);
+      return (profiles[a.user_id]?.full_name || "").localeCompare(profiles[b.user_id]?.full_name || "");
+    });
+  }, [activeSalaries, filteredSalaries, profiles, filtroFuncionario, filtroStatus, period, settings.salaryDueDay]);
 
   const futureProjections = useMemo(() => {
     const projMap: Record<string, { projectedIn: number, projectedOut: number }> = {};
@@ -2386,12 +2453,12 @@ function FinanceiroContent() {
           onClick={() => setKpiModalType("projetado")}
         />
         <KpiCard
-          title="Salários da Competência"
+          title="Salários a Pagar"
           value={formatCurrency(kpis.totalFixo)}
           icon={Wallet}
           variant="default"
-          subtitle="Mês trabalhado selecionado"
-          tooltip="Soma os salários fixos pela competência, ou seja, pelo mês trabalhado. O vencimento acontece no mês seguinte."
+          subtitle="Vencimento no período"
+          tooltip="Soma os salários fixos cujo vencimento cai no período filtrado. A competência exibida nas linhas é o mês trabalhado, normalmente o mês anterior."
           onClick={() => setKpiModalType("fixo")}
         />
       </div>
@@ -2458,7 +2525,7 @@ function FinanceiroContent() {
               {kpiModalType === "volume" && "Detalhamento: Volume Bruto"}
               {kpiModalType === "pago" && "Detalhamento: Comissão Paga"}
               {kpiModalType === "projetado" && "Detalhamento: Comissão Projetada"}
-              {kpiModalType === "fixo" && "Detalhamento: Salários da Competência"}
+              {kpiModalType === "fixo" && "Detalhamento: Salários a Pagar"}
             </DialogTitle>
           </DialogHeader>
           <div className="mt-2">
@@ -2467,6 +2534,8 @@ function FinanceiroContent() {
                 <TableHeader>
                   <TableRow className="border-border/30 hover:bg-transparent">
                     <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Funcionário</TableHead>
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Competência</TableHead>
+                    <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Vencimento</TableHead>
                     <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Salário</TableHead>
                     <TableHead className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Status</TableHead>
                   </TableRow>
@@ -2474,12 +2543,14 @@ function FinanceiroContent() {
                 <TableBody>
                   {salaryModalRows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={3} className="text-center text-sm text-muted-foreground py-8">Nenhum salário fixo cadastrado.</TableCell>
+                      <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">Nenhum salário fixo cadastrado.</TableCell>
                     </TableRow>
                   ) : (
                     salaryModalRows.map((s) => (
                       <TableRow key={s.id} className="border-border/25 hover:bg-[#242842]/40">
                         <TableCell className="text-sm font-medium">{getUserName(s.user_id)}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{formatMonthLabel(salaryReferenceKey(s.reference_month))}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{formatSafeDate(s.expected_payment_date)}</TableCell>
                         <TableCell className="text-right font-mono font-semibold">{formatCurrency(s.amount)}</TableCell>
                         <TableCell className="text-center">
                           {s.is_paid_by_gestor ? (
@@ -3229,7 +3300,7 @@ function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, p
       <div className="bg-card rounded-xl border border-border/60 overflow-hidden">
         <div className="px-5 py-3 border-b border-border/40 flex items-center gap-2">
           <Wallet className="h-4 w-4 text-primary" />
-          <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Salários Fixos por Competência</span>
+          <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Salários Fixos por Vencimento</span>
         </div>
         <Table>
           <TableHeader>
@@ -3246,7 +3317,7 @@ function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, p
             {salaries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
-                  Nenhum salário registrado para este mês.
+                  Nenhum salário com vencimento neste período.
                 </TableCell>
               </TableRow>
             ) : (
