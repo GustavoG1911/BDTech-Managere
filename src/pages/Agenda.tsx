@@ -15,7 +15,7 @@ import { Calendar, dateFnsLocalizer, View, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit, Video, Link as LinkIcon, Mail, RefreshCw, CheckCircle2, Clock, ExternalLink, FileText } from "lucide-react";
+import { Plus, Trash2, Edit, Video, Link as LinkIcon, Mail, RefreshCw, CheckCircle2, Clock, ExternalLink, FileText, CalendarDays } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -52,6 +52,35 @@ function formatEventDateTime(value?: string) {
   });
 }
 
+function isSameLocalDay(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+function formatEventTime(value?: string) {
+  if (!value) return "--:--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return date.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatEventDate(value?: string) {
+  if (!value) return "Data não informada";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Data inválida";
+  return date.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 const locales = {
   "pt-BR": ptBR,
 };
@@ -81,6 +110,7 @@ export default function Agenda() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [formStart, setFormStart] = useState("");
   const [formEnd, setFormEnd] = useState("");
+  const [currentTime, setCurrentTime] = useState(() => new Date());
 
   // Check centralized Google connection status and handle OAuth callback result
   useEffect(() => {
@@ -142,6 +172,11 @@ export default function Agenda() {
     const interval = setInterval(() => handleSyncNow(true), 15 * 60 * 1000);
     return () => clearInterval(interval);
   }, [googleConnected, handleSyncNow]);
+
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const { data: events, isLoading } = useQuery({
     queryKey: ["calendar-events"],
@@ -226,6 +261,11 @@ export default function Agenda() {
     end: new Date(evt.end_time),
   })) || [];
 
+  const todaysMeetingsCount = mappedEvents.filter((event) => isSameLocalDay(event.start, currentTime)).length;
+  const nextMeeting = [...mappedEvents]
+    .filter((event) => event.start.getTime() >= currentTime.getTime())
+    .sort((a, b) => a.start.getTime() - b.start.getTime())[0];
+
   const eventStyleGetter = (event: MappedCalendarEvent) => {
     let backgroundColor = "#3b82f6"; // default blue
     if (event.operation === "Opus Tech") backgroundColor = "#10b981"; // green
@@ -267,6 +307,62 @@ export default function Agenda() {
             <Plus className="mr-2 h-4 w-4" /> Nova Reunião
           </Button>
         </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <Card className="border-border/60 bg-card/80">
+          <CardContent className="flex items-center gap-4 p-4">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+              <CalendarDays className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Reuniões hoje</p>
+              <p className="mt-1 text-2xl font-bold text-foreground">{todaysMeetingsCount}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/60 bg-card/80">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                <Clock className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Próxima reunião</p>
+                {nextMeeting ? (
+                  nextMeeting.meeting_link ? (
+                    <a
+                      href={nextMeeting.meeting_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-flex max-w-full items-center gap-2 text-left text-lg font-semibold text-foreground hover:text-primary hover:underline"
+                      title="Abrir link da reunião"
+                    >
+                      <span className="truncate">{nextMeeting.title}</span>
+                      <ExternalLink className="h-4 w-4 shrink-0" />
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDialog(nextMeeting)}
+                      className="mt-1 block max-w-full cursor-pointer truncate text-left text-lg font-semibold text-foreground hover:text-primary hover:underline"
+                    >
+                      {nextMeeting.title}
+                    </button>
+                  )
+                ) : (
+                  <p className="mt-1 text-lg font-semibold text-foreground">Nenhuma reunião futura</p>
+                )}
+                {nextMeeting && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {isSameLocalDay(nextMeeting.start, currentTime) ? "Hoje" : formatEventDate(nextMeeting.start_time)} às {formatEventTime(nextMeeting.start_time)}
+                  </p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <Dialog open={isConfigOpen} onOpenChange={setIsConfigOpen}>
