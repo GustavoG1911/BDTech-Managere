@@ -94,6 +94,17 @@ const localizer = dateFnsLocalizer({
   locales,
 });
 
+function CalendarEventLabel({ event }: { event: MappedCalendarEvent }) {
+  return (
+    <div className="flex min-w-0 items-center gap-1 leading-tight">
+      <span className="shrink-0 text-[10px] font-semibold tabular-nums opacity-90">
+        {formatEventTime(event.start_time)}
+      </span>
+      <span className="min-w-0 truncate">{event.title}</span>
+    </div>
+  );
+}
+
 export default function Agenda() {
   const { user, role } = useAuth();
   const isAdmin = role === "admin";
@@ -769,6 +780,7 @@ export default function Agenda() {
                 setIsDialogOpen(true);
               }}
               components={{
+                event: CalendarEventLabel,
                 toolbar: (props) => (
                   <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                     <div className="flex items-center space-x-2">
