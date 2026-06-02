@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { fetchCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from "@/lib/supabase-agenda";
+import { classifyOperation, fetchCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchAdminCalendarStatus, startGoogleCalendarConnection } from "@/lib/google-calendar";
+import { incrementPresentationCount } from "@/lib/supabase-deals";
 import { supabase } from "@/integrations/supabase/client";
-import { CalendarEvent, CalendarEventStatus } from "@/lib/types";
+import { CalendarEvent, CalendarEventStatus, Operation } from "@/lib/types";
 
 type MappedCalendarEvent = CalendarEvent & { start: Date; end: Date };
 type EventDialogMode = "view" | "edit";
@@ -15,7 +16,7 @@ import { Calendar, dateFnsLocalizer, View, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit, Video, Link as LinkIcon, Mail, RefreshCw, CheckCircle2, Clock, ExternalLink, FileText, CalendarDays } from "lucide-react";
+import { Plus, Trash2, Edit, Video, Link as LinkIcon, Mail, RefreshCw, CheckCircle2, Clock, ExternalLink, FileText, CalendarDays, XCircle } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -99,6 +100,7 @@ export default function Agenda() {
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [missedMeetingEvent, setMissedMeetingEvent] = useState<CalendarEvent | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [dialogMode, setDialogMode] = useState<EventDialogMode>("edit");
   const [slotDates, setSlotDates] = useState<{ start: string; end: string } | null>(null);
@@ -217,6 +219,62 @@ export default function Agenda() {
     }
   });
 
+  const moveProspectToStatus = async (prospectId: string, status: string) => {
+    const { error } = await (supabase as any)
+      .from("prospects")
+      .update({ status })
+      .eq("id", prospectId);
+
+    if (error) throw error;
+  };
+
+  const updateEventStatusMutation = useMutation({
+    mutationFn: async ({ event, status, prospectStatus }: { event: CalendarEvent; status: CalendarEventStatus; prospectStatus?: string }) => {
+      const detectedOperation = event.operation || classifyOperation(event.meeting_link, event.description);
+      if (status === "Realizado" && event.status !== "Realizado" && !detectedOperation) {
+        throw new Error("Defina a operação da reunião antes de contabilizar apresentação.");
+      }
+
+      await updateCalendarEvent(event.id, {
+        status,
+        ...(detectedOperation ? { operation: detectedOperation } : {}),
+      });
+
+      if (status === "Realizado" && event.status !== "Realizado") {
+        if (!user?.id) throw new Error("Usuário não identificado.");
+        const monthKey = format(new Date(event.start_time), "yyyy-MM");
+        const presentationOperation = detectedOperation === "BluePex" ? "bluepex" : "opus";
+        await incrementPresentationCount(monthKey, presentationOperation, user.id);
+      }
+
+      const shouldMoveProspect = Boolean(event.prospect_id && prospectStatus);
+      if (event.prospect_id && prospectStatus) {
+        await moveProspectToStatus(event.prospect_id, prospectStatus);
+      }
+
+      return { status, prospectStatus, operation: detectedOperation as Operation | undefined, movedProspect: shouldMoveProspect };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["calendar-events"] });
+      queryClient.invalidateQueries({ queryKey: ["prospects"] });
+      setMissedMeetingEvent(null);
+      setEditingEvent((prev) => prev ? { ...prev, status: result.status, operation: result.operation || prev.operation } : prev);
+      if (result.status === "Realizado") {
+        toast.success(result.movedProspect
+          ? "Reunião concluída, apresentação contabilizada e lead movido para Concluído."
+          : "Reunião concluída e apresentação contabilizada.");
+      } else if (result.prospectStatus === "Em Contato") {
+        toast.success("Reunião marcada como não realizada e lead voltou para Em Contato.");
+      } else {
+        toast.success("Reunião marcada como não realizada.");
+      }
+    },
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : "Erro desconhecido";
+      toast.error(`Erro ao atualizar reunião: ${msg}`);
+    },
+  });
+
   const handleOpenDialog = (event?: CalendarEvent, mode: EventDialogMode = event ? "view" : "edit") => {
     setEditingEvent(event || null);
     setDialogMode(mode);
@@ -252,6 +310,20 @@ export default function Agenda() {
       description: formData.get("description") as string,
       status: (formData.get("status") || "Agendado") as CalendarEventStatus,
       ...(operation && operation !== "auto" ? { operation: operation as "BluePex" | "Opus Tech" } : {}),
+    });
+  };
+
+  const handleMeetingHappened = () => {
+    if (!editingEvent || !user?.id) return;
+    updateEventStatusMutation.mutate({ event: editingEvent, status: "Realizado", prospectStatus: "Concluído" });
+  };
+
+  const handleMeetingMissed = (moveBackToContact: boolean) => {
+    if (!missedMeetingEvent) return;
+    updateEventStatusMutation.mutate({
+      event: missedMeetingEvent,
+      status: "Cancelado",
+      prospectStatus: moveBackToContact ? "Em Contato" : undefined,
     });
   };
 
@@ -516,14 +588,33 @@ export default function Agenda() {
               </div>
 
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
-                <Button type="button" variant="outline" onClick={handleEditEvent}>
-                  <Edit className="h-4 w-4 mr-2" /> Editar reunião
-                </Button>
-                <Button type="button" variant="destructive" onClick={() => {
-                  if (confirm("Deseja excluir esta reunião?")) deleteEventMutation.mutate(editingEvent.id);
-                }}>
-                  <Trash2 className="h-4 w-4 mr-2" /> Excluir
-                </Button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button type="button" variant="outline" onClick={handleEditEvent}>
+                    <Edit className="h-4 w-4 mr-2" /> Editar reunião
+                  </Button>
+                  <Button type="button" variant="destructive" onClick={() => {
+                    if (confirm("Deseja excluir esta reunião?")) deleteEventMutation.mutate(editingEvent.id);
+                  }}>
+                    <Trash2 className="h-4 w-4 mr-2" /> Excluir
+                  </Button>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setMissedMeetingEvent(editingEvent)}
+                    disabled={updateEventStatusMutation.isPending || editingEvent.status === "Cancelado"}
+                  >
+                    <XCircle className="h-4 w-4 mr-2" /> Não aconteceu
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleMeetingHappened}
+                    disabled={updateEventStatusMutation.isPending || editingEvent.status === "Realizado"}
+                  >
+                    <CheckCircle2 className="h-4 w-4 mr-2" /> Aconteceu
+                  </Button>
+                </div>
               </div>
             </div>
           ) : (
@@ -607,6 +698,36 @@ export default function Agenda() {
               </div>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!missedMeetingEvent} onOpenChange={(open) => !open && setMissedMeetingEvent(null)}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Reunião não aconteceu</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <p className="text-sm text-muted-foreground">
+              Deseja voltar o lead para a etapa "Em Contato" ou deixar o card na etapa atual do funil?
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleMeetingMissed(false)}
+                disabled={updateEventStatusMutation.isPending}
+              >
+                Deixar como está
+              </Button>
+              <Button
+                type="button"
+                onClick={() => handleMeetingMissed(true)}
+                disabled={updateEventStatusMutation.isPending}
+              >
+                Voltar para Em Contato
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

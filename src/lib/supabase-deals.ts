@@ -241,6 +241,37 @@ export async function savePresentationToDb(monthKey: string, operation: "bluepex
   if (error) throw error;
 }
 
+export async function incrementPresentationCount(monthKey: string, operation: "bluepex" | "opus", userId: string) {
+  const { isTestEnv } = await getCurrentUserContext();
+  const dbOperation = operation === "bluepex" ? "BluePex" : "Opus Tech";
+  const dateStr = monthKey + "-01";
+
+  const { data: existing, error: fetchError } = await (supabase as any)
+    .from("presentations")
+    .select("count")
+    .eq("date", dateStr)
+    .eq("operation", dbOperation)
+    .eq("is_test_data", isTestEnv)
+    .maybeSingle();
+
+  if (fetchError) throw fetchError;
+
+  const { error } = await (supabase as any)
+    .from("presentations")
+    .upsert(
+      {
+        user_id: userId,
+        operation: dbOperation,
+        count: (existing?.count ?? 0) + 1,
+        date: dateStr,
+        is_test_data: isTestEnv,
+      },
+      { onConflict: "date,operation,is_test_data" }
+    );
+
+  if (error) throw error;
+}
+
 export async function fetchUserCommissionRate(userId: string): Promise<number | null> {
   const { data, error } = await (supabase as any)
     .from("profiles")

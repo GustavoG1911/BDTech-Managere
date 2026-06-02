@@ -51,6 +51,8 @@ type ImportUiReport = ProspectImportReport & {
 
 const PROSPECT_OPERATIONS: ProspectOperation[] = ["A definir", "BluePex", "Opus Tech"];
 const OPERATION_FILTERS: Array<ProspectOperation | "Todas"> = ["Todas", ...PROSPECT_OPERATIONS];
+const DEFAULT_FUNNEL_COLUMNS = ["Mapeamento", "Em Contato", "Agendado", "Concluído", "Perdido"];
+const REQUIRED_FUNNEL_COLUMNS = ["Em Contato", "Agendado", "Concluído"];
 
 const getProspectOperation = (prospect?: Pick<Prospect, "operation"> | null): ProspectOperation =>
   normalizeProspectOperation(prospect?.operation);
@@ -99,7 +101,8 @@ export default function Prospeccao() {
 
   const [columns, setColumns] = useState<string[]>(() => {
     const saved = localStorage.getItem('prospect_columns');
-    return saved ? JSON.parse(saved) : ["Mapeamento", "Em Contato", "Agendado", "Perdido"];
+    const parsed = saved ? JSON.parse(saved) : DEFAULT_FUNNEL_COLUMNS;
+    return Array.from(new Set([...parsed, ...REQUIRED_FUNNEL_COLUMNS]));
   });
 
   React.useEffect(() => {
@@ -593,7 +596,7 @@ export default function Prospeccao() {
               ))}
             </div>
             <p className="text-xs text-muted-foreground mt-4">
-              Dica: O status "Agendado" é utilizado para integração com a Agenda.
+              Dica: "Agendado" e "Concluído" são utilizados para integração com a Agenda.
             </p>
           </div>
         </DialogContent>
