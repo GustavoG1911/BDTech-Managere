@@ -621,13 +621,17 @@ export type Database = {
       manual_payments: {
         Row: {
           amount: number
+          client_name: string | null
           confirmed_by_user_at: string | null
           created_at: string | null
           description: string
+          expected_payment_date: string | null
           id: string
           is_paid_by_gestor: boolean
           is_test_data: boolean
+          operation: string | null
           payment_date: string | null
+          payment_direction: string
           payment_type: string
           reference_month: string
           rejected_by_user_at: string | null
@@ -636,13 +640,17 @@ export type Database = {
         }
         Insert: {
           amount: number
+          client_name?: string | null
           confirmed_by_user_at?: string | null
           created_at?: string | null
           description: string
+          expected_payment_date?: string | null
           id?: string
           is_paid_by_gestor?: boolean
           is_test_data?: boolean
+          operation?: string | null
           payment_date?: string | null
+          payment_direction?: string
           payment_type?: string
           reference_month: string
           rejected_by_user_at?: string | null
@@ -651,13 +659,17 @@ export type Database = {
         }
         Update: {
           amount?: number
+          client_name?: string | null
           confirmed_by_user_at?: string | null
           created_at?: string | null
           description?: string
+          expected_payment_date?: string | null
           id?: string
           is_paid_by_gestor?: boolean
           is_test_data?: boolean
+          operation?: string | null
           payment_date?: string | null
+          payment_direction?: string
           payment_type?: string
           reference_month?: string
           rejected_by_user_at?: string | null

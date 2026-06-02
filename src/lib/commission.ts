@@ -110,6 +110,12 @@ export function getDueDateForMonth(monthKey: string, dueDay = 1): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(Math.min(safeDay, lastDay)).padStart(2, "0")}`;
 }
 
+export function getSalaryDueDateForCompetenceMonth(monthKey: string, dueDay = 1): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const dueMonth = new Date(year, month, 1);
+  return getDueDateForMonth(getMonthKey(dueMonth), dueDay);
+}
+
 /**
  * Given a deal's closing month, returns the month key when its commission is payable.
  */

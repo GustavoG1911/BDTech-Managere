@@ -1,9 +1,14 @@
 CREATE TABLE IF NOT EXISTS public.manual_payments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,
+  payment_direction text NOT NULL DEFAULT 'payable'
+    CHECK (payment_direction IN ('payable', 'receivable')),
   payment_type text NOT NULL DEFAULT 'Bônus',
+  client_name text,
+  operation text,
   description text NOT NULL,
   reference_month date NOT NULL,
+  expected_payment_date date,
   amount numeric NOT NULL CHECK (amount > 0),
   is_paid_by_gestor boolean NOT NULL DEFAULT true,
   payment_date timestamptz,
@@ -15,9 +20,11 @@ CREATE TABLE IF NOT EXISTS public.manual_payments (
 );
 
 CREATE INDEX IF NOT EXISTS manual_payments_user_month_idx
-  ON public.manual_payments (user_id, reference_month, is_test_data);
+  ON public.manual_payments (user_id, reference_month, is_test_data, payment_direction);
 
 ALTER TABLE public.manual_payments ENABLE ROW LEVEL SECURITY;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.manual_payments TO authenticated;
 
 DROP POLICY IF EXISTS "manual_payments_select_by_manager" ON public.manual_payments;
 DROP POLICY IF EXISTS "manual_payments_insert_by_manager" ON public.manual_payments;

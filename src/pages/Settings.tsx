@@ -35,7 +35,7 @@ import { useAppData } from "@/hooks/useAppData";
 import { useAppLogo } from "@/hooks/useAppLogo";
 import { isOperationalPosition, isPureSystemAdmin } from "@/lib/roles";
 import { getCurrentUserContext } from "@/lib/supabase-env";
-import { formatMonthLabel, getDueDateForMonth, getMonthKey } from "@/lib/commission";
+import { formatMonthLabel, getSalaryDueDateForCompetenceMonth, getMonthKey } from "@/lib/commission";
 import { fetchAdminCalendarStatus, startGoogleCalendarConnection, syncGoogleCalendar } from "@/lib/google-calendar";
 import { fetchPaymentDueSettings } from "@/lib/payment-settings";
 
@@ -879,7 +879,7 @@ function TeamTab() {
           user_id: userId,
           amount,
           reference_month: referenceMonth,
-          expected_payment_date: getDueDateForMonth(monthKey, salaryDueDay),
+          expected_payment_date: getSalaryDueDateForCompetenceMonth(monthKey, salaryDueDay),
           is_paid_by_gestor: false,
           payment_date: null,
           user_confirmed_receipt: false,
@@ -1157,9 +1157,9 @@ function TeamTab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="current">Mês atual</SelectItem>
-                      <SelectItem value="next">Próximo mês</SelectItem>
-                      <SelectItem value="custom">Outro mês</SelectItem>
+                      <SelectItem value="current">Competência atual</SelectItem>
+                      <SelectItem value="next">Próxima competência</SelectItem>
+                      <SelectItem value="custom">Outra competência</SelectItem>
                     </SelectContent>
                   </Select>
                   {(salaryEffectiveMode[p.user_id] || "current") === "custom" && (

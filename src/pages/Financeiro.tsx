@@ -15,7 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DollarSign, Upload, Download, ArrowRightLeft, Target, TrendingUp, BadgeDollarSign, Calendar, ChevronDown, ChevronUp, Clock, FileText, CheckCircle2, ArrowDownToLine, ArrowUpFromLine, Check, Loader2, Wallet, Plus, CalendarDays, FileDown, Printer, HelpCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
-import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getDueDateForMonth, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
+import { formatCurrency, getMonthKey, formatMonthLabel, getPaymentDateInfo, getSalaryDueDateForCompetenceMonth, getCommissionTier, calculateCommission, getPresentationsForDeal } from "@/lib/commission";
 import { createNotification, upsertCommissionPaymentRow, clearCommissionPaymentForComponent, confirmCommissionPaymentsByRecipient, confirmCommissionPaymentById, rejectCommissionPaymentById, fetchCommissionPaymentsForUser, fetchCommissionPaymentsForEnvironment, fetchAvailableYears, CommissionPayment } from "@/lib/supabase-deals";
 import { getCurrentUserContext } from "@/lib/supabase-env";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -106,9 +106,13 @@ interface SalaryRow {
 interface ManualPaymentRow {
   id: string;
   user_id: string;
+  payment_direction: "payable" | "receivable";
   payment_type: string;
+  client_name?: string | null;
+  operation?: string | null;
   description: string;
   reference_month: string;
+  expected_payment_date?: string | null;
   amount: number;
   is_paid_by_gestor: boolean;
   payment_date: string | null;
@@ -145,7 +149,7 @@ function salaryActionKey(row: { id: string; user_id: string; reference_month: an
 }
 
 function getSalaryExpectedPaymentDate(monthKey: string, salaryDueDay?: number): string {
-  return getDueDateForMonth(monthKey, salaryDueDay || 1);
+  return getSalaryDueDateForCompetenceMonth(monthKey, salaryDueDay || 1);
 }
 
 function toDateInputValue(value?: string | null): string {
@@ -170,6 +174,21 @@ function todayDateInputValue(): string {
 function dateInputToIso(value?: string | null): string {
   const safeValue = value || todayDateInputValue();
   return new Date(`${safeValue}T12:00:00`).toISOString();
+}
+
+async function createRequiredNotification(userId: string, title: string, message: string, dealId?: string): Promise<void> {
+  const { isTestEnv } = await getCurrentUserContext();
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    title,
+    message,
+    is_test_data: isTestEnv,
+    is_read: false,
+  };
+  if (dealId) payload.deal_id = dealId;
+
+  const { error } = await (supabase as any).from("notifications").insert(payload);
+  if (error) throw error;
 }
 
 function getSalaryRowPriority(row: {
@@ -260,6 +279,7 @@ function normalizeSalaryRows<T extends { amount?: any; is_paid_by_gestor?: any; 
 function normalizeManualPayments(rows: any[]): ManualPaymentRow[] {
   return rows.map((row) => ({
     ...row,
+    payment_direction: row.payment_direction === "receivable" ? "receivable" : "payable",
     amount: Number(row.amount ?? 0),
     is_paid_by_gestor: Boolean(row.is_paid_by_gestor),
   }));
@@ -733,9 +753,6 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         .eq("user_id", userId)
         .eq("is_test_data", isTestEnv)
         .order("created_at", { ascending: false });
-      if (manualPaymentsRes.error && (manualPaymentsRes.error.message?.includes("manual_payments") || manualPaymentsRes.error.message?.includes("schema cache"))) {
-        manualPaymentsRes = { data: [], error: null } as any;
-      }
       const [profilesRes, commissionPaymentsData] = await Promise.all([
         (supabase.from("profiles") as any).select("user_id, full_name, display_name, commission_percent, fixed_salary, position").eq("user_id", userId),
         fetchCommissionPaymentsForUser(userId),
@@ -808,8 +825,32 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     return activeSalaries.filter((s) => getMonthKey(s.reference_month) === selectedMonth);
   }, [activeSalaries, selectedMonth]);
 
+  useEffect(() => {
+    if (!(location.state as any)?.scrollToSalary) return;
+    const pendingSalary = activeSalaries.find((s: any) =>
+      s.is_paid_by_gestor && !s.confirmed_by_user_at && !s.rejected_by_user_at
+    );
+    const pendingManual = manualPayments.find((payment) =>
+      payment.payment_direction === "payable"
+      && payment.is_paid_by_gestor
+      && !payment.confirmed_by_user_at
+      && !payment.rejected_by_user_at
+    );
+    const targetMonth = pendingSalary
+      ? getMonthKey(pendingSalary.reference_month)
+      : pendingManual
+        ? getMonthKey(pendingManual.reference_month)
+        : null;
+    if (targetMonth && targetMonth !== selectedMonth) {
+      setSelectedMonth(targetMonth);
+    }
+  }, [location.state, activeSalaries, manualPayments, selectedMonth]);
+
   const filteredManualPayments = useMemo(() => {
-    return manualPayments.filter((payment) => getMonthKey(payment.reference_month) === selectedMonth);
+    return manualPayments.filter((payment) =>
+      payment.payment_direction === "payable"
+      && getMonthKey(payment.reference_month) === selectedMonth
+    );
   }, [manualPayments, selectedMonth]);
 
   const pendingSalaryItems = useMemo(() => {
@@ -1379,7 +1420,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         <div id="salary-period" className="bg-card rounded-xl border border-border/60 overflow-hidden">
           <div className="px-5 py-3 border-b border-border/40 flex items-center gap-2">
             <Wallet className="h-4 w-4 text-primary" />
-            <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Meu Salário Fixo</span>
+            <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Meu Salário Fixo - Competência {formatMonthLabel(selectedMonth)}</span>
           </div>
           <Table>
             <TableHeader>
@@ -1387,7 +1428,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                 <TableHead className="w-[30px] px-2"></TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Origem</TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Valor</TableHead>
-                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Vencimento</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Vencimento previsto</TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -1550,9 +1591,6 @@ function FinanceiroContent() {
         .select("*")
         .eq("is_test_data", isTestEnv)
         .order("created_at", { ascending: false });
-      if (manualPaymentsRes.error && (manualPaymentsRes.error.message?.includes("manual_payments") || manualPaymentsRes.error.message?.includes("schema cache"))) {
-        manualPaymentsRes = { data: [], error: null } as any;
-      }
       const commissionPaymentsData = await fetchCommissionPaymentsForEnvironment();
 
       if (profilesRes.error) throw profilesRes.error;
@@ -1638,6 +1676,16 @@ function FinanceiroContent() {
     });
   }, [manualPayments, period, filtroFuncionario, filtroStatus]);
 
+  const filteredManualPayables = useMemo(
+    () => filteredManualPayments.filter((payment) => payment.payment_direction === "payable"),
+    [filteredManualPayments]
+  );
+
+  const filteredManualReceivables = useMemo(
+    () => filteredManualPayments.filter((payment) => payment.payment_direction === "receivable"),
+    [filteredManualPayments]
+  );
+
   const kpis = useMemo(() => {
     // Soma pagamentos explícitos de salary_payments
     const usersWithPayments = new Set(filteredSalaries.map((s: any) => s.user_id));
@@ -1714,16 +1762,23 @@ function FinanceiroContent() {
       });
     });
 
-    const totalSalariosPagos = filteredSalaries
+    filteredManualReceivables.forEach((payment) => {
+      volumeTotal += payment.amount;
+    });
+
+    const totalSalariosPagos = activeSalaries
+      .filter((s: any) => filtroFuncionario === "Todos" || s.user_id === filtroFuncionario)
       .filter((s: any) => s.is_paid_by_gestor && dateInFinancePeriod(s.payment_date || s.confirmed_by_user_at, period))
       .reduce((acc: number, s: any) => acc + (s.amount || 0), 0);
-    const totalManuaisPagos = filteredManualPayments
+    const totalManuaisPagos = manualPayments
+      .filter((payment) => payment.payment_direction === "payable")
+      .filter((payment) => filtroFuncionario === "Todos" || payment.user_id === filtroFuncionario)
       .filter((payment) => payment.is_paid_by_gestor && dateInFinancePeriod(payment.payment_date || payment.confirmed_by_user_at, period))
       .reduce((acc: number, payment) => acc + payment.amount, 0);
     const totalPagoGeral = totalPago + totalSalariosPagos + totalManuaisPagos;
 
     return { totalFixo, totalProjetado, totalPago, totalSalariosPagos, totalManuaisPagos, totalPagoGeral, volumeTotal };
-  }, [filteredDeals, filteredSalaries, filteredManualPayments, period, presentations, settings, commissionPayments, filtroFuncionario, profiles]);
+  }, [activeSalaries, filteredDeals, filteredSalaries, filteredManualReceivables, manualPayments, period, presentations, settings, commissionPayments, filtroFuncionario, profiles]);
 
   // Rows para modal e Contas a Pagar: salary_payments explícitos + fallback de profiles
   const salaryModalRows = useMemo(() => {
@@ -2090,36 +2145,50 @@ function FinanceiroContent() {
     amount: number;
     referenceMonth: string;
     paymentDate: string;
-  }) => {
-    if (!payload.userId) { toast.error("Selecione o funcionário."); return; }
-    if (!payload.description.trim()) { toast.error("Informe a descrição do lançamento."); return; }
-    if (!payload.amount || payload.amount <= 0) { toast.error("Informe um valor maior que zero."); return; }
+  }): Promise<boolean> => {
+    if (!payload.userId) { toast.error("Selecione o funcionário."); return false; }
+    if (!payload.description.trim()) { toast.error("Informe a descrição do lançamento."); return false; }
+    if (!payload.amount || payload.amount <= 0) { toast.error("Informe um valor maior que zero."); return false; }
 
     const { isTestEnv } = await getCurrentUserContext();
     const referenceMonth = `${payload.referenceMonth.slice(0, 7)}-01`;
-    const { error } = await (supabase as any)
+    const { data: createdPayment, error } = await (supabase as any)
       .from("manual_payments")
       .insert({
         user_id: payload.userId,
+        payment_direction: "payable",
         payment_type: payload.paymentType || "Bônus",
+        client_name: null,
+        operation: null,
         description: payload.description.trim(),
         reference_month: referenceMonth,
+        expected_payment_date: null,
         amount: payload.amount,
         is_paid_by_gestor: true,
         payment_date: dateInputToIso(payload.paymentDate),
         confirmed_by_user_at: null,
         rejected_by_user_at: null,
         is_test_data: isTestEnv,
-      } as any);
-    if (error) { toast.error("Erro ao criar lançamento manual: " + error.message); return; }
+      } as any)
+      .select("id")
+      .single();
+    if (error) { toast.error("Erro ao criar lançamento manual: " + error.message); return false; }
 
-    await createNotification(
-      payload.userId,
-      "Lançamento extra disponível",
-      `${payload.paymentType || "Bônus"} de ${formatCurrency(payload.amount)} foi marcado como transferido. Acesse o Financeiro para confirmar o recebimento.`
-    );
+    try {
+      await createRequiredNotification(
+        payload.userId,
+        "Lançamento extra disponível",
+        `${payload.paymentType || "Bônus"} de ${formatCurrency(payload.amount)} foi marcado como transferido. Acesse o Financeiro para confirmar o recebimento.`
+      );
+    } catch (notificationError: any) {
+      await (supabase as any).from("manual_payments").delete().eq("id", createdPayment.id);
+      toast.error("Não foi possível notificar o recebedor: " + notificationError.message);
+      return false;
+    }
+
     toast.success("Lançamento manual enviado para confirmação.");
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+    return true;
   };
 
   const handleUpdateManualPaymentDate = async (paymentId: string, paymentDate: string) => {
@@ -2155,6 +2224,69 @@ function FinanceiroContent() {
       return;
     }
     toast.success("Lançamento manual removido.");
+    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+  };
+
+  const handleCreateManualReceivable = async (payload: {
+    clientName: string;
+    operation: string;
+    responsibleUserId: string;
+    description: string;
+    amount: number;
+    referenceMonth: string;
+    expectedDate: string;
+  }): Promise<boolean> => {
+    if (!payload.clientName.trim()) { toast.error("Informe o cliente/origem."); return false; }
+    if (!payload.responsibleUserId) { toast.error("Selecione o responsável."); return false; }
+    if (!payload.description.trim()) { toast.error("Informe a descrição da entrada."); return false; }
+    if (!payload.amount || payload.amount <= 0) { toast.error("Informe um valor maior que zero."); return false; }
+
+    const { isTestEnv } = await getCurrentUserContext();
+    const referenceMonth = `${payload.referenceMonth.slice(0, 7)}-01`;
+    const expectedDate = payload.expectedDate || `${payload.referenceMonth.slice(0, 7)}-01`;
+    const { error } = await (supabase as any)
+      .from("manual_payments")
+      .insert({
+        user_id: payload.responsibleUserId,
+        payment_direction: "receivable",
+        payment_type: "Entrada manual",
+        client_name: payload.clientName.trim(),
+        operation: payload.operation || "BDtech",
+        description: payload.description.trim(),
+        reference_month: referenceMonth,
+        expected_payment_date: expectedDate,
+        amount: payload.amount,
+        is_paid_by_gestor: false,
+        payment_date: null,
+        confirmed_by_user_at: null,
+        rejected_by_user_at: null,
+        is_test_data: isTestEnv,
+      } as any);
+    if (error) { toast.error("Erro ao criar entrada manual: " + error.message); return false; }
+    toast.success("Entrada manual registrada em Contas a Receber.");
+    queryClient.invalidateQueries({ queryKey: ["finance-data"] });
+    return true;
+  };
+
+  const handleToggleManualReceivable = async (paymentId: string, currentStatus: boolean, paymentDate?: string) => {
+    const newStatus = !currentStatus;
+    const { data: updatedPayment, error } = await (supabase as any)
+      .from("manual_payments")
+      .update({
+        is_paid_by_gestor: newStatus,
+        payment_date: newStatus ? dateInputToIso(paymentDate) : null,
+        updated_at: new Date().toISOString(),
+      } as any)
+      .eq("id", paymentId)
+      .eq("payment_direction", "receivable")
+      .select("id")
+      .maybeSingle();
+    if (error) { toast.error("Erro ao atualizar entrada manual: " + error.message); return; }
+    if (!updatedPayment) {
+      toast.error("Entrada manual não encontrada.");
+      return;
+    }
+    toast.success(newStatus ? "Entrada manual marcada como recebida." : "Entrada manual revertida para A Receber.");
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
@@ -2219,12 +2351,12 @@ function FinanceiroContent() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
         <KpiCard
-          title="Total Pago"
+          title="Total Pago (Caixa)"
           value={formatCurrency(kpis.totalPagoGeral)}
           icon={CheckCircle2}
           variant="success"
-          subtitle="Comissões e salários pagos no período"
-          tooltip="Soma comissões confirmadas e salários transferidos no período. Para antecipações, usa a data real da confirmação."
+          subtitle="Pagamentos com data real no período"
+          tooltip="Soma comissões confirmadas, salários transferidos e lançamentos extras usando a data real paga/recebida, não a competência."
         />
         <KpiCard
           title={`Volume com Recebimento (${periodLabel})`}
@@ -2254,12 +2386,12 @@ function FinanceiroContent() {
           onClick={() => setKpiModalType("projetado")}
         />
         <KpiCard
-          title="Salários Fixos"
+          title="Salários da Competência"
           value={formatCurrency(kpis.totalFixo)}
           icon={Wallet}
           variant="default"
-          subtitle="Remuneração fixa consolidada do período"
-          tooltip="Soma os salários fixos cadastrados ou previstos para os funcionários no período."
+          subtitle="Mês trabalhado selecionado"
+          tooltip="Soma os salários fixos pela competência, ou seja, pelo mês trabalhado. O vencimento acontece no mês seguinte."
           onClick={() => setKpiModalType("fixo")}
         />
       </div>
@@ -2281,12 +2413,18 @@ function FinanceiroContent() {
         <TabsContent value="receivables" className="mt-0">
           <ReceivablesTab
             deals={filteredDeals}
+            manualReceivables={filteredManualReceivables}
             selectedMonth={selectedMonth}
+            period={period}
+            profiles={profiles}
             settings={settings}
             getUserName={getUserName}
             onToggleMensalidade={handleToggleMensalidade}
             onToggleImplantacao={handleToggleImplantacao}
             onConfirmInstallment={handleConfirmInstallment}
+            onCreateManualReceivable={handleCreateManualReceivable}
+            onToggleManualReceivable={handleToggleManualReceivable}
+            onDeleteManualReceivable={handleDeleteManualPayment}
           />
         </TabsContent>
 
@@ -2294,7 +2432,7 @@ function FinanceiroContent() {
           <PayablesTab
             deals={filteredDeals}
             salaries={salaryModalRows}
-            manualPayments={filteredManualPayments}
+            manualPayments={filteredManualPayables}
             profiles={profiles}
             getUserName={getUserName}
             presentations={presentations}
@@ -2320,7 +2458,7 @@ function FinanceiroContent() {
               {kpiModalType === "volume" && "Detalhamento: Volume Bruto"}
               {kpiModalType === "pago" && "Detalhamento: Comissão Paga"}
               {kpiModalType === "projetado" && "Detalhamento: Comissão Projetada"}
-              {kpiModalType === "fixo" && "Detalhamento: Salários Fixos"}
+              {kpiModalType === "fixo" && "Detalhamento: Salários da Competência"}
             </DialogTitle>
           </DialogHeader>
           <div className="mt-2">
@@ -2435,12 +2573,18 @@ function FinanceiroContent() {
 
 interface ReceivablesTabProps {
   deals: Deal[];
+  manualReceivables: ManualPaymentRow[];
   selectedMonth: string;
+  period: FinancePeriod;
+  profiles: ProfileMap;
   settings: any;
   getUserName: (id: string) => string;
   onToggleMensalidade: (id: string, currentStatus: boolean) => void;
   onToggleImplantacao: (id: string, currentStatus: boolean) => void;
   onConfirmInstallment: (id: string, index: number, checked: boolean) => void;
+  onCreateManualReceivable: (payload: { clientName: string; operation: string; responsibleUserId: string; description: string; amount: number; referenceMonth: string; expectedDate: string }) => Promise<boolean>;
+  onToggleManualReceivable: (paymentId: string, currentStatus: boolean, paymentDate?: string) => void;
+  onDeleteManualReceivable: (paymentId: string) => void;
 }
 
 function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, onToggleMensalidade, onToggleImplantacao, onConfirmInstallment }: any) {
@@ -2598,14 +2742,44 @@ function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, 
   );
 }
 
-function ReceivablesTab({ deals, selectedMonth, settings, getUserName, onToggleMensalidade, onToggleImplantacao, onConfirmInstallment }: ReceivablesTabProps) {
-  if (deals.length === 0) {
-    return (
-      <div className="bg-card rounded-xl border border-border/60 py-12 text-center text-muted-foreground text-sm">
-        Nenhum recebimento previsto para este mês.
-      </div>
-    );
-  }
+function ReceivablesTab({ deals, manualReceivables, selectedMonth, period, profiles, settings, getUserName, onToggleMensalidade, onToggleImplantacao, onConfirmInstallment, onCreateManualReceivable, onToggleManualReceivable, onDeleteManualReceivable }: ReceivablesTabProps) {
+  const defaultManualMonth = period.filterType === "year" ? `${period.selectedYear}-01` : (period.selectedMonth || period.fromMonth || getMonthKey(new Date()));
+  const [receivableForm, setReceivableForm] = useState({
+    clientName: "",
+    operation: "BluePex",
+    responsibleUserId: "",
+    description: "",
+    amount: "",
+    referenceMonth: defaultManualMonth,
+    expectedDate: todayDateInputValue(),
+  });
+  const [manualReceivableDates, setManualReceivableDates] = useState<Record<string, string>>({});
+  const [manualReceivableSubmitting, setManualReceivableSubmitting] = useState(false);
+
+  useEffect(() => {
+    setReceivableForm((prev) => ({
+      ...prev,
+      referenceMonth: prev.referenceMonth || defaultManualMonth,
+    }));
+  }, [defaultManualMonth]);
+
+  const submitManualReceivable = async () => {
+    if (manualReceivableSubmitting) return;
+    setManualReceivableSubmitting(true);
+    const created = await onCreateManualReceivable({
+      clientName: receivableForm.clientName,
+      operation: receivableForm.operation,
+      responsibleUserId: receivableForm.responsibleUserId,
+      description: receivableForm.description,
+      amount: Number(receivableForm.amount || 0),
+      referenceMonth: receivableForm.referenceMonth,
+      expectedDate: receivableForm.expectedDate,
+    });
+    if (created) {
+      setReceivableForm((prev) => ({ ...prev, clientName: "", description: "", amount: "" }));
+    }
+    setManualReceivableSubmitting(false);
+  };
 
   return (
     <div className="space-y-4">
@@ -2629,18 +2803,164 @@ function ReceivablesTab({ deals, selectedMonth, settings, getUserName, onToggleM
             </TableRow>
           </TableHeader>
           <TableBody>
-            {deals.map((deal) => (
-              <ExpandableReceivablesRow
-                key={deal.id}
-                deal={deal}
-                selectedMonth={selectedMonth}
-                settings={settings}
-                getUserName={getUserName}
-                onToggleMensalidade={onToggleMensalidade}
-                onToggleImplantacao={onToggleImplantacao}
-                onConfirmInstallment={onConfirmInstallment}
-              />
+            {deals.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={10} className="text-center text-sm text-muted-foreground py-8">
+                  Nenhum recebimento de contrato previsto para este mês.
+                </TableCell>
+              </TableRow>
+            ) : (
+              deals.map((deal) => (
+                <ExpandableReceivablesRow
+                  key={deal.id}
+                  deal={deal}
+                  selectedMonth={selectedMonth}
+                  settings={settings}
+                  getUserName={getUserName}
+                  onToggleMensalidade={onToggleMensalidade}
+                  onToggleImplantacao={onToggleImplantacao}
+                  onConfirmInstallment={onConfirmInstallment}
+                />
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      <div className="bg-card rounded-xl border border-border/60 overflow-hidden">
+        <div className="px-5 py-3 border-b border-border/40 flex items-center gap-2">
+          <Plus className="h-4 w-4 text-primary" />
+          <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Entradas Manuais a Receber</span>
+        </div>
+        <div className="px-5 py-4 border-b border-border/30 grid grid-cols-1 md:grid-cols-6 gap-3">
+          <input
+            value={receivableForm.clientName}
+            onChange={(e) => setReceivableForm((prev) => ({ ...prev, clientName: e.target.value }))}
+            placeholder="Cliente/origem"
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+          />
+          <select
+            value={receivableForm.operation}
+            onChange={(e) => setReceivableForm((prev) => ({ ...prev, operation: e.target.value }))}
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+          >
+            <option value="BluePex">BluePex</option>
+            <option value="Opus Tech">Opus Tech</option>
+            <option value="BDtech">BDtech</option>
+            <option value="Outro">Outro</option>
+          </select>
+          <select
+            value={receivableForm.responsibleUserId}
+            onChange={(e) => setReceivableForm((prev) => ({ ...prev, responsibleUserId: e.target.value }))}
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+          >
+            <option value="">Responsável</option>
+            {Object.entries(profiles).map(([id, profile]) => (
+              <option key={id} value={id}>{profile.full_name}</option>
             ))}
+          </select>
+          <input
+            type="month"
+            value={receivableForm.referenceMonth}
+            onChange={(e) => setReceivableForm((prev) => ({ ...prev, referenceMonth: e.target.value }))}
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+            title="Competência da entrada. Não muda com a data real recebida."
+          />
+          <input
+            type="date"
+            value={receivableForm.expectedDate}
+            onChange={(e) => setReceivableForm((prev) => ({ ...prev, expectedDate: e.target.value }))}
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+            title="Data prevista para receber."
+          />
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={receivableForm.amount}
+            onChange={(e) => setReceivableForm((prev) => ({ ...prev, amount: e.target.value }))}
+            placeholder="Valor"
+            className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+          />
+          <input
+            value={receivableForm.description}
+            onChange={(e) => setReceivableForm((prev) => ({ ...prev, description: e.target.value }))}
+            placeholder="Descrição da entrada manual"
+            className="md:col-span-5 h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
+          />
+          <Button size="sm" className="h-9 text-xs" disabled={manualReceivableSubmitting} onClick={submitManualReceivable}>
+            Registrar
+          </Button>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow className="border-border/30 hover:bg-transparent">
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Cliente/origem</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Operação</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Responsável</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Descrição</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Competência</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Previsto</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Recebido em</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Valor</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Baixa</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Ação</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {manualReceivables.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={10} className="text-center text-sm text-muted-foreground py-8">
+                  Nenhuma entrada manual registrada neste período.
+                </TableCell>
+              </TableRow>
+            ) : (
+              manualReceivables.map((payment) => {
+                const receivedDateValue = manualReceivableDates[payment.id] || toDateInputValue(payment.payment_date) || todayDateInputValue();
+                return (
+                  <TableRow key={payment.id} className={`border-border/25 hover:bg-[#242842]/40 ${payment.is_paid_by_gestor ? "bg-success/5" : ""}`}>
+                    <TableCell className="px-4 py-3 text-sm font-medium">{payment.client_name || "-"}</TableCell>
+                    <TableCell className="px-4 py-3"><Badge variant="outline" className="text-[10px] border-border/40">{payment.operation || "-"}</Badge></TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground">{getUserName(payment.user_id)}</TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground">{payment.description}</TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground">{formatMonthLabel(getMonthKey(payment.reference_month))}</TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground">{formatSafeDate(payment.expected_payment_date)}</TableCell>
+                    <TableCell className="px-4 py-3">
+                      <input
+                        type="date"
+                        value={receivedDateValue}
+                        disabled={payment.is_paid_by_gestor}
+                        onChange={(e) => setManualReceivableDates((prev) => ({ ...prev, [payment.id]: e.target.value }))}
+                        className="h-8 w-[136px] rounded-md border border-border/60 bg-card px-2 text-xs text-foreground disabled:opacity-60"
+                        title="Data real em que a entrada foi recebida. Não altera a competência."
+                      />
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold">{formatCurrency(payment.amount)}</TableCell>
+                    <TableCell className="px-4 py-3 text-center">
+                      <Button
+                        size="sm"
+                        variant={payment.is_paid_by_gestor ? "destructive" : "outline"}
+                        className="h-7 text-[10px]"
+                        onClick={() => onToggleManualReceivable(payment.id, payment.is_paid_by_gestor, receivedDateValue)}
+                      >
+                        {payment.is_paid_by_gestor ? "Reverter" : "Confirmar"}
+                      </Button>
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-center">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={payment.is_paid_by_gestor}
+                        className="h-7 text-[10px]"
+                        onClick={() => onDeleteManualReceivable(payment.id)}
+                      >
+                        Remover
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
           </TableBody>
         </Table>
       </div>
@@ -2665,7 +2985,7 @@ interface PayablesTabProps {
   onToggleSalaryPayment: (salaryId: string, currentStatus: boolean, paymentDate?: string) => void;
   onCreateAndToggleSalaryPayment: (userId: string, amount: number, referenceMonth: string, paymentDate?: string) => void;
   onUpdateSalaryPaymentDate: (salaryId: string, paymentDate: string) => void;
-  onCreateManualPayment: (payload: { userId: string; paymentType: string; description: string; amount: number; referenceMonth: string; paymentDate: string }) => void;
+  onCreateManualPayment: (payload: { userId: string; paymentType: string; description: string; amount: number; referenceMonth: string; paymentDate: string }) => Promise<boolean>;
   onUpdateManualPaymentDate: (paymentId: string, paymentDate: string) => void;
   onDeleteManualPayment: (paymentId: string) => void;
 }
@@ -2808,6 +3128,7 @@ function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, p
     paymentDate: todayDateInputValue(),
   });
   const [manualPaymentDates, setManualPaymentDates] = useState<Record<string, string>>({});
+  const [manualPaymentSubmitting, setManualPaymentSubmitting] = useState(false);
 
   useEffect(() => {
     setManualForm((prev) => ({
@@ -2830,8 +3151,10 @@ function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, p
     return manualPaymentDates[payment.id] || toDateInputValue(payment.payment_date) || todayDateInputValue();
   };
 
-  const submitManualPayment = () => {
-    onCreateManualPayment({
+  const submitManualPayment = async () => {
+    if (manualPaymentSubmitting) return;
+    setManualPaymentSubmitting(true);
+    const created = await onCreateManualPayment({
       userId: manualForm.userId,
       paymentType: manualForm.paymentType,
       description: manualForm.description,
@@ -2839,7 +3162,10 @@ function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, p
       referenceMonth: manualForm.referenceMonth,
       paymentDate: manualForm.paymentDate,
     });
-    setManualForm((prev) => ({ ...prev, description: "", amount: "" }));
+    if (created) {
+      setManualForm((prev) => ({ ...prev, description: "", amount: "" }));
+    }
+    setManualPaymentSubmitting(false);
   };
 
   return (
@@ -2903,14 +3229,15 @@ function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, p
       <div className="bg-card rounded-xl border border-border/60 overflow-hidden">
         <div className="px-5 py-3 border-b border-border/40 flex items-center gap-2">
           <Wallet className="h-4 w-4 text-primary" />
-          <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Salários Fixos</span>
+          <span className="text-[11px] font-semibold tracking-widest uppercase text-muted-foreground">Salários Fixos por Competência</span>
         </div>
         <Table>
           <TableHeader>
             <TableRow className="border-border/30 hover:bg-transparent">
               <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Funcionário</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Competência</TableHead>
               <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Valor</TableHead>
-              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Vencimento</TableHead>
+              <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Vencimento previsto</TableHead>
               <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Pago em</TableHead>
               <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Status</TableHead>
             </TableRow>
@@ -2918,7 +3245,7 @@ function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, p
           <TableBody>
             {salaries.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
                   Nenhum salário registrado para este mês.
                 </TableCell>
               </TableRow>
@@ -2941,6 +3268,7 @@ function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, p
                       <span className="ml-2 text-[9px] text-muted-foreground/50 italic">sem registro</span>
                     )}
                   </TableCell>
+                  <TableCell className="px-4 py-3 text-sm text-muted-foreground">{formatMonthLabel(salaryReferenceKey(s.reference_month))}</TableCell>
                   <TableCell className="px-4 py-3 text-right text-sm font-mono font-semibold">{formatCurrency(s.amount)}</TableCell>
                   <TableCell className="px-4 py-3 text-sm text-muted-foreground">{formatSafeDate(s.expected_payment_date)}</TableCell>
                   <TableCell className="px-4 py-3">
@@ -3043,7 +3371,7 @@ function PayablesTab({ deals, salaries, manualPayments, profiles, getUserName, p
             placeholder="Valor"
             className="h-9 rounded-md border border-border/60 bg-card px-3 text-xs text-foreground"
           />
-          <Button size="sm" className="h-9 text-xs" onClick={submitManualPayment}>
+          <Button size="sm" className="h-9 text-xs" disabled={manualPaymentSubmitting} onClick={submitManualPayment}>
             Lançar
           </Button>
           <input
