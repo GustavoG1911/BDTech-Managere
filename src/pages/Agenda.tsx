@@ -8,13 +8,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { CalendarEvent, CalendarEventStatus } from "@/lib/types";
 
 type MappedCalendarEvent = CalendarEvent & { start: Date; end: Date };
+type EventDialogMode = "view" | "edit";
 import { format, parse, startOfWeek, getDay } from "date-fns";
 import { ptBR } from "date-fns/locale/pt-BR";
 import { Calendar, dateFnsLocalizer, View, Views } from "react-big-calendar";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit, Video, Users, Link as LinkIcon, Mail, RefreshCw, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, Edit, Video, Link as LinkIcon, Mail, RefreshCw, CheckCircle2, Clock, ExternalLink, FileText } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,19 @@ function addMinutes(dateStr: string, mins: number): string {
   return format(d, "yyyy-MM-dd'T'HH:mm");
 }
 
+function formatEventDateTime(value?: string) {
+  if (!value) return "Data não informada";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Data inválida";
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 const locales = {
   "pt-BR": ptBR,
 };
@@ -57,6 +71,7 @@ export default function Agenda() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [dialogMode, setDialogMode] = useState<EventDialogMode>("edit");
   const [slotDates, setSlotDates] = useState<{ start: string; end: string } | null>(null);
   const [view, setView] = useState<View>(Views.MONTH);
   const [date, setDate] = useState(new Date());
@@ -167,8 +182,9 @@ export default function Agenda() {
     }
   });
 
-  const handleOpenDialog = (event?: CalendarEvent) => {
+  const handleOpenDialog = (event?: CalendarEvent, mode: EventDialogMode = event ? "view" : "edit") => {
     setEditingEvent(event || null);
+    setDialogMode(mode);
     setSlotDates(null);
     if (event) {
       setFormStart(new Date(event.start_time).toISOString().slice(0, 16));
@@ -179,6 +195,13 @@ export default function Agenda() {
       setFormEnd(addMinutes(defaultStart, 90));
     }
     setIsDialogOpen(true);
+  };
+
+  const handleEditEvent = () => {
+    if (!editingEvent) return;
+    setFormStart(new Date(editingEvent.start_time).toISOString().slice(0, 16));
+    setFormEnd(new Date(editingEvent.end_time).toISOString().slice(0, 16));
+    setDialogMode("edit");
   };
 
   const handleSave = (e: React.FormEvent<HTMLFormElement>) => {
@@ -323,91 +346,171 @@ export default function Agenda() {
       </Dialog>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="sm:max-w-[560px]">
           <DialogHeader>
-            <DialogTitle>{editingEvent ? "Detalhes da Reunião" : "Nova Reunião"}</DialogTitle>
+            <DialogTitle>
+              {editingEvent ? (dialogMode === "view" ? "Detalhes da Reunião" : "Editar Reunião") : "Nova Reunião"}
+            </DialogTitle>
           </DialogHeader>
-          <form key={editingEvent?.id ?? "new"} onSubmit={handleSave} className="space-y-4 pt-4">
-            <div className="space-y-2">
-              <Label htmlFor="title">Título</Label>
-              <Input id="title" name="title" required defaultValue={editingEvent?.title} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
+
+          {editingEvent && dialogMode === "view" ? (
+            <div className="space-y-5 pt-4">
               <div className="space-y-2">
-                <Label htmlFor="start_time">Início</Label>
-                <Input
-                  id="start_time"
-                  name="start_time"
-                  type="datetime-local"
-                  required
-                  value={formStart}
-                  onChange={(e) => {
-                    setFormStart(e.target.value);
-                    if (e.target.value) setFormEnd(addMinutes(e.target.value, 90));
-                  }}
-                />
+                <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Título</p>
+                <h3 className="text-xl font-semibold leading-tight text-foreground">{editingEvent.title}</h3>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="end_time">Fim</Label>
-                <Input
-                  id="end_time"
-                  name="end_time"
-                  type="datetime-local"
-                  required
-                  value={formEnd}
-                  onChange={(e) => setFormEnd(e.target.value)}
-                />
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                    <Clock className="h-3.5 w-3.5" />
+                    Início
+                  </p>
+                  <p className="mt-2 text-sm font-medium text-foreground">{formatEventDateTime(editingEvent.start_time)}</p>
+                </div>
+                <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                    <Clock className="h-3.5 w-3.5" />
+                    Fim
+                  </p>
+                  <p className="mt-2 text-sm font-medium text-foreground">{formatEventDateTime(editingEvent.end_time)}</p>
+                </div>
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="meeting_link">Link da Reunião (opcional)</Label>
-              <Input id="meeting_link" name="meeting_link" type="url" defaultValue={editingEvent?.meeting_link} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="description">Descrição (opcional)</Label>
-              <Textarea id="description" name="description" defaultValue={editingEvent?.description} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="status">Status</Label>
-                <Select name="status" defaultValue={editingEvent?.status || "Agendado"}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Agendado">Agendado</SelectItem>
-                    <SelectItem value="Realizado">Realizado</SelectItem>
-                    <SelectItem value="Cancelado">Cancelado</SelectItem>
-                  </SelectContent>
-                </Select>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Status</p>
+                  <Badge variant="secondary" className="mt-2">{editingEvent.status}</Badge>
+                </div>
+                <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Operação</p>
+                  <Badge className="mt-2">{editingEvent.operation || "Não identificada"}</Badge>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="operation">Operação</Label>
-                <Select name="operation" defaultValue={editingEvent?.operation || "auto"}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Operação" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">Detectar pelo link</SelectItem>
-                    <SelectItem value="BluePex">BluePex</SelectItem>
-                    <SelectItem value="Opus Tech">Opus Tech</SelectItem>
-                  </SelectContent>
-                </Select>
+
+              <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  <LinkIcon className="h-3.5 w-3.5" />
+                  Link da reunião
+                </p>
+                {editingEvent.meeting_link ? (
+                  <a
+                    href={editingEvent.meeting_link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex max-w-full items-center gap-2 break-all text-sm font-medium text-primary hover:underline"
+                  >
+                    <Video className="h-4 w-4 shrink-0" />
+                    <span>{editingEvent.meeting_link}</span>
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  </a>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">Nenhum link informado.</p>
+                )}
               </div>
-            </div>
-            <div className="flex justify-between mt-6">
-              {editingEvent ? (
+
+              <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  <FileText className="h-3.5 w-3.5" />
+                  Descrição
+                </p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                  {editingEvent.description?.trim() || "Nenhuma descrição informada."}
+                </p>
+              </div>
+
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+                <Button type="button" variant="outline" onClick={handleEditEvent}>
+                  <Edit className="h-4 w-4 mr-2" /> Editar reunião
+                </Button>
                 <Button type="button" variant="destructive" onClick={() => {
                   if (confirm("Deseja excluir esta reunião?")) deleteEventMutation.mutate(editingEvent.id);
                 }}>
                   <Trash2 className="h-4 w-4 mr-2" /> Excluir
                 </Button>
-              ) : <div></div>}
-              <Button type="submit" disabled={saveEventMutation.isPending}>
-                {saveEventMutation.isPending ? "Salvando..." : "Salvar Reunião"}
-              </Button>
+              </div>
             </div>
-          </form>
+          ) : (
+            <form key={editingEvent?.id ?? "new"} onSubmit={handleSave} className="space-y-4 pt-4">
+              <div className="space-y-2">
+                <Label htmlFor="title">Título</Label>
+                <Input id="title" name="title" required defaultValue={editingEvent?.title} />
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="start_time">Início</Label>
+                  <Input
+                    id="start_time"
+                    name="start_time"
+                    type="datetime-local"
+                    required
+                    value={formStart}
+                    onChange={(e) => {
+                      setFormStart(e.target.value);
+                      if (e.target.value) setFormEnd(addMinutes(e.target.value, 90));
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="end_time">Fim</Label>
+                  <Input
+                    id="end_time"
+                    name="end_time"
+                    type="datetime-local"
+                    required
+                    value={formEnd}
+                    onChange={(e) => setFormEnd(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="meeting_link">Link da Reunião (opcional)</Label>
+                <Input id="meeting_link" name="meeting_link" type="url" defaultValue={editingEvent?.meeting_link} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="description">Descrição (opcional)</Label>
+                <Textarea id="description" name="description" defaultValue={editingEvent?.description} />
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="status">Status</Label>
+                  <Select name="status" defaultValue={editingEvent?.status || "Agendado"}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Agendado">Agendado</SelectItem>
+                      <SelectItem value="Realizado">Realizado</SelectItem>
+                      <SelectItem value="Cancelado">Cancelado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="operation">Operação</Label>
+                  <Select name="operation" defaultValue={editingEvent?.operation || "auto"}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Operação" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Detectar pelo link</SelectItem>
+                      <SelectItem value="BluePex">BluePex</SelectItem>
+                      <SelectItem value="Opus Tech">Opus Tech</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex justify-between mt-6">
+                {editingEvent ? (
+                  <Button type="button" variant="outline" onClick={() => setDialogMode("view")}>
+                    Voltar aos detalhes
+                  </Button>
+                ) : <div></div>}
+                <Button type="submit" disabled={saveEventMutation.isPending}>
+                  {saveEventMutation.isPending ? "Salvando..." : "Salvar Reunião"}
+                </Button>
+              </div>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 
