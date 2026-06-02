@@ -587,34 +587,32 @@ export default function Agenda() {
                 </p>
               </div>
 
-              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button type="button" variant="outline" onClick={handleEditEvent}>
-                    <Edit className="h-4 w-4 mr-2" /> Editar reunião
-                  </Button>
-                  <Button type="button" variant="destructive" onClick={() => {
-                    if (confirm("Deseja excluir esta reunião?")) deleteEventMutation.mutate(editingEvent.id);
-                  }}>
-                    <Trash2 className="h-4 w-4 mr-2" /> Excluir
-                  </Button>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setMissedMeetingEvent(editingEvent)}
-                    disabled={updateEventStatusMutation.isPending || editingEvent.status === "Cancelado"}
-                  >
-                    <XCircle className="h-4 w-4 mr-2" /> Não aconteceu
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={handleMeetingHappened}
-                    disabled={updateEventStatusMutation.isPending || editingEvent.status === "Realizado"}
-                  >
-                    <CheckCircle2 className="h-4 w-4 mr-2" /> Aconteceu
-                  </Button>
-                </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Button type="button" variant="outline" className="w-full justify-center" onClick={handleEditEvent}>
+                  <Edit className="h-4 w-4 mr-2" /> Editar reunião
+                </Button>
+                <Button type="button" variant="destructive" className="w-full justify-center" onClick={() => {
+                  if (confirm("Deseja excluir esta reunião?")) deleteEventMutation.mutate(editingEvent.id);
+                }}>
+                  <Trash2 className="h-4 w-4 mr-2" /> Excluir
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-center"
+                  onClick={() => setMissedMeetingEvent(editingEvent)}
+                  disabled={updateEventStatusMutation.isPending || editingEvent.status === "Cancelado"}
+                >
+                  <XCircle className="h-4 w-4 mr-2" /> Não aconteceu
+                </Button>
+                <Button
+                  type="button"
+                  className="w-full justify-center"
+                  onClick={handleMeetingHappened}
+                  disabled={updateEventStatusMutation.isPending || editingEvent.status === "Realizado"}
+                >
+                  <CheckCircle2 className="h-4 w-4 mr-2" /> Aconteceu
+                </Button>
               </div>
             </div>
           ) : (
