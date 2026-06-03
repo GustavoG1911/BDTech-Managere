@@ -1,5 +1,6 @@
 import { Prospect } from "./types";
 
+export type ImportCellValue = string | number | boolean | Date | null | undefined;
 export type ImportFieldKey =
   | "company"
   | "operation"
@@ -82,6 +83,12 @@ const HEADER_HINTS: Record<ImportFieldKey, string[]> = {
 
 export const normalizeImportValue = (value?: string | null) => (value || "").trim();
 
+const normalizeImportCellValue = (value: ImportCellValue) => {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toLocaleDateString("pt-BR");
+  return String(value).trim();
+};
+
 export const normalizeImportKey = (value?: string | null) =>
   normalizeImportValue(value)
     .toLowerCase()
@@ -98,8 +105,18 @@ export const normalizeProspectOperation = (value?: string | null): Prospect["ope
 
 export const parseProspectImportText = (text: string) => {
   const cleanText = text.replace(/^\uFEFF/, "");
-  const delimiter = detectDelimiter(cleanText);
-  const rows = parseDelimitedText(cleanText, delimiter).filter((row) => row.some((cell) => normalizeImportValue(cell)));
+  const separatorLine = cleanText.match(/^sep\s*=\s*([,;\t])\s*(?:\r?\n|$)/i);
+  const content = separatorLine ? cleanText.slice(separatorLine[0].length) : cleanText;
+  const delimiter = separatorLine?.[1] || detectDelimiter(content);
+  const rows = parseDelimitedText(content, delimiter);
+
+  return parseProspectImportTable(rows);
+};
+
+export const parseProspectImportTable = (tableRows: ImportCellValue[][]) => {
+  const rows = tableRows
+    .map((row) => row.map(normalizeImportCellValue))
+    .filter((row) => row.some((cell) => normalizeImportValue(cell)));
 
   if (rows.length < 2) {
     return { headers: [], rows: [] as ImportRow[] };
@@ -281,8 +298,18 @@ const getHeaderMatchScore = (field: ImportFieldKey, normalizedHeader: string, hi
   if (field === "contact_email" && normalizedHeader.includes("empresa")) return 0;
   if (field === "company_phone" && normalizedHeader.includes("contato")) return 0;
   if (field === "contact_phone" && normalizedHeader.includes("empresa")) return 0;
-  if (field.endsWith("_2") && !/\b2\b/.test(normalizedHeader)) return 0;
-  if (field.endsWith("_3") && !/\b3\b/.test(normalizedHeader)) return 0;
+  if (field.endsWith("_2") && !normalizedHeader.includes("2")) return 0;
+  if (field.endsWith("_3") && !normalizedHeader.includes("3")) return 0;
+
+  if (["email", "e-mail", "mail"].includes(normalizedHeader)) {
+    if (field === "company_email") return 0;
+    if (field === "contact_email") return 95;
+  }
+
+  if (["telefone", "tel", "fone", "whatsapp", "celular"].includes(normalizedHeader)) {
+    if (field === "company_phone") return 0;
+    if (field === "contact_phone") return 95;
+  }
 
   return hints.reduce((bestScore, hint) => {
     let score = 0;
@@ -297,6 +324,7 @@ const getHeaderMatchScore = (field: ImportFieldKey, normalizedHeader: string, hi
       score = 30;
     }
 
+    if (score === 0) return bestScore;
     return Math.max(bestScore, score + Math.min(hint.length, 20) / 100);
   }, 0);
 };

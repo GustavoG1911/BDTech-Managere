@@ -23,6 +23,10 @@ const getIsTestEnv = async () => {
   return isTestEnv;
 };
 
+type ProspectStorageRow = Partial<Prospect> & {
+  is_test_data?: boolean;
+};
+
 const buildPersonaId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -83,6 +87,63 @@ const normalizeProspectForStorage = (prospect: Partial<Prospect>): Partial<Prosp
   };
 };
 
+const isMissingPersonasColumnError = (error: any) => {
+  const message = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return error?.code === "PGRST204" && message.includes("personas");
+};
+
+const formatPersonaFallbackLine = (persona: ProspectPersona, index: number) => {
+  const details = [
+    `Nome: ${persona.name}`,
+    persona.role ? `Cargo: ${persona.role}` : "",
+    persona.email ? `E-mail: ${persona.email}` : "",
+    persona.phone ? `Telefone: ${persona.phone}` : "",
+    persona.linkedin_url ? `LinkedIn: ${persona.linkedin_url}` : "",
+  ].filter(Boolean);
+
+  return details.length ? `Persona ${index + 2}: ${details.join(" | ")}` : "";
+};
+
+const withoutPersonasColumn = (row: ProspectStorageRow): ProspectStorageRow => {
+  const { personas, ...fallbackRow } = row;
+  const extraPersonas = Array.isArray(personas) ? personas.slice(1) : [];
+
+  if (extraPersonas.length === 0) return fallbackRow;
+
+  const fallbackNotes = [
+    "Personas adicionais:",
+    ...extraPersonas.map(formatPersonaFallbackLine).filter(Boolean),
+  ].join("\n");
+  const existingNotes = (fallbackRow.qualification_notes || "").trim();
+
+  if (existingNotes.includes(fallbackNotes)) return fallbackRow;
+
+  return {
+    ...fallbackRow,
+    qualification_notes: [existingNotes, fallbackNotes].filter(Boolean).join("\n\n"),
+  };
+};
+
+const insertProspectRow = async (row: ProspectStorageRow): Promise<Prospect> => {
+  let { data, error } = await (supabase as any)
+    .from("prospects")
+    .insert([row])
+    .select()
+    .single();
+
+  if (error && isMissingPersonasColumnError(error)) {
+    const fallbackRow = withoutPersonasColumn(row);
+    ({ data, error } = await (supabase as any)
+      .from("prospects")
+      .insert([fallbackRow])
+      .select()
+      .single());
+  }
+
+  if (error) throw error;
+  return normalizeProspectForDisplay(data as Prospect);
+};
+
 export const normalizeProspectForDisplay = (prospect: Prospect): Prospect => {
   const personas = getProspectPersonas(prospect);
   const displayPersonas = personas.length > 0
@@ -121,27 +182,28 @@ export const fetchProspects = async (_userId: string, _position?: string): Promi
 export const createProspect = async (prospect: Partial<Prospect>): Promise<Prospect> => {
   const isTestEnv = await getIsTestEnv();
   const prospectForStorage = normalizeProspectForStorage(prospect);
-  const { data, error } = await (supabase as any)
-    .from("prospects")
-    .insert([{ operation: "A definir", ...prospectForStorage, is_test_data: isTestEnv }])
-    .select()
-    .single();
-
-  if (error) {
+  try {
+    return await insertProspectRow({ operation: "A definir", ...prospectForStorage, is_test_data: isTestEnv });
+  } catch (error) {
     console.error("Error creating prospect:", error);
     throw error;
   }
-
-  return normalizeProspectForDisplay(data as Prospect);
 };
 
 export const bulkCreateProspects = async (prospects: Partial<Prospect>[]): Promise<Prospect[]> => {
   const isTestEnv = await getIsTestEnv();
   const rows = prospects.map((prospect) => ({ operation: "A definir", ...normalizeProspectForStorage(prospect), is_test_data: isTestEnv }));
-  const { data, error } = await (supabase as any)
+  let { data, error } = await (supabase as any)
     .from("prospects")
     .insert(rows)
     .select();
+
+  if (error && isMissingPersonasColumnError(error)) {
+    ({ data, error } = await (supabase as any)
+      .from("prospects")
+      .insert(rows.map(withoutPersonasColumn))
+      .select());
+  }
 
   if (error) {
     console.error("Error bulk creating prospects:", error);
@@ -159,13 +221,10 @@ export const importProspectsWithReport = async (prospects: ProspectImportItem[])
   for (const item of prospects) {
     const { importRowNumber, ...prospect } = item;
     const prospectForStorage = normalizeProspectForStorage(prospect);
-    const { data, error } = await (supabase as any)
-      .from("prospects")
-      .insert([{ operation: "A definir", ...prospectForStorage, is_test_data: isTestEnv }])
-      .select()
-      .single();
 
-    if (error) {
+    try {
+      created.push(await insertProspectRow({ operation: "A definir", ...prospectForStorage, is_test_data: isTestEnv }));
+    } catch (error: any) {
       console.error("Error importing prospect row:", error);
       errors.push({
         rowNumber: importRowNumber,
@@ -175,8 +234,6 @@ export const importProspectsWithReport = async (prospects: ProspectImportItem[])
       });
       continue;
     }
-
-    created.push(normalizeProspectForDisplay(data as Prospect));
   }
 
   return { created, errors };
@@ -212,10 +269,17 @@ export const updateProspectStatus = async (id: string, status: ProspectStatus): 
 
 export const updateProspect = async (id: string, updates: Partial<Prospect>): Promise<void> => {
   const updatesForStorage = normalizeProspectForStorage(updates);
-  const { error } = await (supabase as any)
+  let { error } = await (supabase as any)
     .from("prospects")
     .update(updatesForStorage)
     .eq("id", id);
+
+  if (error && isMissingPersonasColumnError(error)) {
+    ({ error } = await (supabase as any)
+      .from("prospects")
+      .update(withoutPersonasColumn(updatesForStorage))
+      .eq("id", id));
+  }
 
   if (error) {
     console.error("Error updating prospect:", error);

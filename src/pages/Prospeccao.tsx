@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { readSheet } from "read-excel-file/browser";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -29,6 +30,7 @@ import {
   NO_IMPORT_FIELD,
   normalizeImportKey,
   normalizeProspectOperation,
+  parseProspectImportTable,
   parseProspectImportText,
 } from "@/lib/prospect-import";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -101,6 +103,9 @@ const DEFAULT_FUNNEL_COLUMNS = ["Mapeamento", "Em Contato", "Agendado", "Conclu�
 const REQUIRED_FUNNEL_COLUMNS = ["Em Contato", "Agendado", "Concluído"];
 const KANBAN_AUTO_SCROLL_EDGE = 96;
 const KANBAN_AUTO_SCROLL_MAX_SPEED = 24;
+
+const getInitialFunnelStatus = (columns: string[]) =>
+  columns.includes("Mapeamento") ? "Mapeamento" : columns[0] || "Mapeamento";
 
 const getProspectOperation = (prospect?: Pick<Prospect, "operation"> | null): ProspectOperation =>
   normalizeProspectOperation(prospect?.operation);
@@ -336,7 +341,7 @@ export default function Prospeccao() {
       company_phone: formData.get("company_phone") as string || undefined,
       personas: newProspectPersonas,
       qualification_notes: formData.get("qualification_notes") as string || undefined,
-      status: columns[0] || "Mapeamento",
+      status: getInitialFunnelStatus(columns),
     });
 
     if (!prospect.contact_name) {
@@ -481,16 +486,18 @@ export default function Prospeccao() {
 
     setImportReport(null);
     setImportRollbackDone(false);
-    const supportedFile = /\.(csv|tsv|txt)$/i.test(file.name);
+    const isSpreadsheetFile = /\.(xlsx)$/i.test(file.name);
+    const supportedFile = isSpreadsheetFile || /\.(csv|tsv|txt)$/i.test(file.name);
     if (!supportedFile) {
-      toast.error("Por enquanto, exporte a planilha como CSV ou TSV antes de importar.");
+      toast.error("Envie uma planilha em XLSX, CSV ou TSV.");
       event.target.value = "";
       return;
     }
 
     try {
-      const text = await file.text();
-      const parsed = parseProspectImportText(text);
+      const parsed = isSpreadsheetFile
+        ? parseProspectImportTable(await readSheet(file))
+        : parseProspectImportText(await file.text());
 
       if (!parsed.headers.length || !parsed.rows.length) {
         toast.error("Não encontrei linhas válidas nessa planilha.");
@@ -503,7 +510,7 @@ export default function Prospeccao() {
       const guessedMapping = guessProspectImportMapping(parsed.headers);
       const detectedCount = IMPORT_FIELDS.filter((field) => guessedMapping[field.key] !== NO_IMPORT_FIELD).length;
       setFieldMapping(guessedMapping);
-      setDefaultImportStatus(columns[0] || "Mapeamento");
+      setDefaultImportStatus(getInitialFunnelStatus(columns));
       toast.success(`${parsed.rows.length} linhas lidas. ${detectedCount} campos identificados automaticamente.`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Erro desconhecido";
@@ -798,16 +805,16 @@ export default function Prospeccao() {
               >
                 <FileSpreadsheet className="h-8 w-8 text-muted-foreground" />
                 <span className="text-sm font-medium">
-                  {importFileName || "Escolher arquivo CSV ou TSV"}
+                  {importFileName || "Escolher arquivo XLSX, CSV ou TSV"}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  Exporte a planilha do Google como CSV e confira os campos antes de importar.
+                  Arquivos do Excel, Google Sheets exportado ou CSV continuam no mesmo fluxo de conferência.
                 </span>
               </Label>
               <Input
                 id="prospect-import-file"
                 type="file"
-                accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values"
+                accept=".xlsx,.csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values"
                 className="hidden"
                 onChange={handleImportFile}
               />
