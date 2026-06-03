@@ -6,6 +6,7 @@ export type PaymentStatus = "Pendente" | "Pago" | "Cancelado";
 export interface InstallmentDate {
   date: string; // ISO string
   paid?: boolean;
+  paymentDate?: string | null;
 }
 
 export interface Deal {
@@ -117,6 +118,15 @@ export interface CalendarEvent {
 
 export type ProspectStatus = string;
 
+export interface ProspectPersona {
+  id: string;
+  name: string;
+  role?: string;
+  linkedin_url?: string;
+  email?: string;
+  phone?: string;
+}
+
 export interface Prospect {
   id: string;
   company: string;
@@ -129,6 +139,7 @@ export interface Prospect {
   company_phone?: string;
   contact_email?: string;
   contact_phone?: string;
+  personas?: ProspectPersona[] | null;
   status: ProspectStatus;
   owner_id: string;
   created_at?: string;
@@ -142,4 +153,3 @@ export interface ProspectNote {
   note_text: string;
   created_at: string;
 }
-

@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import { Prospect, ProspectNote, ProspectStatus } from "./types";
+import { Prospect, ProspectNote, ProspectPersona, ProspectStatus } from "./types";
 import { getCurrentUserContext } from "./supabase-env";
 
 export type ProspectImportItem = Partial<Prospect> & {
@@ -23,6 +23,84 @@ const getIsTestEnv = async () => {
   return isTestEnv;
 };
 
+const buildPersonaId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const normalizePersona = (persona: Partial<ProspectPersona>): ProspectPersona | null => {
+  const name = (persona.name || "").trim();
+  if (!name) return null;
+
+  return {
+    id: persona.id || buildPersonaId(),
+    name,
+    role: persona.role?.trim() || undefined,
+    linkedin_url: persona.linkedin_url?.trim() || undefined,
+    email: persona.email?.trim() || undefined,
+    phone: persona.phone?.trim() || undefined,
+  };
+};
+
+export const getProspectPersonas = (prospect: Partial<Prospect>): ProspectPersona[] => {
+  if (Array.isArray(prospect.personas)) {
+    return prospect.personas.map((persona) => normalizePersona(persona)).filter(Boolean) as ProspectPersona[];
+  }
+
+  const legacyPersona = normalizePersona({
+    name: prospect.contact_name,
+    role: prospect.role,
+    linkedin_url: prospect.linkedin_url,
+    email: prospect.contact_email,
+    phone: prospect.contact_phone,
+  });
+
+  return legacyPersona ? [legacyPersona] : [];
+};
+
+const normalizeProspectForStorage = (prospect: Partial<Prospect>): Partial<Prospect> => {
+  const hasPersonaPayload =
+    "personas" in prospect ||
+    "contact_name" in prospect ||
+    "role" in prospect ||
+    "linkedin_url" in prospect ||
+    "contact_email" in prospect ||
+    "contact_phone" in prospect;
+
+  if (!hasPersonaPayload) return prospect;
+
+  const personas = getProspectPersonas(prospect);
+  const primaryPersona = personas[0];
+
+  return {
+    ...prospect,
+    personas,
+    contact_name: primaryPersona?.name || prospect.contact_name || "",
+    role: primaryPersona?.role || null,
+    linkedin_url: primaryPersona?.linkedin_url || null,
+    contact_email: primaryPersona?.email || null,
+    contact_phone: primaryPersona?.phone || null,
+  };
+};
+
+export const normalizeProspectForDisplay = (prospect: Prospect): Prospect => {
+  const personas = getProspectPersonas(prospect);
+  const displayPersonas = personas.length > 0
+    ? personas
+    : getProspectPersonas({ ...prospect, personas: undefined });
+  const primaryPersona = displayPersonas[0];
+
+  return {
+    ...prospect,
+    personas: displayPersonas,
+    contact_name: primaryPersona?.name || prospect.contact_name,
+    role: primaryPersona?.role || prospect.role,
+    linkedin_url: primaryPersona?.linkedin_url || prospect.linkedin_url,
+    contact_email: primaryPersona?.email || prospect.contact_email,
+    contact_phone: primaryPersona?.phone || prospect.contact_phone,
+  };
+};
+
 export const fetchProspects = async (_userId: string, _position?: string): Promise<Prospect[]> => {
   const isTestEnv = await getIsTestEnv();
   const query = (supabase as any)
@@ -37,14 +115,15 @@ export const fetchProspects = async (_userId: string, _position?: string): Promi
     throw error;
   }
 
-  return (data || []) as Prospect[];
+  return ((data || []) as Prospect[]).map(normalizeProspectForDisplay);
 };
 
 export const createProspect = async (prospect: Partial<Prospect>): Promise<Prospect> => {
   const isTestEnv = await getIsTestEnv();
+  const prospectForStorage = normalizeProspectForStorage(prospect);
   const { data, error } = await (supabase as any)
     .from("prospects")
-    .insert([{ operation: "A definir", ...prospect, is_test_data: isTestEnv }])
+    .insert([{ operation: "A definir", ...prospectForStorage, is_test_data: isTestEnv }])
     .select()
     .single();
 
@@ -53,12 +132,12 @@ export const createProspect = async (prospect: Partial<Prospect>): Promise<Prosp
     throw error;
   }
 
-  return data as Prospect;
+  return normalizeProspectForDisplay(data as Prospect);
 };
 
 export const bulkCreateProspects = async (prospects: Partial<Prospect>[]): Promise<Prospect[]> => {
   const isTestEnv = await getIsTestEnv();
-  const rows = prospects.map((prospect) => ({ operation: "A definir", ...prospect, is_test_data: isTestEnv }));
+  const rows = prospects.map((prospect) => ({ operation: "A definir", ...normalizeProspectForStorage(prospect), is_test_data: isTestEnv }));
   const { data, error } = await (supabase as any)
     .from("prospects")
     .insert(rows)
@@ -69,7 +148,7 @@ export const bulkCreateProspects = async (prospects: Partial<Prospect>[]): Promi
     throw error;
   }
 
-  return (data || []) as Prospect[];
+  return ((data || []) as Prospect[]).map(normalizeProspectForDisplay);
 };
 
 export const importProspectsWithReport = async (prospects: ProspectImportItem[]): Promise<ProspectImportReport> => {
@@ -79,9 +158,10 @@ export const importProspectsWithReport = async (prospects: ProspectImportItem[])
 
   for (const item of prospects) {
     const { importRowNumber, ...prospect } = item;
+    const prospectForStorage = normalizeProspectForStorage(prospect);
     const { data, error } = await (supabase as any)
       .from("prospects")
-      .insert([{ operation: "A definir", ...prospect, is_test_data: isTestEnv }])
+      .insert([{ operation: "A definir", ...prospectForStorage, is_test_data: isTestEnv }])
       .select()
       .single();
 
@@ -89,14 +169,14 @@ export const importProspectsWithReport = async (prospects: ProspectImportItem[])
       console.error("Error importing prospect row:", error);
       errors.push({
         rowNumber: importRowNumber,
-        company: prospect.company,
-        contactName: prospect.contact_name,
+        company: prospectForStorage.company,
+        contactName: prospectForStorage.contact_name,
         message: error.message || "Erro ao salvar esta linha.",
       });
       continue;
     }
 
-    created.push(data as Prospect);
+    created.push(normalizeProspectForDisplay(data as Prospect));
   }
 
   return { created, errors };
@@ -131,9 +211,10 @@ export const updateProspectStatus = async (id: string, status: ProspectStatus): 
 };
 
 export const updateProspect = async (id: string, updates: Partial<Prospect>): Promise<void> => {
+  const updatesForStorage = normalizeProspectForStorage(updates);
   const { error } = await (supabase as any)
     .from("prospects")
-    .update(updates)
+    .update(updatesForStorage)
     .eq("id", id);
 
   if (error) {

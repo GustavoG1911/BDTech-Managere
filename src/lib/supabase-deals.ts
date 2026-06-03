@@ -427,9 +427,11 @@ export async function upsertCommissionPaymentRow(
   amount: number,
   isTestData: boolean,
   recipientUserId: string,
-  installmentIndex?: number | null
+  installmentIndex?: number | null,
+  paidAtIso?: string
 ): Promise<void> {
   const now = new Date().toISOString();
+  const paidAt = paidAtIso || now;
   const { error } = await (supabase as any)
     .from("commission_payments")
     .upsert(
@@ -440,7 +442,7 @@ export async function upsertCommissionPaymentRow(
         installment_index: installmentIndex ?? null,
         amount,
         recipient_user_id: recipientUserId,
-        paid_by_director_at: now,
+        paid_by_director_at: paidAt,
         confirmed_by_user_at: null,
         rejected_by_user_at: null,
         is_test_data: isTestData,

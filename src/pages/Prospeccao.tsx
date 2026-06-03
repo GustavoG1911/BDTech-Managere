@@ -13,10 +13,12 @@ import {
   updateProspectStatus,
   fetchProspectNotes,
   createProspectNote,
+  getProspectPersonas,
+  normalizeProspectForDisplay,
 } from "@/lib/supabase-prospeccao";
 import { createCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
-import { CalendarEvent, Operation, Prospect, ProspectOperation, ProspectStatus } from "@/lib/types";
+import { CalendarEvent, Operation, Prospect, ProspectOperation, ProspectPersona, ProspectStatus } from "@/lib/types";
 import {
   buildProspectFromImportRow,
   emptyImportMapping,
@@ -32,7 +34,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, MessageSquare, Linkedin, Calendar, Building2, UserCircle2, Settings2, X, GripVertical, Phone, Pencil, ClipboardList, Mail, Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
+import { Plus, MessageSquare, Linkedin, Calendar, Building2, UserCircle2, Users2, Settings2, X, GripVertical, Phone, Pencil, ClipboardList, Mail, Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
@@ -44,6 +46,50 @@ import { format } from "date-fns";
 
 const buildDuplicateKey = (company?: string | null, contactName?: string | null) =>
   `${normalizeImportKey(company)}|${normalizeImportKey(contactName)}`;
+
+const buildPersonaId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const createEmptyPersona = (): ProspectPersona => ({
+  id: buildPersonaId(),
+  name: "",
+  role: "",
+  linkedin_url: "",
+  email: "",
+  phone: "",
+});
+
+const normalizePersonasForForm = (personas: ProspectPersona[]) =>
+  personas.length > 0 ? personas : [createEmptyPersona()];
+
+const getPersonasForForm = (prospect: Partial<Prospect>) => {
+  const personas = Array.isArray(prospect.personas) ? prospect.personas : getProspectPersonas(prospect);
+  return normalizePersonasForForm(personas);
+};
+
+const buildDuplicateKeysForProspect = (prospect: Partial<Prospect>) => {
+  const personas = getProspectPersonas(prospect);
+  const names = personas.length > 0 ? personas.map((persona) => persona.name) : [prospect.contact_name || ""];
+  return names.filter(Boolean).map((name) => buildDuplicateKey(prospect.company, name));
+};
+
+const syncPrimaryPersonaFields = (prospect: Partial<Prospect>): Partial<Prospect> => {
+  const personas = getProspectPersonas(prospect);
+  const primaryPersona = personas[0];
+  const hasExplicitPersonas = Array.isArray(prospect.personas);
+
+  return {
+    ...prospect,
+    personas,
+    contact_name: primaryPersona?.name || (hasExplicitPersonas ? "" : prospect.contact_name || ""),
+    role: primaryPersona?.role || undefined,
+    linkedin_url: primaryPersona?.linkedin_url || undefined,
+    contact_email: primaryPersona?.email || undefined,
+    contact_phone: primaryPersona?.phone || undefined,
+  };
+};
 
 type ImportUiReport = ProspectImportReport & {
   skipped: ProspectImportError[];
@@ -90,13 +136,20 @@ export default function Prospeccao() {
   const [isRollingBackImport, setIsRollingBackImport] = useState(false);
   const [importRollbackDone, setImportRollbackDone] = useState(false);
   const [operationFilter, setOperationFilter] = useState<ProspectOperation | "Todas">("Todas");
+  const [newProspectPersonas, setNewProspectPersonas] = useState<ProspectPersona[]>(() => [createEmptyPersona()]);
 
   React.useEffect(() => {
     if (selectedProspect) {
-      setEditFormData({ ...selectedProspect });
+      setEditFormData(normalizeProspectForDisplay(selectedProspect));
       setIsSheetEditMode(false);
     }
   }, [selectedProspect?.id]);
+
+  React.useEffect(() => {
+    if (isNewProspectOpen) {
+      setNewProspectPersonas([createEmptyPersona()]);
+    }
+  }, [isNewProspectOpen]);
   const [newColumnName, setNewColumnName] = useState("");
 
   const [columns, setColumns] = useState<string[]>(() => {
@@ -206,9 +259,9 @@ export default function Prospeccao() {
 
   const updateProspectMutation = useMutation({
     mutationFn: ({ id, updates }: { id: string; updates: Partial<Prospect> }) => updateProspect(id, updates),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["prospects"] });
-      setSelectedProspect(prev => prev ? { ...prev, ...editFormData } : null);
+      setSelectedProspect(prev => prev ? normalizeProspectForDisplay({ ...prev, ...variables.updates } as Prospect) : null);
       setIsSheetEditMode(false);
       toast.success("Prospect atualizado!");
     },
@@ -260,24 +313,70 @@ export default function Prospeccao() {
 
   const handleSaveProspect = () => {
     if (!selectedProspect) return;
-    updateProspectMutation.mutate({ id: selectedProspect.id, updates: editFormData });
+    const updates = syncPrimaryPersonaFields(editFormData);
+    if (!updates.contact_name) {
+      toast.error("Informe pelo menos uma persona com nome.");
+      return;
+    }
+    updateProspectMutation.mutate({ id: selectedProspect.id, updates });
   };
 
   const handleCreateProspect = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    createProspectMutation.mutate({
+    const prospect = syncPrimaryPersonaFields({
       company: formData.get("company") as string,
       operation: normalizeProspectOperation(formData.get("operation") as string),
-      contact_name: formData.get("contact_name") as string,
-      role: formData.get("role") as string,
-      linkedin_url: formData.get("linkedin_url") as string,
       company_email: formData.get("company_email") as string || undefined,
       company_phone: formData.get("company_phone") as string || undefined,
-      contact_email: formData.get("contact_email") as string || undefined,
-      contact_phone: formData.get("contact_phone") as string || undefined,
+      personas: newProspectPersonas,
       qualification_notes: formData.get("qualification_notes") as string || undefined,
       status: columns[0] || "Mapeamento",
+    });
+
+    if (!prospect.contact_name) {
+      toast.error("Informe pelo menos uma persona com nome.");
+      return;
+    }
+
+    createProspectMutation.mutate(prospect);
+  };
+
+  const updateNewPersona = (index: number, updates: Partial<ProspectPersona>) => {
+    setNewProspectPersonas((current) => current.map((persona, personaIndex) => (
+      personaIndex === index ? { ...persona, ...updates } : persona
+    )));
+  };
+
+  const addNewPersona = () => {
+    setNewProspectPersonas((current) => [...current, createEmptyPersona()]);
+  };
+
+  const removeNewPersona = (index: number) => {
+    setNewProspectPersonas((current) => normalizePersonasForForm(current.filter((_, personaIndex) => personaIndex !== index)));
+  };
+
+  const updateEditPersona = (index: number, updates: Partial<ProspectPersona>) => {
+    setEditFormData((current) => {
+      const personas = getPersonasForForm(current);
+      const nextPersonas = personas.map((persona, personaIndex) => (
+        personaIndex === index ? { ...persona, ...updates } : persona
+      ));
+      return { ...current, personas: nextPersonas };
+    });
+  };
+
+  const addEditPersona = () => {
+    setEditFormData((current) => {
+      const personas = getPersonasForForm(current);
+      return { ...current, personas: [...personas, createEmptyPersona()] };
+    });
+  };
+
+  const removeEditPersona = (index: number) => {
+    setEditFormData((current) => {
+      const personas = normalizePersonasForForm(getPersonasForForm(current).filter((_, personaIndex) => personaIndex !== index));
+      return { ...current, personas };
     });
   };
 
@@ -286,7 +385,7 @@ export default function Prospeccao() {
   };
 
   const existingProspectKeys = React.useMemo(() => {
-    return new Set((prospects || []).map((prospect) => buildDuplicateKey(prospect.company, prospect.contact_name)));
+    return new Set((prospects || []).flatMap((prospect) => buildDuplicateKeysForProspect(prospect)));
   }, [prospects]);
 
   const importAnalysis = React.useMemo(() => {
@@ -296,9 +395,9 @@ export default function Prospeccao() {
 
     const analyzedRows = importRows.map((row, index) => {
       const prospect = buildProspectFromImportRow(row, fieldMapping, defaultImportStatus, columns);
-      const key = buildDuplicateKey(prospect.company, prospect.contact_name);
+      const keys = buildDuplicateKeysForProspect(prospect);
       const hasRequiredFields = Boolean(prospect.company && prospect.contact_name);
-      const isDuplicate = hasRequiredFields && (existingProspectKeys.has(key) || seen.has(key));
+      const isDuplicate = hasRequiredFields && keys.some((key) => existingProspectKeys.has(key) || seen.has(key));
       const skippedMessage = !hasRequiredFields
         ? "Faltam empresa ou nome do contato."
         : isDuplicate
@@ -308,7 +407,7 @@ export default function Prospeccao() {
       if (!hasRequiredFields) {
         missingRequired += 1;
       } else {
-        seen.add(key);
+        keys.forEach((key) => seen.add(key));
       }
 
       if (isDuplicate) duplicates += 1;
@@ -323,9 +422,28 @@ export default function Prospeccao() {
       };
     });
 
-    const validRows = analyzedRows
-      .filter((row) => row.hasRequiredFields && (!skipImportDuplicates || !row.isDuplicate))
-      .map((row) => row.prospect);
+    const importableRows = analyzedRows
+      .filter((row) => row.hasRequiredFields && (!skipImportDuplicates || !row.isDuplicate));
+    const groupedRows = new Map<string, ProspectImportItem>();
+
+    importableRows.forEach((row) => {
+      const groupKey = normalizeImportKey(row.prospect.company);
+      const existingGroup = groupedRows.get(groupKey);
+
+      if (!existingGroup) {
+        groupedRows.set(groupKey, {
+          ...row.prospect,
+          personas: getProspectPersonas(row.prospect),
+        } as ProspectImportItem);
+        return;
+      }
+
+      const existingPersonaKeys = new Set(getProspectPersonas(existingGroup).map((persona) => normalizeImportKey(persona.name)));
+      const newPersonas = getProspectPersonas(row.prospect).filter((persona) => !existingPersonaKeys.has(normalizeImportKey(persona.name)));
+      existingGroup.personas = [...getProspectPersonas(existingGroup), ...newPersonas];
+    });
+
+    const validRows = Array.from(groupedRows.values()).map((prospect) => syncPrimaryPersonaFields(prospect));
     const skipped = analyzedRows
       .filter((row) => !row.hasRequiredFields || (skipImportDuplicates && row.isDuplicate))
       .map((row) => ({
@@ -335,7 +453,7 @@ export default function Prospeccao() {
         message: row.skippedMessage,
       }));
 
-    const skippedRows = analyzedRows.length - validRows.length;
+    const skippedRows = skipped.length;
 
     return {
       rows: analyzedRows,
@@ -764,7 +882,7 @@ export default function Prospeccao() {
                     <div className="grid grid-cols-[1fr_0.8fr_1fr_0.8fr_0.8fr] bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground">
                       <span>Empresa</span>
                       <span>Operação</span>
-                      <span>Contato</span>
+                      <span>Personas</span>
                       <span>Etapa</span>
                       <span>Situação</span>
                     </div>
@@ -775,7 +893,10 @@ export default function Prospeccao() {
                       >
                         <span className="truncate">{row.prospect.company || "-"}</span>
                         <span className="truncate">{getProspectOperation(row.prospect)}</span>
-                        <span className="truncate">{row.prospect.contact_name || "-"}</span>
+                        <span className="truncate">
+                          {row.prospect.contact_name || "-"}
+                          {getProspectPersonas(row.prospect).length > 1 ? ` +${getProspectPersonas(row.prospect).length - 1}` : ""}
+                        </span>
                         <span className="truncate">{row.prospect.status || defaultImportStatus}</span>
                         <span className={row.hasRequiredFields && !row.isDuplicate ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
                           {!row.hasRequiredFields ? "Faltam campos" : row.isDuplicate ? "Duplicado" : "Pronto"}
@@ -892,21 +1013,49 @@ export default function Prospeccao() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="contact_name">Nome do Contato *</Label>
-                <Input id="contact_name" name="contact_name" required />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="role">Cargo</Label>
-                <Input id="role" name="role" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="contact_phone">Tel. Contato (WhatsApp)</Label>
-                <Input id="contact_phone" name="contact_phone" placeholder="+55 11..." />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="contact_email">Email Contato</Label>
-                <Input id="contact_email" name="contact_email" type="email" />
+              <div className="space-y-2 col-span-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Personas *</Label>
+                  <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={addNewPersona}>
+                    <Plus className="mr-1 h-3.5 w-3.5" /> Persona
+                  </Button>
+                </div>
+                <div className="space-y-3">
+                  {newProspectPersonas.map((persona, index) => (
+                    <div key={persona.id} className="rounded-md border border-border/60 p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-muted-foreground">Persona {index + 1}</span>
+                        {newProspectPersonas.length > 1 && (
+                          <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeNewPersona(index)}>
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Nome {index === 0 ? "*" : ""}</Label>
+                          <Input value={persona.name} onChange={(e) => updateNewPersona(index, { name: e.target.value })} required={index === 0} className="h-8 text-sm" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Cargo</Label>
+                          <Input value={persona.role || ""} onChange={(e) => updateNewPersona(index, { role: e.target.value })} className="h-8 text-sm" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">WhatsApp</Label>
+                          <Input value={persona.phone || ""} onChange={(e) => updateNewPersona(index, { phone: e.target.value })} className="h-8 text-sm" placeholder="+55 11..." />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Email</Label>
+                          <Input value={persona.email || ""} onChange={(e) => updateNewPersona(index, { email: e.target.value })} className="h-8 text-sm" type="email" />
+                        </div>
+                        <div className="space-y-1 col-span-2">
+                          <Label className="text-xs">LinkedIn URL</Label>
+                          <Input value={persona.linkedin_url || ""} onChange={(e) => updateNewPersona(index, { linkedin_url: e.target.value })} className="h-8 text-sm" />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="company_phone">Tel. Empresa</Label>
@@ -915,10 +1064,6 @@ export default function Prospeccao() {
               <div className="space-y-1.5">
                 <Label htmlFor="company_email">Email Empresa</Label>
                 <Input id="company_email" name="company_email" type="email" />
-              </div>
-              <div className="space-y-1.5 col-span-2">
-                <Label htmlFor="linkedin_url">LinkedIn URL</Label>
-                <Input id="linkedin_url" name="linkedin_url" type="text" />
               </div>
               <div className="space-y-1.5 col-span-2">
                 <Label htmlFor="qualification_notes">Observações</Label>
@@ -1022,24 +1167,35 @@ export default function Prospeccao() {
                       <p className="text-xs text-muted-foreground/50">Nenhum lead aqui</p>
                     </div>
                   ) : (
-                    colProspects.map((p) => (
-                      <Card
-                        key={p.id}
-                        className="cursor-grab active:cursor-grabbing hover:border-primary/60 hover:shadow-md transition-all duration-150 bg-background/60"
-                        onClick={() => setSelectedProspect(p)}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, p.id)}
-                        onDragEnd={handleDragEnd}
-                      >
-                        <CardContent className="p-3 space-y-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <h4 className="font-semibold text-sm leading-tight line-clamp-1 flex-1">{p.company}</h4>
-                            {p.has_scheduled_meeting && (
-                              <span title="Reunião vinculada na Agenda">
-                                <Calendar className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                              </span>
-                            )}
-                          </div>
+                    colProspects.map((p) => {
+                      const personas = getProspectPersonas(p);
+                      const primaryPersona = personas[0];
+
+                      return (
+                        <Card
+                          key={p.id}
+                          className="cursor-grab active:cursor-grabbing hover:border-primary/60 hover:shadow-md transition-all duration-150 bg-background/60"
+                          onClick={() => setSelectedProspect(p)}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, p.id)}
+                          onDragEnd={handleDragEnd}
+                        >
+                          <CardContent className="p-3 space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <h4 className="font-semibold text-sm leading-tight line-clamp-1 flex-1">{p.company}</h4>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {personas.length > 1 && (
+                                  <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                                    <Users2 className="mr-1 h-3 w-3" /> {personas.length}
+                                  </Badge>
+                                )}
+                                {p.has_scheduled_meeting && (
+                                  <span title="Reunião vinculada na Agenda">
+                                    <Calendar className="h-3.5 w-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           <div
                             onClick={(event) => event.stopPropagation()}
                             onPointerDown={(event) => event.stopPropagation()}
@@ -1060,34 +1216,40 @@ export default function Prospeccao() {
                               </SelectContent>
                             </Select>
                           </div>
-                          <div className="space-y-1">
-                            <p className="text-xs text-muted-foreground flex items-center gap-1.5 line-clamp-1">
-                              <UserCircle2 className="h-3 w-3 shrink-0" />
-                              {p.contact_name}
-                            </p>
-                            {p.role && (
-                              <p className="text-[11px] text-muted-foreground/60 pl-4 line-clamp-1">{p.role}</p>
-                            )}
-                          </div>
-                          {(p.linkedin_url || p.contact_phone) && (
+                            <div className="space-y-1">
+                              <p className="text-xs text-muted-foreground flex items-center gap-1.5 line-clamp-1">
+                                <UserCircle2 className="h-3 w-3 shrink-0" />
+                                {primaryPersona?.name || p.contact_name}
+                              </p>
+                              {(primaryPersona?.role || p.role) && (
+                                <p className="text-[11px] text-muted-foreground/60 pl-4 line-clamp-1">{primaryPersona?.role || p.role}</p>
+                              )}
+                              {personas.length > 1 && (
+                                <p className="text-[10px] text-muted-foreground/60 pl-4 line-clamp-1">
+                                  +{personas.length - 1} persona{personas.length > 2 ? "s" : ""}
+                                </p>
+                              )}
+                            </div>
+                            {((primaryPersona?.linkedin_url || p.linkedin_url) || (primaryPersona?.phone || p.contact_phone)) && (
                             <div className="pt-1.5 border-t border-border/40 flex items-center gap-3">
-                              {p.linkedin_url && (
+                              {(primaryPersona?.linkedin_url || p.linkedin_url) && (
                                 <div className="flex items-center gap-1.5">
                                   <Linkedin className="h-2.5 w-2.5 text-blue-400/60" />
                                   <span className="text-[10px] text-blue-400/60 font-medium">LinkedIn</span>
                                 </div>
                               )}
-                              {p.contact_phone && (
+                              {(primaryPersona?.phone || p.contact_phone) && (
                                 <div className="flex items-center gap-1.5">
                                   <Phone className="h-2.5 w-2.5 text-emerald-400/60" />
                                   <span className="text-[10px] text-emerald-400/60 font-medium">WhatsApp</span>
                                 </div>
                               )}
                             </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    ))
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -1141,32 +1303,44 @@ export default function Prospeccao() {
             {/* Contact info — view mode */}
             {!isSheetEditMode ? (
               <div className="mt-4 space-y-2">
-                <div className="flex items-center gap-2 text-sm">
-                  <UserCircle2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="font-medium">{selectedProspect?.contact_name}</span>
-                  {selectedProspect?.role && <span className="text-muted-foreground text-xs">· {selectedProspect.role}</span>}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <Users2 className="h-3.5 w-3.5" /> Personas
+                  </div>
+                  {selectedProspect && getProspectPersonas(selectedProspect).map((persona, index) => (
+                    <div key={persona.id} className="rounded-md border border-border/50 bg-muted/20 p-3 space-y-1.5">
+                      <div className="flex items-center gap-2 text-sm">
+                        <UserCircle2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <span className="font-medium">{persona.name}</span>
+                        {index === 0 && <Badge variant="outline" className="h-5 text-[10px]">Principal</Badge>}
+                      </div>
+                      {persona.role && <p className="pl-6 text-xs text-muted-foreground">{persona.role}</p>}
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 pl-6">
+                        {persona.linkedin_url && (
+                          <a href={persona.linkedin_url} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors">
+                            <Linkedin className="h-3.5 w-3.5 shrink-0" />
+                            <span>LinkedIn</span>
+                          </a>
+                        )}
+                        {persona.phone && (
+                          <a href={`https://wa.me/${persona.phone.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 transition-colors">
+                            <Phone className="h-3.5 w-3.5 shrink-0" />
+                            <span>{persona.phone}</span>
+                          </a>
+                        )}
+                        {persona.email && (
+                          <a href={`mailto:${persona.email}`}
+                            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                            <Mail className="h-3.5 w-3.5 shrink-0" />
+                            <span>{persona.email}</span>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                {selectedProspect?.linkedin_url && (
-                  <a href={selectedProspect.linkedin_url} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors w-fit">
-                    <Linkedin className="h-4 w-4 shrink-0" />
-                    <span>Ver perfil no LinkedIn</span>
-                  </a>
-                )}
-                {selectedProspect?.contact_phone && (
-                  <a href={`https://wa.me/${selectedProspect.contact_phone.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-sm text-emerald-400 hover:text-emerald-300 transition-colors w-fit">
-                    <Phone className="h-4 w-4 shrink-0" />
-                    <span>{selectedProspect.contact_phone}</span>
-                  </a>
-                )}
-                {selectedProspect?.contact_email && (
-                  <a href={`mailto:${selectedProspect.contact_email}`}
-                    className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors w-fit">
-                    <Mail className="h-4 w-4 shrink-0" />
-                    <span>{selectedProspect.contact_email}</span>
-                  </a>
-                )}
                 {selectedProspect?.company_phone && (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Building2 className="h-4 w-4 shrink-0" />
@@ -1205,24 +1379,48 @@ export default function Prospeccao() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Contato *</Label>
-                    <Input value={editFormData.contact_name || ''} onChange={e => setEditFormData(p => ({ ...p, contact_name: e.target.value }))} className="h-8 text-sm" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Cargo</Label>
-                    <Input value={editFormData.role || ''} onChange={e => setEditFormData(p => ({ ...p, role: e.target.value }))} className="h-8 text-sm" />
-                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Tel. Contato (WhatsApp)</Label>
-                    <Input value={editFormData.contact_phone || ''} onChange={e => setEditFormData(p => ({ ...p, contact_phone: e.target.value }))} className="h-8 text-sm" placeholder="+55 11..." />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs">Personas *</Label>
+                    <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={addEditPersona}>
+                      <Plus className="mr-1 h-3.5 w-3.5" /> Persona
+                    </Button>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Email Contato</Label>
-                    <Input value={editFormData.contact_email || ''} onChange={e => setEditFormData(p => ({ ...p, contact_email: e.target.value }))} className="h-8 text-sm" type="email" />
-                  </div>
+                  {getPersonasForForm(editFormData).map((persona, index) => (
+                    <div key={persona.id} className="rounded-md border border-border/60 p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-muted-foreground">Persona {index + 1}</span>
+                        {getPersonasForForm(editFormData).length > 1 && (
+                          <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeEditPersona(index)}>
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Nome {index === 0 ? "*" : ""}</Label>
+                          <Input value={persona.name} onChange={(e) => updateEditPersona(index, { name: e.target.value })} required={index === 0} className="h-8 text-sm" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Cargo</Label>
+                          <Input value={persona.role || ""} onChange={(e) => updateEditPersona(index, { role: e.target.value })} className="h-8 text-sm" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">WhatsApp</Label>
+                          <Input value={persona.phone || ""} onChange={(e) => updateEditPersona(index, { phone: e.target.value })} className="h-8 text-sm" placeholder="+55 11..." />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Email</Label>
+                          <Input value={persona.email || ""} onChange={(e) => updateEditPersona(index, { email: e.target.value })} className="h-8 text-sm" type="email" />
+                        </div>
+                        <div className="space-y-1 col-span-2">
+                          <Label className="text-xs">LinkedIn URL</Label>
+                          <Input value={persona.linkedin_url || ""} onChange={(e) => updateEditPersona(index, { linkedin_url: e.target.value })} className="h-8 text-sm" />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
@@ -1233,10 +1431,6 @@ export default function Prospeccao() {
                     <Label className="text-xs">Email Empresa</Label>
                     <Input value={editFormData.company_email || ''} onChange={e => setEditFormData(p => ({ ...p, company_email: e.target.value }))} className="h-8 text-sm" type="email" />
                   </div>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">LinkedIn URL</Label>
-                  <Input value={editFormData.linkedin_url || ''} onChange={e => setEditFormData(p => ({ ...p, linkedin_url: e.target.value }))} className="h-8 text-sm" />
                 </div>
               </div>
             )}

@@ -573,6 +573,7 @@ export type Database = {
           linkedin_url: string | null
           operation: string
           owner_id: string
+          personas: Json | null
           qualification_notes: string | null
           role: string | null
           status: string
@@ -592,6 +593,7 @@ export type Database = {
           linkedin_url?: string | null
           operation?: string
           owner_id: string
+          personas?: Json | null
           qualification_notes?: string | null
           role?: string | null
           status?: string
@@ -611,6 +613,7 @@ export type Database = {
           linkedin_url?: string | null
           operation?: string
           owner_id?: string
+          personas?: Json | null
           qualification_notes?: string | null
           role?: string | null
           status?: string

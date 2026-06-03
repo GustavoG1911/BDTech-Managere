@@ -193,6 +193,19 @@ function getSalaryScheduledPaymentMonthKey(row: {
   return row.payment_date ? getMonthKey(row.payment_date) : "";
 }
 
+function getManualPaymentScheduledMonthKey(payment: {
+  reference_month?: string | null;
+  expected_payment_date?: string | null;
+}): string {
+  if (payment.expected_payment_date) return getMonthKey(payment.expected_payment_date);
+  return payment.reference_month ? getMonthKey(payment.reference_month) : "";
+}
+
+function formatDateList(values: Array<string | null | undefined>): string {
+  const dates = values.filter(Boolean).map((value) => formatSafeDate(value));
+  return dates.length > 0 ? dates.join(" / ") : "—";
+}
+
 function toDateInputValue(value?: string | null): string {
   if (!value) return "";
   const str = typeof value === "string" && !value.includes("T") ? value + "T12:00:00" : value;
@@ -384,11 +397,12 @@ function getInstallmentItems(deal: Deal, implantationCommission: number, period?
         date,
         monthKey,
         paid: !!inst?.paid,
+        paymentDate: inst?.paymentDate || inst?.payment_date || null,
         commission: amount,
         value: count > 0 ? (deal.implantationValue || 0) / count : 0,
       };
     })
-    .filter(Boolean) as Array<{ index: number; date: string; monthKey: string; paid: boolean; commission: number; value: number }>;
+    .filter(Boolean) as Array<{ index: number; date: string; monthKey: string; paid: boolean; paymentDate: string | null; commission: number; value: number }>;
 }
 
 function getCommissionPeriodParts(deal: Deal, presentations: any, settings: any, period: FinancePeriod) {
@@ -534,7 +548,9 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
   const periodBaseCommission = (parts.mensalidadeInPeriod ? comm.monthlyCommission : 0) + (parts.implantacaoInPeriod ? comm.implantationCommission : 0);
   const periodSuperMetaBonus = parts.mensalidadeInPeriod ? comm.superMetaBonus : 0;
   const dealMonth = selectedMonth || mensalidadeMonthKey || implantacaoMonthKey;
+  const relevantCommissionPayments = getCommissionPaymentsForParts(deal.id, parts, commissionPayments || []);
   const commissionStatus = getCommissionStatusForPayments(deal, parts, commissionPayments || []);
+  const commissionPaidDateLabel = formatDateList(relevantCommissionPayments.map((cp) => cp.paidByDirectorAt));
   const isPendingAction = commissionStatus === "waiting";
   const pendingPartLabels = [
     allMensalidadeCommission > 0 ? `Mensalidade${mensalidadeMonthKey ? ` (${formatMonthLabel(mensalidadeMonthKey)})` : ""}: ${formatCurrency(allMensalidadeCommission)}` : null,
@@ -592,12 +608,18 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
         )}
         <TableCell className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
           {commissionStatus === "done" ? (
-            <span className="pill-green">Concluido</span>
+            <div className="flex flex-col items-center gap-1">
+              <span className="pill-green">Concluido</span>
+              <span className="text-[10px] text-success/80">Pago em {commissionPaidDateLabel}</span>
+            </div>
           ) : commissionStatus === "waiting" ? (
-            <Button size="sm" onClick={() => onConfirm(deal.id)} className="h-7 text-[10px] bg-success hover:bg-success/90 text-success-foreground">
-              <CheckCircle2 className="h-3 w-3 mr-1" />
-              Confirmar Recebimento
-            </Button>
+            <div className="flex flex-col items-center gap-1.5">
+              <Button size="sm" onClick={() => onConfirm(deal.id)} className="h-7 text-[10px] bg-success hover:bg-success/90 text-success-foreground">
+                <CheckCircle2 className="h-3 w-3 mr-1" />
+                Confirmar Recebimento
+              </Button>
+              <span className="text-[10px] text-warning/80">Pago em {commissionPaidDateLabel}</span>
+            </div>
           ) : commissionStatus === "ready" ? (
             <span className="pill-blue">Destravado</span>
           ) : (
@@ -625,6 +647,7 @@ function ExpandableUserCommissionRow({ deal, selectedMonth, presentations, setti
                 <div className="p-3 rounded-lg bg-warning/10 border border-warning/20 space-y-1 col-span-2">
                   <p className="text-warning/80">Pago pelo gestor</p>
                   <p className="font-mono font-semibold text-warning">{formatCurrency(totalComm)}</p>
+                  <p className="text-[10px] text-warning/70">Pago em {commissionPaidDateLabel}</p>
                   <p className="text-[10px] text-warning/70">{commissionParts || "Comissao do fechamento"}</p>
                 </div>
               )}
@@ -708,6 +731,9 @@ function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, sala
         <TableCell className="px-4 py-3 text-sm text-muted-foreground">
           {formatSafeDate(expectedDate)}
         </TableCell>
+        <TableCell className="px-4 py-3 text-sm text-muted-foreground">
+          {paymentDate ? formatSafeDate(paymentDate) : "—"}
+        </TableCell>
         <TableCell className="px-4 py-3 text-center">
           {isConfirmed ? (
             <span className="pill-green">Recebido</span>
@@ -722,7 +748,7 @@ function ExpandableUserSalaryRow({ salary, profiles, userId, selectedMonth, sala
       </TableRow>
       {expanded && (
         <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={5} className="p-0">
+          <TableCell colSpan={6} className="p-0">
             <div className="px-5 py-4 bg-[#242842]/60 border-t border-border/30 grid grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
               <div className="p-3 rounded-lg bg-muted/30 border border-border/30 space-y-1">
                 <p className="text-muted-foreground">Competência (mês trabalhado)</p>
@@ -791,7 +817,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
       if (salariesRes.error && (salariesRes.error.message?.includes("is_test_data") || salariesRes.error.message?.includes("column"))) {
         salariesRes = await (supabase.from("salary_payments") as any).select("*").eq("user_id", userId);
       }
-      let manualPaymentsRes = await (supabase.from("manual_payments") as any)
+      const manualPaymentsRes = await (supabase.from("manual_payments") as any)
         .select("*")
         .eq("user_id", userId)
         .eq("is_test_data", isTestEnv)
@@ -882,7 +908,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     const targetMonth = pendingSalary
       ? getSalaryScheduledPaymentMonthKey(pendingSalary, settings.salaryDueDay)
       : pendingManual
-        ? getMonthKey(pendingManual.reference_month)
+        ? getManualPaymentScheduledMonthKey(pendingManual)
         : null;
     if (targetMonth && targetMonth !== selectedMonth) {
       setSelectedMonth(targetMonth);
@@ -892,7 +918,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
   const filteredManualPayments = useMemo(() => {
     return manualPayments.filter((payment) =>
       payment.payment_direction === "payable"
-      && getMonthKey(payment.reference_month) === selectedMonth
+      && getManualPaymentScheduledMonthKey(payment) === selectedMonth
     );
   }, [manualPayments, selectedMonth]);
 
@@ -1018,10 +1044,9 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
     let volume = 0;
 
     commissionPayments.forEach((cp) => {
-      if (cp.confirmedByUserAt && getMonthKey(cp.confirmedByUserAt) === selectedMonth) {
-        paid += cp.amount;
-      } else if (!cp.confirmedByUserAt && cp.competenceMonth === selectedMonth) {
-        projected += cp.amount;
+      if (cp.competenceMonth === selectedMonth) {
+        if (cp.confirmedByUserAt) paid += cp.amount;
+        else projected += cp.amount;
       }
     });
 
@@ -1267,7 +1292,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <KpiCard title="Comissão Paga" value={formatCurrency(kpis.paid)} icon={BadgeDollarSign} variant="success" subtitle="Já confirmada e recebida" tooltip="Comissões que você confirmou como recebidas. Se o pagamento foi antecipado, conta no mês da confirmação." />
+        <KpiCard title="Comissão Paga" value={formatCurrency(kpis.paid)} icon={BadgeDollarSign} variant="success" subtitle="Já confirmada e recebida" tooltip="Comissões confirmadas dentro do mês financeiro previsto. A data real do pagamento aparece no detalhe." />
         <KpiCard title="Comissão Prevista" value={formatCurrency(kpis.projected)} icon={TrendingUp} variant="primary" subtitle="Esperado receber neste mês pela Regra do Dia 07" tooltip="Comissões liberadas ou previstas para o mês financeiro selecionado, respeitando a Regra do Dia 07." />
         <KpiCard title="Volume de Vendas" value={formatCurrency(kpis.volume)} icon={BarChart3} variant="warning" subtitle="Valor bruto dos contratos do período" tooltip="Soma dos valores dos contratos com competência no período. Em implantação parcelada, considera apenas a parcela do mês." />
         <KpiCard title="Salário Fixo" value={formatCurrency(kpis.fixed)} icon={DollarSign} variant={kpis.fixedConfirmed ? "success" : "default"} subtitle={kpis.fixedConfirmed ? "Recebimento confirmado" : "Vencimento no mês selecionado"} tooltip="Salário fixo com vencimento no mês selecionado. A competência exibida na linha é o mês trabalhado." />
@@ -1474,6 +1499,7 @@ function UserFinanceiroContent({ userId }: { userId: string }) {
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Origem</TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-right">Valor</TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Vencimento previsto</TableHead>
+                <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Pago em</TableHead>
                 <TableHead className="px-4 py-3 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase text-center">Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -1632,7 +1658,7 @@ function FinanceiroContent() {
       if (salariesRes.error && (salariesRes.error.message?.includes("is_test_data") || salariesRes.error.message?.includes("column"))) {
         salariesRes = await (supabase.from("salary_payments") as any).select("*");
       }
-      let manualPaymentsRes = await (supabase.from("manual_payments") as any)
+      const manualPaymentsRes = await (supabase.from("manual_payments") as any)
         .select("*")
         .eq("is_test_data", isTestEnv)
         .order("created_at", { ascending: false });
@@ -1711,12 +1737,15 @@ function FinanceiroContent() {
 
   const filteredManualPayments = useMemo(() => {
     return manualPayments.filter((payment) => {
-      const referenceMonthKey = getMonthKey(payment.reference_month);
-      const passTime = monthKeyInPeriod(referenceMonthKey, period);
+      const scheduledMonthKey = getManualPaymentScheduledMonthKey(payment);
+      const passTime = monthKeyInPeriod(scheduledMonthKey, period);
       const passUser = filtroFuncionario === "Todos" || payment.user_id === filtroFuncionario;
+      const isDone = payment.payment_direction === "receivable"
+        ? payment.is_paid_by_gestor
+        : !!payment.confirmed_by_user_at;
       let passStatus = true;
-      if (filtroStatus === "Finalizados") passStatus = !!payment.confirmed_by_user_at;
-      if (filtroStatus === "Pendentes") passStatus = !payment.confirmed_by_user_at;
+      if (filtroStatus === "Finalizados") passStatus = isDone;
+      if (filtroStatus === "Pendentes") passStatus = !isDone;
       return passTime && passUser && passStatus;
     });
   }, [manualPayments, period, filtroFuncionario, filtroStatus]);
@@ -1924,17 +1953,18 @@ function FinanceiroContent() {
       .slice(0, 6);
   }, [activeDeals, selectedMonth, period, filtroOperacao, filtroFuncionario, presentations, settings, commissionPayments]);
 
-  const handleToggleMensalidade = async (dealId: string, currentStatus: boolean) => {
+  const handleToggleMensalidade = async (dealId: string, currentStatus: boolean, paymentDate?: string) => {
     if (currentStatus) {
       if (!confirm("Confirma o cancelamento deste recebimento revertendo-o para Pendente?")) return;
     }
     const newStatus = !currentStatus;
+    const paidAt = dateInputToIso(paymentDate);
     const { data: updatedDeal, error } = await supabase
       .from("deals")
       .update({ 
         is_mensalidade_paid_by_client: newStatus,
-        actual_payment_date: newStatus ? new Date().toISOString() : null,
-        mensalidade_payment_date: newStatus ? new Date().toISOString() : null
+        actual_payment_date: newStatus ? paidAt : null,
+        mensalidade_payment_date: newStatus ? paidAt : null
       } as any)
       .eq("id", dealId)
       .select("id")
@@ -1946,17 +1976,18 @@ function FinanceiroContent() {
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
-  const handleToggleImplantacao = async (dealId: string, currentStatus: boolean) => {
+  const handleToggleImplantacao = async (dealId: string, currentStatus: boolean, paymentDate?: string) => {
     if (currentStatus) {
       if (!confirm("Confirma o cancelamento deste recebimento revertendo-o para Pendente?")) return;
     }
     const newStatus = !currentStatus;
+    const paidAt = dateInputToIso(paymentDate);
     const { data: updatedDeal, error } = await supabase
       .from("deals")
       .update({
         is_implantacao_paid_by_client: newStatus,
         is_implantacao_paid: newStatus,
-        implantacao_payment_date: newStatus ? new Date().toISOString() : null
+        implantacao_payment_date: newStatus ? paidAt : null
       } as any)
       .eq("id", dealId)
       .select("id")
@@ -1968,12 +1999,13 @@ function FinanceiroContent() {
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
-  const handleConfirmInstallment = async (dealId: string, index: number, checked: boolean) => {
+  const handleConfirmInstallment = async (dealId: string, index: number, checked: boolean, paymentDate?: string) => {
     const deal = activeDeals.find((d) => d.id === dealId);
     if (!deal) return;
     const dates = Array.isArray(deal.installmentDates) ? [...deal.installmentDates] : [];
     if (dates[index]) {
-      dates[index] = { ...dates[index], paid: checked };
+      const current = typeof dates[index] === "string" ? { date: dates[index] } : { ...dates[index] };
+      dates[index] = { ...current, paid: checked, paymentDate: checked ? dateInputToIso(paymentDate) : null };
     }
     const { error } = await supabase
       .from("deals")
@@ -1985,7 +2017,7 @@ function FinanceiroContent() {
     queryClient.invalidateQueries({ queryKey: ["finance-data"] });
   };
 
-  const handleToggleCommissionPayment = async (dealId: string, currentStatus: boolean, targetRecipientUserId?: string) => {
+  const handleToggleCommissionPayment = async (dealId: string, currentStatus: boolean, targetRecipientUserId?: string, paymentDate?: string) => {
     const newStatus = !currentStatus;
     if (!newStatus) {
       if (!confirm("Confirma o cancelamento do pagamento desta comissão revertendo-a para Pendente?")) return;
@@ -1993,6 +2025,7 @@ function FinanceiroContent() {
     const deal = activeDeals.find((d) => d.id === dealId);
 
     if (newStatus && deal) {
+      const paidAt = dateInputToIso(paymentDate);
       const executivoParts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles, deal.userId);
       const sdrParts = deal.sdrUserId && deal.sdrUserId !== deal.userId
         ? getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles, deal.sdrUserId)
@@ -2004,14 +2037,14 @@ function FinanceiroContent() {
       ) => {
         if (!recipientUserId) return;
         if (parts.mensalidadeInPeriod && parts.mensalidadeCommission > 0 && parts.mensalidadeMonthKey) {
-          await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, isTestData, recipientUserId);
+          await upsertCommissionPaymentRow(dealId, "mensalidade", parts.mensalidadeMonthKey, parts.mensalidadeCommission, isTestData, recipientUserId, null, paidAt);
         }
         if (parts.installmentItems?.length) {
           for (const item of parts.installmentItems) {
-            await upsertCommissionPaymentRow(dealId, "implantacao_parcela", item.monthKey, item.commission, isTestData, recipientUserId, item.index);
+            await upsertCommissionPaymentRow(dealId, "implantacao_parcela", item.monthKey, item.commission, isTestData, recipientUserId, item.index, paidAt);
           }
         } else if (parts.implantacaoInPeriod && parts.implantacaoCommission > 0 && parts.implantacaoMonthKey) {
-          await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, isTestData, recipientUserId);
+          await upsertCommissionPaymentRow(dealId, "implantacao", parts.implantacaoMonthKey, parts.implantacaoCommission, isTestData, recipientUserId, null, paidAt);
         }
       };
       const clearPartsForRecipient = async (
@@ -2650,9 +2683,9 @@ interface ReceivablesTabProps {
   profiles: ProfileMap;
   settings: any;
   getUserName: (id: string) => string;
-  onToggleMensalidade: (id: string, currentStatus: boolean) => void;
-  onToggleImplantacao: (id: string, currentStatus: boolean) => void;
-  onConfirmInstallment: (id: string, index: number, checked: boolean) => void;
+  onToggleMensalidade: (id: string, currentStatus: boolean, paymentDate?: string) => void;
+  onToggleImplantacao: (id: string, currentStatus: boolean, paymentDate?: string) => void;
+  onConfirmInstallment: (id: string, index: number, checked: boolean, paymentDate?: string) => void;
   onCreateManualReceivable: (payload: { clientName: string; operation: string; responsibleUserId: string; description: string; amount: number; referenceMonth: string; expectedDate: string }) => Promise<boolean>;
   onToggleManualReceivable: (paymentId: string, currentStatus: boolean, paymentDate?: string) => void;
   onDeleteManualReceivable: (paymentId: string) => void;
@@ -2660,8 +2693,19 @@ interface ReceivablesTabProps {
 
 function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, onToggleMensalidade, onToggleImplantacao, onConfirmInstallment }: any) {
   const [expanded, setExpanded] = useState(false);
+  const [mensalidadeReceivedDate, setMensalidadeReceivedDate] = useState(todayDateInputValue());
+  const [implantacaoReceivedDate, setImplantacaoReceivedDate] = useState(todayDateInputValue());
+  const [installmentReceivedDates, setInstallmentReceivedDates] = useState<Record<number, string>>({});
   const { mensalidadeMonthKey, implantacaoMonthKey } = getDealMonthKeys(deal);
   const commissionDueDay = settings?.commissionDueDay || 20;
+
+  useEffect(() => {
+    setMensalidadeReceivedDate(toDateInputValue(deal.mensalidadePaymentDate) || todayDateInputValue());
+  }, [deal.id, deal.mensalidadePaymentDate]);
+
+  useEffect(() => {
+    setImplantacaoReceivedDate(toDateInputValue(deal.implantacaoPaymentDate) || todayDateInputValue());
+  }, [deal.id, deal.implantacaoPaymentDate]);
   
   const expectMensalidade = deal.monthlyValue > 0 && mensalidadeMonthKey === selectedMonth;
   const expectImplantacao = deal.implantationValue > 0 && !deal.isInstallment && implantacaoMonthKey === selectedMonth;
@@ -2688,6 +2732,22 @@ function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, 
   }
 
   const totalValue = (expectMensalidade ? deal.monthlyValue : 0) + (expectImplantacao ? deal.implantationValue : 0);
+  const receivedDateParts = [
+    expectMensalidade && deal.isMensalidadePaidByClient && deal.mensalidadePaymentDate ? `Mens.: ${formatSafeDate(deal.mensalidadePaymentDate)}` : null,
+    expectImplantacao && deal.isImplantacaoPaid && deal.implantacaoPaymentDate ? `Impl.: ${formatSafeDate(deal.implantacaoPaymentDate)}` : null,
+    ...(
+      deal.isInstallment && Array.isArray(deal.installmentDates)
+        ? deal.installmentDates
+            .map((inst: any, idx: number) => {
+              const dateStr = inst?.date || inst;
+              if (!dateStr || getPaymentDateInfo(dateStr).monthKey !== selectedMonth || inst?.paid !== true) return null;
+              const paidDate = inst?.paymentDate || inst?.payment_date;
+              return `Parc. ${idx + 1}: ${formatSafeDate(paidDate)}`;
+            })
+            .filter(Boolean)
+        : []
+    ),
+  ].filter(Boolean) as string[];
 
   return (
     <>
@@ -2712,7 +2772,10 @@ function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, 
         </TableCell>
         <TableCell className="px-3 py-3 text-sm text-center">
           {isPaid ? (
-            <span className="text-success text-xs font-semibold">Rec. Mês Atual</span>
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-success text-xs font-semibold">Recebido</span>
+              <span className="text-[10px] text-success/80">{receivedDateParts.join(" / ") || "Data não informada"}</span>
+            </div>
           ) : (
             <span className="text-[11px] text-muted-foreground/50 italic">A aguardar</span>
           )}
@@ -2744,10 +2807,26 @@ function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, 
                     )}
                   </div>
                   <div className="pt-2 border-t border-border/30 flex justify-between items-center">
-                    <p className="text-[10px] text-muted-foreground/60">Venc: {formatSafeDate(deal.firstPaymentDate)}</p>
-                    <Button size="sm" variant={deal.isMensalidadePaidByClient ? "destructive" : "outline"} className="h-6 text-[10px]" onClick={() => onToggleMensalidade(deal.id, deal.isMensalidadePaidByClient || false)}>
-                      {deal.isMensalidadePaidByClient ? "Reverter Baixa" : "Confirmar Recebimento"}
-                    </Button>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground/60">Venc: {formatSafeDate(deal.firstPaymentDate)}</p>
+                      {deal.isMensalidadePaidByClient && (
+                        <p className="text-[10px] text-success/80">Recebido em {formatSafeDate(deal.mensalidadePaymentDate)}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {!deal.isMensalidadePaidByClient && (
+                        <input
+                          type="date"
+                          value={mensalidadeReceivedDate}
+                          onChange={(e) => setMensalidadeReceivedDate(e.target.value)}
+                          className="h-7 w-[128px] rounded-md border border-border/60 bg-card px-2 text-[10px] text-foreground"
+                          title="Data real em que a mensalidade foi recebida."
+                        />
+                      )}
+                      <Button size="sm" variant={deal.isMensalidadePaidByClient ? "destructive" : "outline"} className="h-6 text-[10px]" onClick={() => onToggleMensalidade(deal.id, deal.isMensalidadePaidByClient || false, mensalidadeReceivedDate)}>
+                        {deal.isMensalidadePaidByClient ? "Reverter Baixa" : "Confirmar Recebimento"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -2766,10 +2845,26 @@ function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, 
                     )}
                   </div>
                   <div className="pt-2 border-t border-border/30 flex justify-between items-center">
-                    <p className="text-[10px] text-muted-foreground/60">Venc: {formatSafeDate(deal.implantationPaymentDate)}</p>
-                    <Button size="sm" variant={deal.isImplantacaoPaid ? "destructive" : "outline"} className="h-6 text-[10px]" onClick={() => onToggleImplantacao(deal.id, deal.isImplantacaoPaid || false)}>
-                      {deal.isImplantacaoPaid ? "Reverter Baixa" : "Confirmar Recebimento"}
-                    </Button>
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-muted-foreground/60">Venc: {formatSafeDate(deal.implantationPaymentDate)}</p>
+                      {deal.isImplantacaoPaid && (
+                        <p className="text-[10px] text-success/80">Recebido em {formatSafeDate(deal.implantacaoPaymentDate)}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {!deal.isImplantacaoPaid && (
+                        <input
+                          type="date"
+                          value={implantacaoReceivedDate}
+                          onChange={(e) => setImplantacaoReceivedDate(e.target.value)}
+                          className="h-7 w-[128px] rounded-md border border-border/60 bg-card px-2 text-[10px] text-foreground"
+                          title="Data real em que a implantação foi recebida."
+                        />
+                      )}
+                      <Button size="sm" variant={deal.isImplantacaoPaid ? "destructive" : "outline"} className="h-6 text-[10px]" onClick={() => onToggleImplantacao(deal.id, deal.isImplantacaoPaid || false, implantacaoReceivedDate)}>
+                        {deal.isImplantacaoPaid ? "Reverter Baixa" : "Confirmar Recebimento"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -2783,12 +2878,17 @@ function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, 
                       if (!dateStr || getPaymentDateInfo(dateStr).monthKey !== selectedMonth) return null;
                       const isPaidInst = inst?.paid === true;
                       const parcelValue = deal.implantationValue / deal.installmentCount;
+                      const paidDate = inst?.paymentDate || inst?.payment_date;
+                      const receivedDateValue = installmentReceivedDates[idx] || toDateInputValue(paidDate) || todayDateInputValue();
                       return (
                         <div key={idx} className="flex justify-between items-center p-2 rounded-lg bg-background/40 border border-border/30">
                           <div>
                             <p className="text-xs font-medium">Parcela {idx+1}/{deal.installmentCount}</p>
                             <p className="text-sm font-bold">{formatCurrency(parcelValue)}</p>
                             <p className="text-[10px] text-muted-foreground">Venc: {formatSafeDate(dateStr)}</p>
+                            {isPaidInst && (
+                              <p className="text-[10px] text-success/80">Recebido em {formatSafeDate(paidDate)}</p>
+                            )}
                           </div>
                           <div className="flex flex-col items-end gap-1">
                             {isPaidInst ? (
@@ -2796,7 +2896,16 @@ function ExpandableReceivablesRow({ deal, selectedMonth, settings, getUserName, 
                             ) : (
                               <span className="pill-yellow" style={{ fontSize: "9px" }}>Pendente</span>
                             )}
-                            <Checkbox checked={isPaidInst} onCheckedChange={(checked) => onConfirmInstallment(deal.id, idx, !!checked)} />
+                            {!isPaidInst && (
+                              <input
+                                type="date"
+                                value={receivedDateValue}
+                                onChange={(e) => setInstallmentReceivedDates((prev) => ({ ...prev, [idx]: e.target.value }))}
+                                className="h-7 w-[128px] rounded-md border border-border/60 bg-card px-2 text-[10px] text-foreground"
+                                title="Data real em que a parcela foi recebida."
+                              />
+                            )}
+                            <Checkbox checked={isPaidInst} onCheckedChange={(checked) => onConfirmInstallment(deal.id, idx, !!checked, receivedDateValue)} />
                           </div>
                         </div>
                       );
@@ -3052,7 +3161,7 @@ interface PayablesTabProps {
   commissionPayments: CommissionPayment[];
   period: FinancePeriod;
   processingSalaryKeys: Set<string>;
-  onToggleCommissionPayment: (dealId: string, currentStatus: boolean, recipientUserId?: string) => void;
+  onToggleCommissionPayment: (dealId: string, currentStatus: boolean, recipientUserId?: string, paymentDate?: string) => void;
   onToggleSalaryPayment: (salaryId: string, currentStatus: boolean, paymentDate?: string) => void;
   onCreateAndToggleSalaryPayment: (userId: string, amount: number, referenceMonth: string, paymentDate?: string) => void;
   onUpdateSalaryPaymentDate: (salaryId: string, paymentDate: string) => void;
@@ -3064,11 +3173,19 @@ interface PayablesTabProps {
 function ExpandableCommissionRow({ deal, recipientUserId, settings, profiles, getUserName, presentations, commissionPayments, period, onToggleCommissionPayment }: any) {
   const [expanded, setExpanded] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [paymentDateValue, setPaymentDateValue] = useState(todayDateInputValue());
   const recipientId = recipientUserId || deal.userId;
   const parts = getCommissionPeriodPartsForRecipient(deal, presentations, settings, period, profiles || {}, recipientId);
   const recipientPayments = (commissionPayments || []).filter((cp: CommissionPayment) => cp.recipientUserId === recipientId);
   const commissionStatus = getCommissionStatusForPayments(deal, parts, recipientPayments, false);
   const hasDirectorPayment = commissionStatus === "waiting" || commissionStatus === "done";
+  const relevantPayments = getCommissionPaymentsForParts(deal.id, parts, recipientPayments);
+  const directorPaymentDate = relevantPayments.find((cp) => cp.paidByDirectorAt)?.paidByDirectorAt || null;
+  const directorPaymentDateLabel = formatDateList(relevantPayments.map((cp) => cp.paidByDirectorAt));
+
+  useEffect(() => {
+    setPaymentDateValue(toDateInputValue(directorPaymentDate) || todayDateInputValue());
+  }, [directorPaymentDate]);
 
   const baseDate = parts.mensalidadeInPeriod ? deal.firstPaymentDate : parts.implantacaoInPeriod ? deal.implantationPaymentDate : deal.firstPaymentDate || deal.implantationPaymentDate;
   let expectedPaymentDateStr = "Data Pendente";
@@ -3111,9 +3228,15 @@ function ExpandableCommissionRow({ deal, recipientUserId, settings, profiles, ge
         </TableCell>
         <TableCell className="px-3 py-3 text-sm text-center">
           {commissionStatus === "done" ? (
-            <span className="text-success text-xs font-semibold">Confirmado</span>
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-success text-xs font-semibold">Confirmado</span>
+              <span className="text-[10px] text-success/80">Pago em {directorPaymentDateLabel}</span>
+            </div>
           ) : commissionStatus === "waiting" ? (
-            <span className="text-warning text-xs font-semibold">Baixa enviada</span>
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-warning text-xs font-semibold">Baixa enviada</span>
+              <span className="text-[10px] text-warning/80">Pago em {directorPaymentDateLabel}</span>
+            </div>
           ) : commissionStatus === "ready" ? (
             <span className="text-primary text-xs font-semibold">Liberada</span>
           ) : (
@@ -3146,10 +3269,22 @@ function ExpandableCommissionRow({ deal, recipientUserId, settings, profiles, ge
                 <p className="text-[11px] text-muted-foreground">
                   O funcionario recebera uma notificacao para confirmar o recebimento.
                 </p>
+                {!hasDirectorPayment && (
+                  <label className="block space-y-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Pago em</span>
+                    <input
+                      type="date"
+                      value={paymentDateValue}
+                      onChange={(e) => setPaymentDateValue(e.target.value)}
+                      className="h-8 w-full rounded-md border border-border/60 bg-card px-2 text-xs text-foreground"
+                      title="Data real em que a comissão foi paga. Não altera o mês previsto."
+                    />
+                  </label>
+                )}
                 <Button
                   size="sm"
                   className={`w-full h-8 text-xs ${hasDirectorPayment ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground" : "bg-success hover:bg-success/90 text-success-foreground"}`}
-                  onClick={() => { onToggleCommissionPayment(deal.id, hasDirectorPayment, recipientId); setPopoverOpen(false); }}
+                  onClick={() => { onToggleCommissionPayment(deal.id, hasDirectorPayment, recipientId, paymentDateValue); setPopoverOpen(false); }}
                 >
                   {hasDirectorPayment ? "Remover Baixa" : "Dar Baixa"}
                 </Button>
@@ -3175,6 +3310,12 @@ function ExpandableCommissionRow({ deal, recipientUserId, settings, profiles, ge
                 <p className="text-muted-foreground">Comissão Base</p>
                 <p className="font-mono font-semibold text-primary">{formatCurrency(periodBaseCommission)}</p>
               </div>
+              {hasDirectorPayment && (
+                <div className="p-3 rounded-lg bg-success/10 border border-success/20 space-y-1">
+                  <p className="text-success/80">Comissão paga em</p>
+                  <p className="font-mono font-semibold text-success">{directorPaymentDateLabel}</p>
+                </div>
+              )}
               <div className="p-3 rounded-lg bg-warning/10 border border-warning/20 space-y-1">
                 <p className="text-warning/80">Bônus Super Meta</p>
                 <p className="font-mono font-semibold text-warning">{periodSuperMetaBonus > 0 ? "+" + formatCurrency(periodSuperMetaBonus) : "—"}</p>

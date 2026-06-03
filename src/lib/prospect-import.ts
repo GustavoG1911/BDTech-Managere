@@ -6,6 +6,16 @@ export type ImportFieldKey =
   | "contact_name"
   | "role"
   | "linkedin_url"
+  | "contact_name_2"
+  | "role_2"
+  | "linkedin_url_2"
+  | "contact_email_2"
+  | "contact_phone_2"
+  | "contact_name_3"
+  | "role_3"
+  | "linkedin_url_3"
+  | "contact_email_3"
+  | "contact_phone_3"
   | "company_email"
   | "company_phone"
   | "contact_email"
@@ -28,6 +38,16 @@ export const IMPORT_FIELDS: Array<{
   { key: "contact_name", label: "Nome do contato", required: true },
   { key: "role", label: "Cargo" },
   { key: "linkedin_url", label: "LinkedIn" },
+  { key: "contact_name_2", label: "Nome do contato 2" },
+  { key: "role_2", label: "Cargo 2" },
+  { key: "linkedin_url_2", label: "LinkedIn 2" },
+  { key: "contact_email_2", label: "Email do contato 2" },
+  { key: "contact_phone_2", label: "Telefone do contato 2" },
+  { key: "contact_name_3", label: "Nome do contato 3" },
+  { key: "role_3", label: "Cargo 3" },
+  { key: "linkedin_url_3", label: "LinkedIn 3" },
+  { key: "contact_email_3", label: "Email do contato 3" },
+  { key: "contact_phone_3", label: "Telefone do contato 3" },
   { key: "company_email", label: "Email da empresa" },
   { key: "company_phone", label: "Telefone da empresa" },
   { key: "contact_email", label: "Email do contato" },
@@ -42,6 +62,16 @@ const HEADER_HINTS: Record<ImportFieldKey, string[]> = {
   role: ["cargo", "funcao", "função", "posicao", "posição"],
   operation: ["operacao", "produto", "unidade", "empresa alvo", "bluepex", "opus"],
   linkedin_url: ["linkedin", "linked in", "perfil"],
+  contact_name_2: ["contato 2", "nome 2", "decisor 2", "lead 2", "persona 2", "pessoa 2"],
+  role_2: ["cargo 2", "funcao 2", "função 2", "posicao 2", "posição 2"],
+  linkedin_url_2: ["linkedin 2", "linked in 2", "perfil 2"],
+  contact_email_2: ["email contato 2", "e-mail contato 2", "email 2", "email do contato 2"],
+  contact_phone_2: ["telefone contato 2", "tel contato 2", "fone contato 2", "whatsapp 2", "celular 2"],
+  contact_name_3: ["contato 3", "nome 3", "decisor 3", "lead 3", "persona 3", "pessoa 3"],
+  role_3: ["cargo 3", "funcao 3", "função 3", "posicao 3", "posição 3"],
+  linkedin_url_3: ["linkedin 3", "linked in 3", "perfil 3"],
+  contact_email_3: ["email contato 3", "e-mail contato 3", "email 3", "email do contato 3"],
+  contact_phone_3: ["telefone contato 3", "tel contato 3", "fone contato 3", "whatsapp 3", "celular 3"],
   company_email: ["email empresa", "e-mail empresa", "email corporativo", "email da empresa"],
   company_phone: ["telefone empresa", "tel empresa", "fone empresa", "whatsapp empresa"],
   contact_email: ["email contato", "e-mail contato", "email pessoal", "email do contato"],
@@ -123,17 +153,42 @@ export const buildProspectFromImportRow = (
   const matchedStatus = availableStatuses.find(
     (status) => normalizeImportKey(status) === normalizeImportKey(statusFromSheet),
   );
+  const personas = [
+    {
+      name: read("contact_name"),
+      role: read("role") || undefined,
+      linkedin_url: read("linkedin_url") || undefined,
+      email: read("contact_email") || undefined,
+      phone: read("contact_phone") || undefined,
+    },
+    {
+      name: read("contact_name_2"),
+      role: read("role_2") || undefined,
+      linkedin_url: read("linkedin_url_2") || undefined,
+      email: read("contact_email_2") || undefined,
+      phone: read("contact_phone_2") || undefined,
+    },
+    {
+      name: read("contact_name_3"),
+      role: read("role_3") || undefined,
+      linkedin_url: read("linkedin_url_3") || undefined,
+      email: read("contact_email_3") || undefined,
+      phone: read("contact_phone_3") || undefined,
+    },
+  ].filter((persona) => persona.name);
+  const primaryPersona = personas[0];
 
   return {
     company: read("company"),
     operation: normalizeProspectOperation(read("operation")),
-    contact_name: read("contact_name"),
-    role: read("role") || undefined,
-    linkedin_url: read("linkedin_url") || undefined,
+    contact_name: primaryPersona?.name || "",
+    role: primaryPersona?.role,
+    linkedin_url: primaryPersona?.linkedin_url,
     company_email: read("company_email") || undefined,
     company_phone: read("company_phone") || undefined,
-    contact_email: read("contact_email") || undefined,
-    contact_phone: read("contact_phone") || undefined,
+    contact_email: primaryPersona?.email,
+    contact_phone: primaryPersona?.phone,
+    personas,
     qualification_notes: read("qualification_notes") || undefined,
     status: matchedStatus || defaultStatus,
   };
@@ -226,6 +281,8 @@ const getHeaderMatchScore = (field: ImportFieldKey, normalizedHeader: string, hi
   if (field === "contact_email" && normalizedHeader.includes("empresa")) return 0;
   if (field === "company_phone" && normalizedHeader.includes("contato")) return 0;
   if (field === "contact_phone" && normalizedHeader.includes("empresa")) return 0;
+  if (field.endsWith("_2") && !/\b2\b/.test(normalizedHeader)) return 0;
+  if (field.endsWith("_3") && !/\b3\b/.test(normalizedHeader)) return 0;
 
   return hints.reduce((bestScore, hint) => {
     let score = 0;
