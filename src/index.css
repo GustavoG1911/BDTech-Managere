@@ -314,3 +314,28 @@
 .rbc-event:focus, .rbc-day-slot .rbc-event:focus { outline: none; }
 .rbc-addons-dnd-drag-preview { opacity: 0.7; }
 .rbc-time-header-content > .rbc-row.rbc-row-resource { border-color: hsl(var(--border) / 0.4); }
+
+/* Prospecting funnel horizontal navigation */
+.prospect-kanban-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: hsl(var(--primary) / 0.65) hsl(var(--muted) / 0.4);
+}
+
+.prospect-kanban-scroll::-webkit-scrollbar {
+  height: 12px;
+}
+
+.prospect-kanban-scroll::-webkit-scrollbar-track {
+  background: hsl(var(--muted) / 0.35);
+  border-radius: 9999px;
+}
+
+.prospect-kanban-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--primary) / 0.65);
+  border: 3px solid hsl(var(--muted) / 0.35);
+  border-radius: 9999px;
+}
+
+.prospect-kanban-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary) / 0.85);
+}

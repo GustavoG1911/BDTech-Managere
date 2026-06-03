@@ -99,6 +99,8 @@ const PROSPECT_OPERATIONS: ProspectOperation[] = ["A definir", "BluePex", "Opus 
 const OPERATION_FILTERS: Array<ProspectOperation | "Todas"> = ["Todas", ...PROSPECT_OPERATIONS];
 const DEFAULT_FUNNEL_COLUMNS = ["Mapeamento", "Em Contato", "Agendado", "Concluído", "Perdido"];
 const REQUIRED_FUNNEL_COLUMNS = ["Em Contato", "Agendado", "Concluído"];
+const KANBAN_AUTO_SCROLL_EDGE = 96;
+const KANBAN_AUTO_SCROLL_MAX_SPEED = 24;
 
 const getProspectOperation = (prospect?: Pick<Prospect, "operation"> | null): ProspectOperation =>
   normalizeProspectOperation(prospect?.operation);
@@ -137,6 +139,9 @@ export default function Prospeccao() {
   const [importRollbackDone, setImportRollbackDone] = useState(false);
   const [operationFilter, setOperationFilter] = useState<ProspectOperation | "Todas">("Todas");
   const [newProspectPersonas, setNewProspectPersonas] = useState<ProspectPersona[]>(() => [createEmptyPersona()]);
+  const kanbanScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const autoScrollFrameRef = React.useRef<number | null>(null);
+  const autoScrollSpeedRef = React.useRef(0);
 
   React.useEffect(() => {
     if (selectedProspect) {
@@ -609,6 +614,61 @@ export default function Prospeccao() {
     return prospects?.filter(p => p.status === status && (operationFilter === "Todas" || getProspectOperation(p) === operationFilter)) || [];
   };
 
+  const stopHorizontalAutoScroll = React.useCallback(() => {
+    autoScrollSpeedRef.current = 0;
+    if (autoScrollFrameRef.current !== null) {
+      cancelAnimationFrame(autoScrollFrameRef.current);
+      autoScrollFrameRef.current = null;
+    }
+  }, []);
+
+  const startHorizontalAutoScroll = React.useCallback(() => {
+    if (autoScrollFrameRef.current !== null) return;
+
+    const scrollStep = () => {
+      const container = kanbanScrollRef.current;
+      const speed = autoScrollSpeedRef.current;
+
+      if (!container || speed === 0) {
+        stopHorizontalAutoScroll();
+        return;
+      }
+
+      container.scrollLeft += speed;
+      autoScrollFrameRef.current = requestAnimationFrame(scrollStep);
+    };
+
+    autoScrollFrameRef.current = requestAnimationFrame(scrollStep);
+  }, [stopHorizontalAutoScroll]);
+
+  const handleHorizontalAutoScroll = React.useCallback((clientX: number) => {
+    const container = kanbanScrollRef.current;
+    if (!container || container.scrollWidth <= container.clientWidth) {
+      stopHorizontalAutoScroll();
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    const leftDistance = clientX - rect.left;
+    const rightDistance = rect.right - clientX;
+    let speed = 0;
+
+    if (leftDistance >= 0 && leftDistance < KANBAN_AUTO_SCROLL_EDGE) {
+      speed = -Math.ceil(((KANBAN_AUTO_SCROLL_EDGE - leftDistance) / KANBAN_AUTO_SCROLL_EDGE) * KANBAN_AUTO_SCROLL_MAX_SPEED);
+    } else if (rightDistance >= 0 && rightDistance < KANBAN_AUTO_SCROLL_EDGE) {
+      speed = Math.ceil(((KANBAN_AUTO_SCROLL_EDGE - rightDistance) / KANBAN_AUTO_SCROLL_EDGE) * KANBAN_AUTO_SCROLL_MAX_SPEED);
+    }
+
+    autoScrollSpeedRef.current = speed;
+    if (speed === 0) {
+      stopHorizontalAutoScroll();
+    } else {
+      startHorizontalAutoScroll();
+    }
+  }, [startHorizontalAutoScroll, stopHorizontalAutoScroll]);
+
+  React.useEffect(() => stopHorizontalAutoScroll, [stopHorizontalAutoScroll]);
+
   // Drag and Drop Handlers
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedProspectId(id);
@@ -622,6 +682,7 @@ export default function Prospeccao() {
 
   const handleDragEnd = (e: React.DragEvent) => {
     setDraggedProspectId(null);
+    stopHorizontalAutoScroll();
     if (e.target instanceof HTMLElement) {
       e.target.style.opacity = '1';
     }
@@ -1130,7 +1191,16 @@ export default function Prospeccao() {
         </DialogContent>
       </Dialog>
 
-      <div className="flex-1 overflow-x-auto pb-4">
+      <div
+        ref={kanbanScrollRef}
+        className="prospect-kanban-scroll flex-1 min-w-0 overflow-x-auto overflow-y-hidden pb-4"
+        onMouseMove={(event) => handleHorizontalAutoScroll(event.clientX)}
+        onMouseLeave={stopHorizontalAutoScroll}
+        onDragOver={(event) => {
+          handleDragOver(event);
+          handleHorizontalAutoScroll(event.clientX);
+        }}
+      >
         <div className="flex gap-4 min-w-max h-full items-stretch">
           {columns.map((col, colIdx) => {
             const colProspects = getProspectsByStatus(col);
