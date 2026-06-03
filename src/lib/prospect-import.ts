@@ -19,8 +19,15 @@ export type ImportFieldKey =
   | "contact_phone_3"
   | "company_email"
   | "company_phone"
+  | "company_website"
   | "contact_email"
   | "contact_phone"
+  | "segment"
+  | "city"
+  | "state"
+  | "fit_icp"
+  | "priority"
+  | "phone_notes"
   | "qualification_notes"
   | "status";
 
@@ -51,8 +58,15 @@ export const IMPORT_FIELDS: Array<{
   { key: "contact_phone_3", label: "Telefone do contato 3" },
   { key: "company_email", label: "Email da empresa" },
   { key: "company_phone", label: "Telefone da empresa" },
+  { key: "company_website", label: "Site da empresa" },
   { key: "contact_email", label: "Email do contato" },
   { key: "contact_phone", label: "Telefone do contato" },
+  { key: "segment", label: "Segmento" },
+  { key: "city", label: "Cidade" },
+  { key: "state", label: "Estado" },
+  { key: "fit_icp", label: "Fit ICP" },
+  { key: "priority", label: "Prioridade" },
+  { key: "phone_notes", label: "Obs. telefone" },
   { key: "qualification_notes", label: "Observações" },
   { key: "status", label: "Etapa do funil" },
 ];
@@ -75,8 +89,15 @@ const HEADER_HINTS: Record<ImportFieldKey, string[]> = {
   contact_phone_3: ["telefone contato 3", "tel contato 3", "fone contato 3", "whatsapp 3", "celular 3"],
   company_email: ["email empresa", "e-mail empresa", "email corporativo", "email da empresa"],
   company_phone: ["telefone empresa", "tel empresa", "fone empresa", "whatsapp empresa"],
+  company_website: ["website empresa", "site empresa", "site da empresa", "dominio empresa", "domínio empresa", "website", "site"],
   contact_email: ["email contato", "e-mail contato", "email pessoal", "email do contato"],
   contact_phone: ["telefone contato", "tel contato", "fone contato", "whatsapp", "celular"],
+  segment: ["segmento", "setor", "industria", "indústria", "mercado"],
+  city: ["cidade", "municipio", "município"],
+  state: ["estado", "uf"],
+  fit_icp: ["fit icp", "fit", "icp", "aderencia icp", "aderência icp"],
+  priority: ["prioridade", "prioridade icp", "ordem"],
+  phone_notes: ["obs telefone", "observacao telefone", "observação telefone", "notas telefone", "telefone observacao", "telefone observação"],
   qualification_notes: ["observacao", "observação", "observacoes", "observações", "notas", "comentario", "comentário"],
   status: ["status", "etapa", "fase", "funil"],
 };
@@ -94,7 +115,9 @@ export const normalizeImportKey = (value?: string | null) =>
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ");
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
 export const normalizeProspectOperation = (value?: string | null): Prospect["operation"] => {
   const normalized = normalizeImportKey(value);
@@ -160,6 +183,7 @@ export const buildProspectFromImportRow = (
   mapping: ImportFieldMapping,
   defaultStatus: string,
   availableStatuses: string[],
+  defaultOperation: Prospect["operation"] = "A definir",
 ): Partial<Prospect> => {
   const read = (key: ImportFieldKey) => {
     const column = mapping[key];
@@ -194,10 +218,23 @@ export const buildProspectFromImportRow = (
     },
   ].filter((persona) => persona.name);
   const primaryPersona = personas[0];
+  const operationFromSheet = read("operation");
+  const structuredNotes = [
+    ["Segmento", read("segment")],
+    ["Cidade", [read("city"), read("state")].filter(Boolean).join("/")],
+    ["Site", read("company_website")],
+    ["Fit ICP", read("fit_icp")],
+    ["Prioridade", read("priority")],
+    ["Obs. telefone", read("phone_notes")],
+  ]
+    .filter(([, value]) => value)
+    .map(([label, value]) => `${label}: ${value}`)
+    .join("\n");
+  const qualificationNotes = [read("qualification_notes"), structuredNotes].filter(Boolean).join("\n");
 
   return {
     company: read("company"),
-    operation: normalizeProspectOperation(read("operation")),
+    operation: operationFromSheet ? normalizeProspectOperation(operationFromSheet) : defaultOperation,
     contact_name: primaryPersona?.name || "",
     role: primaryPersona?.role,
     linkedin_url: primaryPersona?.linkedin_url,
@@ -206,7 +243,7 @@ export const buildProspectFromImportRow = (
     contact_email: primaryPersona?.email,
     contact_phone: primaryPersona?.phone,
     personas,
-    qualification_notes: read("qualification_notes") || undefined,
+    qualification_notes: qualificationNotes || undefined,
     status: matchedStatus || defaultStatus,
   };
 };
@@ -293,11 +330,13 @@ const getHeaderMatchScore = (field: ImportFieldKey, normalizedHeader: string, hi
   if (!normalizedHeader) return 0;
 
   if (field === "contact_name" && normalizedHeader.includes("empresa")) return 0;
+  if (field === "company" && ["site", "website", "dominio"].some((word) => normalizedHeader.includes(word))) return 0;
   if (field === "company" && normalizedHeader.includes("contato")) return 0;
   if (field === "company_email" && normalizedHeader.includes("contato")) return 0;
   if (field === "contact_email" && normalizedHeader.includes("empresa")) return 0;
   if (field === "company_phone" && normalizedHeader.includes("contato")) return 0;
   if (field === "contact_phone" && normalizedHeader.includes("empresa")) return 0;
+  if (field === "qualification_notes" && normalizedHeader.includes("telefone")) return 0;
   if (field.endsWith("_2") && !normalizedHeader.includes("2")) return 0;
   if (field.endsWith("_3") && !normalizedHeader.includes("3")) return 0;
 

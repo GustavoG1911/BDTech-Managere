@@ -25,6 +25,7 @@ import {
   emptyImportMapping,
   guessProspectImportMapping,
   IMPORT_FIELDS,
+  ImportFieldKey,
   ImportFieldMapping,
   ImportRow,
   NO_IMPORT_FIELD,
@@ -46,8 +47,23 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 
-const buildDuplicateKey = (company?: string | null, contactName?: string | null) =>
-  `${normalizeImportKey(company)}|${normalizeImportKey(contactName)}`;
+const normalizeUrlKey = (value?: string | null) => {
+  const rawValue = (value || "").trim().toLowerCase();
+  if (!rawValue) return "";
+
+  const urlValue = /^[a-z]+:\/\//i.test(rawValue) ? rawValue : `https://${rawValue}`;
+  try {
+    const url = new URL(urlValue);
+    const hostname = url.hostname.replace(/^www\./, "");
+    const pathname = url.pathname.replace(/\/$/, "");
+    return `${hostname}${pathname}`.toLowerCase();
+  } catch {
+    return normalizeImportKey(rawValue);
+  }
+};
+
+const buildDuplicateKey = (company?: string | null, identity?: string | null) =>
+  `${normalizeImportKey(company)}|${identity || ""}`;
 
 const buildPersonaId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -71,10 +87,40 @@ const getPersonasForForm = (prospect: Partial<Prospect>) => {
   return normalizePersonasForForm(personas);
 };
 
+const buildPersonaIdentityKeys = (persona: Partial<ProspectPersona>) => {
+  const keys = [
+    persona.linkedin_url ? `linkedin:${normalizeUrlKey(persona.linkedin_url)}` : "",
+    persona.email ? `email:${persona.email.trim().toLowerCase()}` : "",
+    persona.name ? `name:${normalizeImportKey(persona.name)}` : "",
+  ];
+
+  return keys.filter(Boolean);
+};
+
 const buildDuplicateKeysForProspect = (prospect: Partial<Prospect>) => {
   const personas = getProspectPersonas(prospect);
-  const names = personas.length > 0 ? personas.map((persona) => persona.name) : [prospect.contact_name || ""];
-  return names.filter(Boolean).map((name) => buildDuplicateKey(prospect.company, name));
+  const personaKeys = personas.length > 0
+    ? personas.flatMap(buildPersonaIdentityKeys)
+    : [`name:${normalizeImportKey(prospect.contact_name || "")}`].filter((key) => key !== "name:");
+  return personaKeys.map((key) => buildDuplicateKey(prospect.company, key));
+};
+
+const getImportMappedValue = (row: ImportRow, mapping: ImportFieldMapping, field: ImportFieldKey) => {
+  const column = mapping[field];
+  return column && column !== NO_IMPORT_FIELD ? row[column]?.trim() || "" : "";
+};
+
+const buildCompanyGroupKey = (prospect: Partial<Prospect>, row: ImportRow, mapping: ImportFieldMapping) => {
+  const companyKey = normalizeImportKey(prospect.company);
+  const websiteKey = normalizeUrlKey(getImportMappedValue(row, mapping, "company_website"));
+  return websiteKey ? `${companyKey}|site:${websiteKey}` : companyKey;
+};
+
+const mergeQualificationNotes = (current?: string, incoming?: string) => {
+  const parts = [current, incoming]
+    .map((item) => (item || "").trim())
+    .filter(Boolean);
+  return Array.from(new Set(parts)).join("\n\n");
 };
 
 const syncPrimaryPersonaFields = (prospect: Partial<Prospect>): Partial<Prospect> => {
@@ -107,6 +153,9 @@ const KANBAN_AUTO_SCROLL_MAX_SPEED = 24;
 const getInitialFunnelStatus = (columns: string[]) =>
   columns.includes("Mapeamento") ? "Mapeamento" : columns[0] || "Mapeamento";
 
+const getInitialImportOperation = (fileName: string): ProspectOperation =>
+  normalizeProspectOperation(fileName);
+
 const getProspectOperation = (prospect?: Pick<Prospect, "operation"> | null): ProspectOperation =>
   normalizeProspectOperation(prospect?.operation);
 
@@ -137,6 +186,7 @@ export default function Prospeccao() {
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
   const [fieldMapping, setFieldMapping] = useState<ImportFieldMapping>(() => emptyImportMapping());
   const [defaultImportStatus, setDefaultImportStatus] = useState("Mapeamento");
+  const [defaultImportOperation, setDefaultImportOperation] = useState<ProspectOperation>("A definir");
   const [skipImportDuplicates, setSkipImportDuplicates] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
   const [importReport, setImportReport] = useState<ImportUiReport | null>(null);
@@ -404,7 +454,7 @@ export default function Prospeccao() {
     let duplicates = 0;
 
     const analyzedRows = importRows.map((row, index) => {
-      const prospect = buildProspectFromImportRow(row, fieldMapping, defaultImportStatus, columns);
+      const prospect = buildProspectFromImportRow(row, fieldMapping, defaultImportStatus, columns, defaultImportOperation);
       const keys = buildDuplicateKeysForProspect(prospect);
       const hasRequiredFields = Boolean(prospect.company && prospect.contact_name);
       const isDuplicate = hasRequiredFields && keys.some((key) => existingProspectKeys.has(key) || seen.has(key));
@@ -425,6 +475,7 @@ export default function Prospeccao() {
       return {
         index,
         rowNumber: index + 2,
+        raw: row,
         prospect: { ...prospect, owner_id: user?.id || "", importRowNumber: index + 2 },
         hasRequiredFields,
         isDuplicate,
@@ -434,26 +485,51 @@ export default function Prospeccao() {
 
     const importableRows = analyzedRows
       .filter((row) => row.hasRequiredFields && (!skipImportDuplicates || !row.isDuplicate));
-    const groupedRows = new Map<string, ProspectImportItem>();
+    const groupedRows = new Map<string, {
+      groupKey: string;
+      prospect: ProspectImportItem;
+      sourceRows: number[];
+    }>();
 
     importableRows.forEach((row) => {
-      const groupKey = normalizeImportKey(row.prospect.company);
+      const groupKey = buildCompanyGroupKey(row.prospect, row.raw, fieldMapping);
       const existingGroup = groupedRows.get(groupKey);
 
       if (!existingGroup) {
         groupedRows.set(groupKey, {
-          ...row.prospect,
-          personas: getProspectPersonas(row.prospect),
-        } as ProspectImportItem);
+          groupKey,
+          prospect: {
+            ...row.prospect,
+            personas: getProspectPersonas(row.prospect),
+          } as ProspectImportItem,
+          sourceRows: [row.rowNumber],
+        });
         return;
       }
 
-      const existingPersonaKeys = new Set(getProspectPersonas(existingGroup).map((persona) => normalizeImportKey(persona.name)));
-      const newPersonas = getProspectPersonas(row.prospect).filter((persona) => !existingPersonaKeys.has(normalizeImportKey(persona.name)));
-      existingGroup.personas = [...getProspectPersonas(existingGroup), ...newPersonas];
+      const existingPersonaKeys = new Set(getProspectPersonas(existingGroup.prospect).flatMap(buildPersonaIdentityKeys));
+      const newPersonas = getProspectPersonas(row.prospect).filter((persona) => {
+        const personaKeys = buildPersonaIdentityKeys(persona);
+        const alreadyExists = personaKeys.some((key) => existingPersonaKeys.has(key));
+        personaKeys.forEach((key) => existingPersonaKeys.add(key));
+        return !alreadyExists;
+      });
+
+      existingGroup.sourceRows.push(row.rowNumber);
+      existingGroup.prospect.personas = [...getProspectPersonas(existingGroup.prospect), ...newPersonas];
+      existingGroup.prospect.qualification_notes = mergeQualificationNotes(existingGroup.prospect.qualification_notes, row.prospect.qualification_notes) || undefined;
+      if (!existingGroup.prospect.company_email && row.prospect.company_email) existingGroup.prospect.company_email = row.prospect.company_email;
+      if (!existingGroup.prospect.company_phone && row.prospect.company_phone) existingGroup.prospect.company_phone = row.prospect.company_phone;
+      if (getProspectOperation(existingGroup.prospect) === "A definir" && getProspectOperation(row.prospect) !== "A definir") {
+        existingGroup.prospect.operation = getProspectOperation(row.prospect);
+      }
     });
 
-    const validRows = Array.from(groupedRows.values()).map((prospect) => syncPrimaryPersonaFields(prospect));
+    const groups = Array.from(groupedRows.values()).map((group) => ({
+      ...group,
+      prospect: syncPrimaryPersonaFields(group.prospect) as ProspectImportItem,
+    }));
+    const validRows = groups.map((group) => group.prospect);
     const skipped = analyzedRows
       .filter((row) => !row.hasRequiredFields || (skipImportDuplicates && row.isDuplicate))
       .map((row) => ({
@@ -464,16 +540,23 @@ export default function Prospeccao() {
       }));
 
     const skippedRows = skipped.length;
+    const personasCount = validRows.reduce((total, prospect) => total + getProspectPersonas(prospect).length, 0);
+    const mergedRows = Math.max(0, importableRows.length - validRows.length);
+    const repeatedCompanyGroups = groups.filter((group) => group.sourceRows.length > 1).length;
 
     return {
       rows: analyzedRows,
+      groups,
       validRows,
       skipped,
       missingRequired,
       duplicates,
       skippedRows,
+      personasCount,
+      mergedRows,
+      repeatedCompanyGroups,
     };
-  }, [columns, defaultImportStatus, existingProspectKeys, fieldMapping, importRows, skipImportDuplicates, user?.id]);
+  }, [columns, defaultImportOperation, defaultImportStatus, existingProspectKeys, fieldMapping, importRows, skipImportDuplicates, user?.id]);
 
   const isImportMappingReady = fieldMapping.company !== NO_IMPORT_FIELD && fieldMapping.contact_name !== NO_IMPORT_FIELD;
   const autoDetectedFields = React.useMemo(() => {
@@ -511,6 +594,7 @@ export default function Prospeccao() {
       const detectedCount = IMPORT_FIELDS.filter((field) => guessedMapping[field.key] !== NO_IMPORT_FIELD).length;
       setFieldMapping(guessedMapping);
       setDefaultImportStatus(getInitialFunnelStatus(columns));
+      setDefaultImportOperation(getInitialImportOperation(file.name));
       toast.success(`${parsed.rows.length} linhas lidas. ${detectedCount} campos identificados automaticamente.`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Erro desconhecido";
@@ -531,6 +615,7 @@ export default function Prospeccao() {
     setImportHeaders([]);
     setImportRows([]);
     setFieldMapping(emptyImportMapping());
+    setDefaultImportOperation("A definir");
     setSkipImportDuplicates(true);
     setIsImporting(false);
     setImportReport(null);
@@ -902,6 +987,29 @@ export default function Prospeccao() {
                       </p>
                     </div>
 
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Operação padrão</Label>
+                      <Select value={defaultImportOperation} onValueChange={(value) => {
+                        setImportReport(null);
+                        setImportRollbackDone(false);
+                        setDefaultImportOperation(value as ProspectOperation);
+                      }}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROSPECT_OPERATIONS.map((operation) => (
+                            <SelectItem key={operation} value={operation}>
+                              {operation}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Quando a planilha não informa a operação, o nome do arquivo pode sugerir BluePex ou Opus Tech.
+                      </p>
+                    </div>
+
                     <label className="flex items-start gap-2 rounded-md border border-border/60 p-3 text-sm">
                       <Checkbox
                         checked={skipImportDuplicates}
@@ -923,14 +1031,30 @@ export default function Prospeccao() {
                     <div className="rounded-md border border-border/60 p-3 text-sm">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <p className="text-xs text-muted-foreground">Prontos</p>
+                          <p className="text-xs text-muted-foreground">Cards</p>
                           <p className="text-lg font-semibold">{importAnalysis.validRows.length}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Personas</p>
+                          <p className="text-lg font-semibold">{importAnalysis.personasCount}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Linhas unidas</p>
+                          <p className="text-lg font-semibold">{importAnalysis.mergedRows}</p>
                         </div>
                         <div>
                           <p className="text-xs text-muted-foreground">Ignorados</p>
                           <p className="text-lg font-semibold">{importAnalysis.skippedRows}</p>
                         </div>
                       </div>
+                      {importAnalysis.repeatedCompanyGroups > 0 && (
+                        <div className="mt-3 flex gap-2 text-xs text-emerald-600 dark:text-emerald-400">
+                          <Users2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>
+                            {importAnalysis.repeatedCompanyGroups} empresas repetidas serão agrupadas em cards únicos com múltiplas personas.
+                          </span>
+                        </div>
+                      )}
                       {(importAnalysis.missingRequired > 0 || importAnalysis.duplicates > 0) && (
                         <div className="mt-3 flex gap-2 text-xs text-amber-600 dark:text-amber-400">
                           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -951,26 +1075,31 @@ export default function Prospeccao() {
                       <span>Empresa</span>
                       <span>Operação</span>
                       <span>Personas</span>
-                      <span>Etapa</span>
+                      <span>Linhas</span>
                       <span>Situação</span>
                     </div>
-                    {importAnalysis.rows.slice(0, 6).map((row) => (
-                      <div
-                        key={row.index}
-                        className="grid grid-cols-[1fr_0.8fr_1fr_0.8fr_0.8fr] gap-2 border-t border-border/50 px-3 py-2 text-xs"
-                      >
-                        <span className="truncate">{row.prospect.company || "-"}</span>
-                        <span className="truncate">{getProspectOperation(row.prospect)}</span>
-                        <span className="truncate">
-                          {row.prospect.contact_name || "-"}
-                          {getProspectPersonas(row.prospect).length > 1 ? ` +${getProspectPersonas(row.prospect).length - 1}` : ""}
-                        </span>
-                        <span className="truncate">{row.prospect.status || defaultImportStatus}</span>
-                        <span className={row.hasRequiredFields && !row.isDuplicate ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
-                          {!row.hasRequiredFields ? "Faltam campos" : row.isDuplicate ? "Duplicado" : "Pronto"}
-                        </span>
-                      </div>
-                    ))}
+                    {importAnalysis.groups.slice(0, 6).map((group) => {
+                      const personas = getProspectPersonas(group.prospect);
+                      return (
+                        <div
+                          key={group.groupKey}
+                          className="grid grid-cols-[1fr_0.8fr_1fr_0.8fr_0.8fr] gap-2 border-t border-border/50 px-3 py-2 text-xs"
+                        >
+                          <span className="truncate">{group.prospect.company || "-"}</span>
+                          <span className="truncate">{getProspectOperation(group.prospect)}</span>
+                          <span className="truncate">
+                            {personas[0]?.name || "-"}
+                            {personas.length > 1 ? ` +${personas.length - 1}` : ""}
+                          </span>
+                          <span className="truncate">
+                            {group.sourceRows.length > 1 ? `${group.sourceRows.length} linhas` : `Linha ${group.sourceRows[0]}`}
+                          </span>
+                          <span className={group.sourceRows.length > 1 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+                            {group.sourceRows.length > 1 ? "Agrupado" : "Pronto"}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </>

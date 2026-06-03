@@ -35,4 +35,29 @@ describe("prospect import parsing", () => {
       expect.objectContaining({ name: "Carla", role: "CFO" }),
     ]);
   });
+
+  it("maps one-row-per-persona ICP spreadsheets and preserves extra context", () => {
+    const parsed = parseProspectImportText(
+      "Nome,Cargo,Empresa,Segmento,Cidade,Estado,LinkedIn,Telefone_Empresa,Website_Empresa,Email,Fit_ICP,Prioridade,Obs_Telefone\n" +
+      "Michael Vicentim,Diretor de Tecnologia e Inovação,A.Yoshii Engenharia,Construção,Londrina,PR,https://www.linkedin.com/in/michael-vicentim-83759457/,(43) 3371-1000,ayoshii.com.br,michael@ayoshii.com.br,Alto,1,Central sede",
+    );
+    const mapping = guessProspectImportMapping(parsed.headers);
+    const prospect = buildProspectFromImportRow(parsed.rows[0], mapping, "Mapeamento", ["Mapeamento"], "Opus Tech");
+
+    expect(mapping.company).toBe("Empresa");
+    expect(mapping.contact_name).toBe("Nome");
+    expect(mapping.role).toBe("Cargo");
+    expect(mapping.linkedin_url).toBe("LinkedIn");
+    expect(mapping.company_phone).toBe("Telefone_Empresa");
+    expect(mapping.company_website).toBe("Website_Empresa");
+    expect(mapping.contact_email).toBe("Email");
+    expect(prospect.operation).toBe("Opus Tech");
+    expect(prospect.company_phone).toBe("(43) 3371-1000");
+    expect(prospect.qualification_notes).toContain("Segmento: Construção");
+    expect(prospect.qualification_notes).toContain("Cidade: Londrina/PR");
+    expect(prospect.qualification_notes).toContain("Site: ayoshii.com.br");
+    expect(prospect.qualification_notes).toContain("Fit ICP: Alto");
+    expect(prospect.qualification_notes).toContain("Prioridade: 1");
+    expect(prospect.qualification_notes).toContain("Obs. telefone: Central sede");
+  });
 });
