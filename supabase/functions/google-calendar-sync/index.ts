@@ -18,6 +18,15 @@ interface GoogleEvent {
   attendees?: { self?: boolean; responseStatus?: string }[];
 }
 
+type GoogleApiErrorPayload = {
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+    errors?: { reason?: string; message?: string }[];
+  } | string;
+};
+
 function classifyOperation(link: string, description: string): "BluePex" | "Opus Tech" | undefined {
   const content = `${link} ${description}`.toLowerCase();
   if (content.includes("meet.google.com") || content.includes("google meet")) return "BluePex";
@@ -46,6 +55,49 @@ async function refreshAccessToken(clientId: string, clientSecret: string, refres
   const data = await res.json();
   if (!res.ok) throw new Error(data.error_description ?? "Falha ao renovar token");
   return { accessToken: data.access_token as string, expiresIn: data.expires_in as number };
+}
+
+async function readJsonSafely(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function getGoogleErrorDetails(payload: unknown) {
+  const error = (payload as GoogleApiErrorPayload | null)?.error;
+  if (typeof error === "string") return { message: error, reason: undefined };
+  return {
+    message: error?.message,
+    reason: error?.errors?.[0]?.reason ?? error?.status,
+  };
+}
+
+function buildGoogleCalendarError(status: number, payload: unknown) {
+  const { message, reason } = getGoogleErrorDetails(payload);
+
+  if (status === 401) {
+    return "Google Calendar recusou o token salvo. Reconecte a conta Google central no painel de Calendario.";
+  }
+
+  if (status === 403) {
+    if (reason === "insufficientPermissions") {
+      return "Google Calendar recusou por permissao insuficiente. Reconecte a conta Google central para conceder acesso de leitura ao calendario.";
+    }
+
+    if (reason === "accessNotConfigured") {
+      return "Google Calendar API esta desativada no projeto Google Cloud usado pela integracao. Ative a Calendar API no Google Cloud Console e sincronize novamente.";
+    }
+
+    if (reason === "rateLimitExceeded" || reason === "userRateLimitExceeded" || reason === "quotaExceeded") {
+      return "Google Calendar recusou por limite de uso da API. Aguarde alguns minutos e tente sincronizar novamente.";
+    }
+
+    return `Google Calendar recusou a sincronizacao (403)${message ? `: ${message}` : ". Verifique se a conta conectada tem acesso ao calendario principal."}`;
+  }
+
+  return `Google Calendar API error: ${status}${message ? ` - ${message}` : ""}`;
 }
 
 serve(async (req) => {
@@ -100,9 +152,9 @@ serve(async (req) => {
       `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${now}&timeMax=${future}&singleEvents=true&orderBy=startTime&maxResults=250`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
-    if (!calRes.ok) throw new Error(`Google Calendar API error: ${calRes.status}`);
-    const calData = await calRes.json();
-    const googleEvents: GoogleEvent[] = calData.items ?? [];
+    const calData = await readJsonSafely(calRes);
+    if (!calRes.ok) throw new Error(buildGoogleCalendarError(calRes.status, calData));
+    const googleEvents: GoogleEvent[] = (calData as { items?: GoogleEvent[] } | null)?.items ?? [];
 
     // Only import events where the user accepted (or is organizer)
     const accepted = googleEvents.filter((ev) => {

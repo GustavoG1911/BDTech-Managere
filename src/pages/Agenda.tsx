@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { classifyOperation, fetchCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from "@/lib/supabase-agenda";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchAdminCalendarStatus, startGoogleCalendarConnection } from "@/lib/google-calendar";
+import { fetchAdminCalendarStatus, startGoogleCalendarConnection, syncGoogleCalendar } from "@/lib/google-calendar";
 import { incrementPresentationCount } from "@/lib/supabase-deals";
 import { supabase } from "@/integrations/supabase/client";
 import { CalendarEvent, CalendarEventStatus, Operation } from "@/lib/types";
@@ -161,14 +161,8 @@ export default function Agenda() {
   const handleSyncNow = useCallback(async (silent = false) => {
     if (!silent) setIsSyncing(true);
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-calendar-sync`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Erro na sincronização");
-      if (!silent) toast.success(`Sincronizado! ${data.created} novo(s), ${data.updated} atualizado(s).`);
+      const result = await syncGoogleCalendar();
+      if (!silent) toast.success(`Sincronizado! ${result.created} novo(s), ${result.updated} atualizado(s).`);
       queryClient.invalidateQueries({ queryKey: ["calendar-events"] });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao sincronizar";
