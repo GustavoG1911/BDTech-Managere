@@ -18,6 +18,27 @@ interface GoogleEvent {
   attendees?: { self?: boolean; responseStatus?: string }[];
 }
 
+type CalendarEventRow = {
+  id: string;
+  user_id: string;
+  prospect_id?: string | null;
+  title?: string | null;
+  start_time: string;
+  end_time?: string | null;
+  meeting_link?: string | null;
+  operation?: "BluePex" | "Opus Tech" | null;
+  status?: "Agendado" | "Realizado" | "Cancelado" | null;
+  google_event_id?: string | null;
+  source?: string | null;
+};
+
+type ProspectRow = {
+  id: string;
+  company: string;
+  operation?: string | null;
+  status?: string | null;
+};
+
 type GoogleApiErrorPayload = {
   error?: {
     code?: number;
@@ -34,10 +55,47 @@ function classifyOperation(link: string, description: string): "BluePex" | "Opus
   return undefined;
 }
 
+function stripHtml(value: string): string {
+  return value
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"');
+}
+
+function extractMeetingLinkFromText(value: string): string {
+  const match = value.match(/https:\/\/(?:teams\.microsoft\.com|meet\.google\.com)\/[^\s<>"]+/i);
+  return match?.[0]?.replace(/[),.;]+$/, "") ?? "";
+}
+
+function sanitizeDescription(value?: string): string | null {
+  if (!value?.trim()) return null;
+
+  const withoutDisclaimer = stripHtml(value)
+    .split(/(?:Este e-mail e quaisquer documentos anexos são confidenciais|This email and any attached documents are confidential)/i)[0];
+
+  const lines = withoutDisclaimer
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^_{8,}$/.test(line))
+    .filter((line) => !/^[-–—]{8,}$/.test(line))
+    .filter((line) => !/^Precisa de ajuda\??/i.test(line))
+    .filter((line) => !/^Referência do sistema/i.test(line))
+    .filter((line) => !/^Para organizadores:/i.test(line));
+
+  const description = lines.join("\n").trim();
+  return description ? description.slice(0, 1600) : null;
+}
+
 function getMeetingLink(event: GoogleEvent): string {
   if (event.hangoutLink) return event.hangoutLink;
   const entry = event.conferenceData?.entryPoints?.find((e) => e.uri?.startsWith("https://"));
-  return entry?.uri ?? "";
+  return entry?.uri ?? extractMeetingLinkFromText(event.description ?? "");
 }
 
 function calendarConfigId(isTestEnv: boolean) {
@@ -100,6 +158,79 @@ function buildGoogleCalendarError(status: number, payload: unknown) {
   return `Google Calendar API error: ${status}${message ? ` - ${message}` : ""}`;
 }
 
+function normalizeText(value?: string | null): string {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizeUrl(value?: string | null): string {
+  return (value ?? "").trim().replace(/[?#].*$/, "").replace(/\/$/, "").toLowerCase();
+}
+
+function toCalendarOperation(operation?: string | null): "BluePex" | "Opus Tech" | undefined {
+  return operation === "BluePex" || operation === "Opus Tech" ? operation : undefined;
+}
+
+async function findMatchingProspect(supabase: any, isTestEnv: boolean, title: string, description: string | null): Promise<ProspectRow | null> {
+  const haystack = normalizeText(`${title} ${description ?? ""}`);
+  if (!haystack) return null;
+
+  const { data, error } = await supabase
+    .from("prospects")
+    .select("id, company, operation, status")
+    .eq("is_test_data", isTestEnv);
+
+  if (error) throw error;
+
+  const prospects = (data ?? []) as ProspectRow[];
+  return prospects
+    .filter((prospect) => {
+      const company = normalizeText(prospect.company);
+      return company.length >= 3 && haystack.includes(company);
+    })
+    .sort((a, b) => normalizeText(b.company).length - normalizeText(a.company).length)[0] ?? null;
+}
+
+async function findMatchingCalendarEvent(
+  supabase: any,
+  isTestEnv: boolean,
+  startIso: string,
+  title: string,
+  meetingLink: string,
+  prospectId?: string | null,
+): Promise<CalendarEventRow | null> {
+  const start = new Date(startIso);
+  const from = new Date(start.getTime() - 45 * 60 * 1000).toISOString();
+  const to = new Date(start.getTime() + 45 * 60 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from("calendar_events")
+    .select("id, user_id, prospect_id, title, start_time, end_time, meeting_link, operation, status, google_event_id, source")
+    .eq("is_test_data", isTestEnv)
+    .is("google_event_id", null)
+    .gte("start_time", from)
+    .lte("start_time", to);
+
+  if (error) throw error;
+
+  const normalizedTitle = normalizeText(title);
+  const normalizedLink = normalizeUrl(meetingLink);
+  const candidates = (data ?? []) as CalendarEventRow[];
+
+  return candidates.find((event) => {
+    const sameProspect = Boolean(prospectId && event.prospect_id === prospectId);
+    const sameLink = Boolean(normalizedLink && normalizeUrl(event.meeting_link) === normalizedLink);
+    const eventTitle = normalizeText(event.title);
+    const similarTitle = Boolean(eventTitle && normalizedTitle && (normalizedTitle.includes(eventTitle) || eventTitle.includes(normalizedTitle)));
+
+    return sameProspect || sameLink || similarTitle;
+  }) ?? null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -145,11 +276,11 @@ serve(async (req) => {
         .eq("id", calendarConfigId(isTestEnv));
     }
 
-    // Fetch Google Calendar events (primary calendar, next 60 days)
-    const now = new Date().toISOString();
+    // Fetch Google Calendar events (primary calendar, recent + next 60 days)
+    const past = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
     const future = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
     const calRes = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${now}&timeMax=${future}&singleEvents=true&orderBy=startTime&maxResults=250`,
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${past}&timeMax=${future}&singleEvents=true&orderBy=startTime&maxResults=500`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const calData = await readJsonSafely(calRes);
@@ -173,30 +304,39 @@ serve(async (req) => {
       if (!startRaw || !endRaw) continue;
 
       const meetingLink = getMeetingLink(ev);
-      const operation = classifyOperation(meetingLink, ev.description ?? "");
+      const description = sanitizeDescription(ev.description);
+      const operation = classifyOperation(meetingLink, description ?? ev.description ?? "");
+      const title = ev.summary ?? "(Sem título)";
+      const prospect = await findMatchingProspect(supabase, isTestEnv, title, description);
+      const startTime = new Date(startRaw).toISOString();
+      const endTime = new Date(endRaw).toISOString();
 
-      const payload = {
-        user_id: centralOwnerUserId,
-        google_event_id: ev.id,
-        source: "google",
-        title: ev.summary ?? "(Sem título)",
-        start_time: new Date(startRaw).toISOString(),
-        end_time: new Date(endRaw).toISOString(),
-        description: ev.description ?? null,
-        meeting_link: meetingLink || null,
-        operation: operation ?? null,
-        status: "Agendado",
-        is_test_data: isTestEnv,
-      };
-
-      // Upsert based on google_event_id, avoids duplicates
-      const { data: existing } = await (supabase as any)
+      const { data: existingByGoogleId } = await (supabase as any)
         .from("calendar_events")
-        .select("id")
-        .eq("user_id", centralOwnerUserId)
+        .select("id, user_id, prospect_id, title, start_time, end_time, meeting_link, operation, status, google_event_id, source")
         .eq("google_event_id", ev.id)
         .eq("is_test_data", isTestEnv)
+        .limit(1)
         .maybeSingle();
+
+      const existing = (existingByGoogleId as CalendarEventRow | null) ??
+        await findMatchingCalendarEvent(supabase, isTestEnv, startTime, title, meetingLink, prospect?.id);
+
+      const linkedProspectId = existing?.prospect_id ?? prospect?.id ?? null;
+      const payload = {
+        user_id: existing?.user_id ?? centralOwnerUserId,
+        google_event_id: ev.id,
+        source: "google",
+        title,
+        start_time: startTime,
+        end_time: endTime,
+        description,
+        meeting_link: meetingLink || null,
+        operation: operation ?? existing?.operation ?? toCalendarOperation(prospect?.operation) ?? null,
+        status: existing?.status ?? "Agendado",
+        prospect_id: linkedProspectId,
+        is_test_data: isTestEnv,
+      };
 
       if (existing) {
         await (supabase as any).from("calendar_events").update(payload).eq("id", existing.id);
@@ -204,6 +344,18 @@ serve(async (req) => {
       } else {
         await (supabase as any).from("calendar_events").insert([payload]);
         created++;
+      }
+
+      if (linkedProspectId) {
+        await (supabase as any)
+          .from("prospects")
+          .update({
+            status: "Agendado",
+            has_scheduled_meeting: true,
+            ...(payload.operation ? { operation: payload.operation } : {}),
+          })
+          .eq("id", linkedProspectId)
+          .eq("is_test_data", isTestEnv);
       }
     }
 

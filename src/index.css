@@ -260,8 +260,17 @@
 .rbc-button-link:hover { color: hsl(var(--foreground)); }
 .rbc-off-range-bg { background-color: hsl(var(--muted) / 0.18); }
 .rbc-off-range .rbc-button-link { color: hsl(var(--muted-foreground) / 0.35); }
-.rbc-show-more { color: hsl(var(--primary)); font-size: 11px; font-weight: 600; background: transparent; padding: 2px 6px; }
-.rbc-show-more:hover { text-decoration: underline; color: hsl(var(--primary)); }
+.rbc-row-segment { padding: 1px 4px; }
+.rbc-month-view .rbc-event { min-height: 24px; line-height: 1.25; }
+.rbc-month-view .rbc-event-content { min-width: 0; }
+.rbc-row-content-scrollable { scrollbar-width: thin; scrollbar-color: hsl(var(--primary) / 0.55) transparent; }
+.rbc-show-more { color: hsl(var(--primary)); font-size: 11px; font-weight: 700; background: hsl(var(--primary) / 0.1); border: 1px solid hsl(var(--primary) / 0.22); border-radius: 9999px; padding: 2px 7px; }
+.rbc-show-more:hover { text-decoration: none; color: hsl(var(--primary)); background: hsl(var(--primary) / 0.16); }
+
+/* Month overflow popup */
+.rbc-overlay { background: hsl(var(--card)); border: 1px solid hsl(var(--border) / 0.65); border-radius: calc(var(--radius) + 2px); box-shadow: 0 18px 48px hsl(var(--background) / 0.62); padding: 8px; color: hsl(var(--foreground)); min-width: 260px; }
+.rbc-overlay-header { color: hsl(var(--muted-foreground)); border-bottom: 1px solid hsl(var(--border) / 0.45); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 6px 8px 8px; margin: -2px -2px 8px; }
+.rbc-overlay .rbc-event { margin: 4px 0; min-height: 26px; }
 
 /* ── Week / Day column headers ── */
 .rbc-time-header { border-bottom: 2px solid hsl(var(--border) / 0.6) !important; }

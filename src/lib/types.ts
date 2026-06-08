@@ -114,6 +114,8 @@ export interface CalendarEvent {
   status: CalendarEventStatus;
   prospect_id?: string;
   user_id?: string;
+  google_event_id?: string;
+  source?: string;
 }
 
 export type ProspectStatus = string;

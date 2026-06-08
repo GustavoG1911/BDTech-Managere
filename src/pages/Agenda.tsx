@@ -94,6 +94,8 @@ const localizer = dateFnsLocalizer({
   locales,
 });
 
+const workdayScrollTime = new Date(1970, 0, 1, 9, 0, 0);
+
 function CalendarEventLabel({ event }: { event: MappedCalendarEvent }) {
   return (
     <div className="flex min-w-0 items-center gap-1 leading-tight">
@@ -519,7 +521,7 @@ export default function Agenda() {
       </Dialog>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[560px]">
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-[760px]">
           <DialogHeader>
             <DialogTitle>
               {editingEvent ? (dialogMode === "view" ? "Detalhes da Reunião" : "Editar Reunião") : "Nova Reunião"}
@@ -587,7 +589,7 @@ export default function Agenda() {
                   <FileText className="h-3.5 w-3.5" />
                   Descrição
                 </p>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                <p className="mt-2 max-h-[34vh] overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
                   {editingEvent.description?.trim() || "Nenhuma descrição informada."}
                 </p>
               </div>
@@ -735,7 +737,7 @@ export default function Agenda() {
       </Dialog>
 
       <Card className="flex-1 mt-4">
-        <CardContent className="p-0 h-[600px]">
+        <CardContent className="h-[min(76vh,760px)] min-h-[640px] p-0">
           {isLoading ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               Carregando calendário...
@@ -764,6 +766,11 @@ export default function Agenda() {
               culture="pt-BR"
               eventPropGetter={eventStyleGetter}
               onSelectEvent={(event: MappedCalendarEvent) => handleOpenDialog(event)}
+              popup
+              popupOffset={{ x: 16, y: 12 }}
+              showAllEvents
+              scrollToTime={workdayScrollTime}
+              enableAutoScroll
               selectable
               onSelectSlot={({ start }) => {
                 setEditingEvent(null);
